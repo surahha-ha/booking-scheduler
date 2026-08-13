@@ -1,0 +1,35 @@
+/* src/scss/styles.scss
+ * ======================================================================
+ * 앱 자체(전역) 스타일 진입점
+ * - main.js 는 vendors.scss(서드파티) 다음에 이 파일을 로드한다
+ * - 상단은 @use 로 모듈 로드(Sass 규칙상 @use 는 최상단), 하단에서
+ *   우리 notivue 테마를 마지막에 @import (toast 가 가장 늦게 얹혀야 함)
+ * ====================================================================== */
+@use './theme';
+@use './variables' as *;
+@use './utilities';
+@use './schedule/index.scss';
+@use './modals';
+
+/* base css */
+html, body {
+  font-family: Pretendard, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", sans-serif !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font: inherit;
+}
+
+/* notivue 토스트를 모달(UiModal z-index 1501) 위로 노출
+ * notivue v4의 root는 클래스 없는 fixed <ol>이며 기본 z-index 500이라 모달에 가려진다 */
+ol:has(.Notivue__notification) {
+  z-index: 2000 !important;
+}
+
+/* Notivue 커스텀 테마 — 우리 전역 스타일의 일부이므로 여기서 마지막에 로드
+ * (기존 main.js 의 './scss/vendor/_notivue.scss' 개별 import 를 흡수) */
+@import './vendor/notivue';

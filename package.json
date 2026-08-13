@@ -1,0 +1,62 @@
+{
+  "name": "booking-scheduler",
+  "version": "0.1.0",
+  "description": "담당자별 타임그리드 예약 스케줄러",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "test": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "dependencies": {
+    "@vuepic/vue-datepicker": "^12.1.0",
+    "@vueuse/core": "^11.1.0",
+    "@vueuse/integrations": "^11.1.0",
+    "@vueuse/router": "^11.1.0",
+    "axios": "^1.11.0",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.11.3",
+    "bootstrap-vue-next": "^0.24.23",
+    "date-fns": "^4.1.0",
+    "dayjs": "^1.11.13",
+    "js-cookie": "^3.0.5",
+    "jszip": "^3.10.1",
+    "lodash-es": "^4.17.21",
+    "notivue": "^2.4.5",
+    "pinia": "^2.3.1",
+    "qrcode": "^1.5.4",
+    "qs": "^6.13.0",
+    "unplugin-vue-components": "^0.27.5",
+    "vue": "^3.5.20",
+    "vue-i18n": "^9.14.5",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^2.27.3",
+    "@playwright/test": "^1.59.1",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "@vue/test-utils": "^2.4.6",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "happy-dom": "^14.12.3",
+    "sass": "^1.79.3",
+    "vite": "^5.4.7",
+    "vitest": "^1.6.1",
+    "vue3-perfect-scrollbar": "^2.0.0"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "eslint": "9"
+      }
+    }
+  }
+}

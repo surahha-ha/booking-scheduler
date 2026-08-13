@@ -1,0 +1,26 @@
+/* src/scss/schedule/v3/_preview.scss
+ * ======================================================================
+ * V3 drag/resize preview 박스 공유 스타일 (mixin)
+ * - DragPreview.vue / ResizePreview.vue 가 동일하게 사용(클래스명만 다름).
+ * - mixin 으로 제공 → 각 컴포넌트 <style scoped> 에서 @include → scoped 격리 유지.
+ * - 색은 --scheduler-* 토큰(S1). bg 의 alpha 리터럴은 토큰화 대상 아님(투명도).
+ * ====================================================================== */
+
+@mixin preview-box {
+  border: 2px dashed var(--scheduler-accent, #1976d2);
+  background: rgba(25, 118, 210, 0.08);
+  border-radius: 0;
+  pointer-events: none;
+  z-index: 10;
+
+  &.is-invalid {
+    border-color: var(--scheduler-error, #d32f2f);
+    background: rgba(211, 47, 47, 0.08);
+  }
+
+  /* 같은 위치 = 데이터 변경 없음 → 회색 */
+  &.is-no-change {
+    border-color: #bbb;
+    background: rgba(0, 0, 0, 0.04);
+  }
+}

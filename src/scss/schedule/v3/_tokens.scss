@@ -1,0 +1,54 @@
+/* src/scss/schedule/v3/_tokens.scss
+ * ======================================================================
+ * V3 스케줄러 디자인 토큰 (런타임 CSS custom property)
+ * - 퍼블리셔가 한 곳에서 색/치수를 조정하는 단일 진입점.
+ * - `:root` 정의 → scoped 컴포넌트 + 모달(body teleport) 양쪽 도달.
+ * - 값은 컴포넌트 scoped 의 현재 하드코딩/ fallback 과 1:1(시각 무변).
+ * - 편집 경계 = 색/간격/테두리/폰트/그림자만. 카드 top/left/width/height·z 는
+ *   엔진(runLayout) 인라인 style 소유 → 여기서 못 바꿈.
+ * - 인벤토리·근거: docs/v3-css-inventory.md (#3 분류 SSOT)
+ * ====================================================================== */
+
+:root {
+  /* ── 관례 존재(이미 var() 참조 중, 정의만 추가) ──
+   * DragPreview/ResizePreview/SchedulerGrid 가 fallback 으로 사용 중. */
+  --scheduler-accent: #1976d2;        /* 파랑 accent — drag/resize 미리보기, sub-col 핸들 */
+  --scheduler-error: #d32f2f;         /* 에러/공휴일/invalid */
+  --scheduler-border-light: #f0f0f0;  /* 셀/축 경계선 */
+
+  /* ── 시맨틱/브랜드 (다곳 반복) ── */
+  --scheduler-brand: #2F6FED;         /* 브랜드 컬러 — 오늘/+추가/accent/뱃지 */
+  --scheduler-highlight: #FF8C00;     /* 카드 이동/하이라이트 outline·pulse */
+  --scheduler-external: #5B6CB8;          /* 외부연동(EXT) 뱃지 */
+  --scheduler-now: #256AF5;           /* 현재시각 라인/뱃지·접수 퀵액션 */
+  --scheduler-grabber: #8F94A3;       /* nav 버튼·카드 grabber·상태 뱃지 회색 */
+
+  /* ── 그리드/구조 ── */
+  --scheduler-cell-disabled: #EBEBEB; /* 점심/저녁/blocked/휴진/과거 셀 */
+  --scheduler-stripe-odd: #ffffff;    /* 홀수 행 stripe */
+  --scheduler-stripe-even: #f5f6f8;   /* 짝수 행 stripe */
+  --scheduler-header-bg: #f4f4f4;     /* 헤더/코너 배경 */
+  --scheduler-border: #d0d0d0;        /* 헤더/코너 구분선 */
+
+  /* ── 예약 카드 상태색 (상태코드 → bg/border) ──
+   * 단일화 지점: 카드(AppointmentCard) + 팝업 상태뱃지(ReservationPopup)가 공유.
+   * #2 디자인가이드(첨부2) 반영 시 여기 값만 조정. */
+  --scheduler-card-waiting-bg: #EDF6FD;             /* 00 예약완료 — 연한 하늘색(기존 #E3F2FD 보다 옅게) */
+  --scheduler-card-waiting-border: #D3E6F5;         /* bg 보다 살짝 진한 하늘 테두리(grid 와 분리) */
+  --scheduler-card-done-bg: rgba(46, 125, 50, 0.14); /* 01 진료완료 */
+  --scheduler-card-done-border: rgba(46, 125, 50, 0.3);
+  --scheduler-card-undone-bg: #fff0f0;               /* 02 미이행 */
+  --scheduler-card-undone-border: rgba(229, 57, 53, 0.3);
+  --scheduler-card-cancel-bg: #f5f5f5;               /* 03 취소 */
+  --scheduler-card-cancel-border: #d0d0d0;
+  --scheduler-card-receipt-bg: #FFF3E0;              /* 05 접수대기 */
+  --scheduler-card-receipt-border: rgba(245, 124, 0, 0.3);
+
+  /* 팝업 상태뱃지(ReservationPopup) — 카드와 다른 진한 톤(뱃지 가독). */
+  --scheduler-status-done: #2e7d32;
+  --scheduler-status-undone: #e53935;
+  --scheduler-status-cancel: #999;
+
+  /* 카드 hover 강조 — 배경 변경 없이 테두리 색만 연한 주황(+추가 hover 톤, 굵기 2px 유지). */
+  --scheduler-card-hover-border: #FF9628;
+}

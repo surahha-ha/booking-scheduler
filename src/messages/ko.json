@@ -1,0 +1,32 @@
+{
+  "terms": {
+    "staff": "담당자",
+    "service": "서비스 항목",
+    "serviceGroup": "서비스 그룹",
+    "customer": "고객",
+    "hours": "운영시간",
+    "dayOff": "휴무",
+    "room": "구역",
+    "booking": "예약",
+    "visit": "방문",
+    "openState": {
+      "on": "운영중",
+      "off": "운영종료"
+    },
+    "status": {
+      "waiting": "대기",
+      "complete": "완료",
+      "undone": "미이행",
+      "cancel": "취소",
+      "booked": "예약"
+    },
+    "memberType": {
+      "member": "회원",
+      "guest": "비회원"
+    },
+    "viewMode": {
+      "week": "주별",
+      "day": "일별"
+    }
+  }
+}

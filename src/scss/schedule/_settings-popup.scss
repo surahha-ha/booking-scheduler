@@ -1,0 +1,74 @@
+/* src/scss/schedule/_settings-popup.scss */
+@use '../variables' as *;
+
+/* wrapper-attr로 들어가는 class */
+.scheduleSettingsPopup {
+  .uiModal__title {
+    border-bottom: 1px solid $color-border-light;
+  }
+
+  .uiModal__body {
+    padding: 14px !important;
+  }
+
+  .scheduleSettingsPopup__toolbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0 14px;
+    gap: 8px;
+  }
+
+  .scheduleSettingsPopup__tabs {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .scheduleSettingsPopup__tab {
+    height: 28px;
+    padding: 0 14px;
+    border: 1px solid $color-border-light;
+    border-bottom: 0;
+    border-top-left-radius: $radius-2;
+    border-top-right-radius: $radius-2;
+    background: transparent;
+    cursor: pointer;
+    font-size: $font-size-13;
+    font-weight: $font-weight-medium;
+    color: $color-text-segment;
+
+    &.is-active {
+      background: #E88B1D;
+      border-color: #E88B1D;
+      color: #fff;
+      font-weight: $font-weight-bold;
+    }
+  }
+
+  .scheduleSettingsPopup__panel {
+    height: 100%;
+  }
+
+  .scheduleSettingsPopup__close {
+    width: 32px;
+    height: 32px;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font-size: 20px;
+    color: #424242;
+    padding: 0;
+    flex: 0 0 auto;
+
+    &:hover {
+      color: #000;
+    }
+
+    &:focus-visible {
+      outline: 2px solid rgba(0, 0, 0, 0.25);
+      outline-offset: -2px;
+    }
+  }
+}

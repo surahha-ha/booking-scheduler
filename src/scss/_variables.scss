@@ -1,0 +1,79 @@
+/* src/scss/variables.scss
+ * ======================================================================
+ * Design Tokens (Semantic)
+ * - "값"을 직접 쓰지 말고, 의미(semantic)로만 사용
+ * ====================================================================== */
+
+/* ===== Colors ===== */
+$color-primary: #2F6FED;
+$color-bg-page: #ffffff;
+$color-bg-toolbar: #ffe600;
+
+$color-surface: #ffffff;
+$color-surface-muted: #f7f7f7;
+$color-surface-alt: #f5f5f5;
+$color-surface-hover: #f2f2f2;
+
+$color-bg-segment: #ebebeb;
+$color-text-segment: #424242;
+$color-bg-scheduler-header: #E7EAF0;
+$color-text-black: #000;
+
+$color-text-strong: #111111;
+$color-text-default: #333333;
+$color-text-muted: rgba(0, 0, 0, 0.75);
+
+$color-border-default: #cccccc;
+$color-border-light: #dddddd;
+$color-border-scheduler: #8F94A3;
+$color-divider: rgba(0, 0, 0, 0.08);
+
+$color-btn-secondary: #6c757d;
+
+$color-danger: #dd2222;
+$color-danger-bg: #ffecec;
+
+$color-warn-bg: #f0b0f0;
+
+$color-now: #256AF5;
+$color-current-time: #2F6FED;
+
+/* ===== Typography ===== */
+$font-family-base: Pretendard, system-ui, -apple-system,
+"Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", sans-serif;
+
+$font-size-11: 11px;
+$font-size-12: 12px;
+$font-size-13: 13px;
+$font-size-14: 14px;
+$font-size-16: 16px;
+
+$font-weight-regular: 400;
+$font-weight-medium: 500;
+$font-weight-semibold: 600;
+$font-weight-bold: 700;
+
+/* ===== Radius ===== */
+$radius-2: 2px;
+$radius-4: 4px;
+$radius-6: 6px;
+$radius-8: 8px;
+$radius-10: 10px;
+$radius-pill: 999px;
+
+/* ===== Spacing ===== */
+$space-2: 2px;
+$space-4: 4px;
+$space-6: 6px;
+$space-8: 8px;
+$space-10: 10px;
+$space-12: 12px;
+$space-14: 14px;
+
+/* ===== Shadow ===== */
+$shadow-1: 0 2px 6px rgba(0, 0, 0, 0.15);
+
+/* ===== Scheduler Cell Sizing ===== */
+$sch-line-h: 22px; /* sb-item 한 줄 높이 */
+$sch-line-gap: 0px; /* 줄 간격 */
+$sch-cell-pad-y: 4px; /* 셀 상하 padding 합 */

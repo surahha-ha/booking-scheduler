@@ -1,0 +1,183 @@
+@use './variables' as *;
+@use './schedule/buttons';
+
+/* =========================================================
+ * Modal Dialog Overrides
+ * - 다이얼로그를 Schedule 모듈 팝업 스타일과 통일
+ * ========================================================= */
+
+/* Bootstrap modal 기본 z-index (backdrop 1050 / modal 1055) 는
+ * 모달(1501) / 서비스 항목 설정 popup(1502+) 보다 낮아 confirm dialog 가 가려진다.
+ * 다이얼로그는 항상 가장 위에 보여야 하므로 모달 이상으로 끌어올린다. */
+.modal {
+  z-index: 2010 !important;
+}
+
+/* BModal backdrop:
+ *   - BootstrapVueNext / 일부 환경에서 backdrop 이 modal-content 위에 paint 되어
+ *     alert 자체를 어둡게 가리는 회귀가 발견됨(전역 부작용, 2026-05-26).
+ *   - backdrop 자체는 완전 투명 + 이벤트 차단 해제. alert 클릭 정상 동작.
+ *   - dim 효과는 modal-content 의 outer ring shadow 로 옮겨 — modal 영역은 가리지
+ *     않고 그 외부만 어둡게 깔린다. */
+.modal-backdrop {
+  background-color: transparent !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.modal-content {
+  /* outer ring: modal-content 의 박스 그림자가 화면 전체를 옅게 dim 처리하되
+   * modal-content 영역(alert 본문)은 그대로 강조. */
+  box-shadow:
+    0 0 0 9999px rgba(0, 0, 0, 0.18),
+    0 10px 30px rgba(0, 0, 0, 0.25) !important;
+}
+
+.modal-dialog {
+  font-family: $font-family-base;
+
+  /* 1. Modal Content Box */
+  .modal-content {
+    border: none;
+    border-radius: 6px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    background-color: #fff;
+  }
+
+  /* 2. Header */
+  .modal-header {
+    padding: 14px 20px;
+    border-bottom: none;
+    background-color: #fff;
+    align-items: center;
+
+    /* Title Style */
+    .modal-title {
+      font-size: 16px;
+      font-weight: $font-weight-bold;
+      color: #000;
+      line-height: 1.25;
+    }
+
+    /* Remove Pseudo-elements borders if any */
+    &::after,
+    &::before {
+      content: none;
+      display: none;
+      border: none;
+    }
+
+    /* Close Button */
+    & .btn-close {
+      padding: 0;
+      margin: 0 0 0 auto;
+      width: 18px;
+      height: 18px;
+      
+      background-color: transparent;
+      background-image: none;
+      border: none;
+      box-shadow: none;
+      
+      opacity: 1;
+      color: #333;
+      font-size: 18px;
+      
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+
+      /* Thin X Icon */
+      &::before {
+        content: '\2715';
+        color: #000;
+        line-height: 1;
+        font-family: sans-serif;
+      }
+
+      /* Hover/Active/Focus States */
+      &:hover,
+      &:active,
+      &:focus {
+        opacity: 1;
+        color: #333;
+        background: transparent;
+        box-shadow: none;
+        outline: none;
+      }
+    }
+  }
+
+  /* 3. Body */
+  .modal-body {
+    padding: 20px;
+    font-size: 14px;
+    color: #333;
+    white-space: pre-wrap;
+  }
+
+  /* Adjust padding when header exists */
+  .modal-header + .modal-body {
+    padding-top: 0;
+  }
+
+  /* 4. Footer */
+  & .modal-footer {
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    
+    padding: 0 20px 20px 20px;
+    border-top: none;
+
+    /* Button Common Styles */
+    .btn {
+      --bs-btn-width: auto; /* Override Bootstrap var */
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      
+      min-width: 120px;
+      border-radius: 0;
+      margin: 0;
+    }
+
+    /* Confirm Button (Primary) - Orange */
+    .btn-primary {
+      @extend .btn-action;
+
+      background-color: $color-current-time; /* #2F6FED */
+      border-color: transparent;
+      color: #fff;
+
+      &:hover,
+      &:focus,
+      &:active {
+        background-color: #DC5B00;
+        color: #fff;
+        box-shadow: none;
+        outline: none;
+        filter: none;
+      }
+    }
+
+    /* Cancel Button (Secondary) - Dark Gray */
+    .btn-secondary {
+      @extend .btn-action;
+
+      box-shadow: none;
+      outline: none;
+
+      &:hover,
+      &:focus,
+      &:active {
+        box-shadow: none;
+        outline: none;
+        filter: none;
+      }
+    }
+  }
+}

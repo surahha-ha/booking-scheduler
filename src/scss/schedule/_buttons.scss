@@ -1,0 +1,159 @@
+@use '../variables' as *;
+@use '../mixins' as *;
+
+/* =========================================================
+ * Button Policy (Schedule Module)
+ * ========================================================= */
+
+/* 1. Common Base */
+%btn-base {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0; /* All scheduler buttons are square */
+  font-weight: $font-weight-medium;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+
+  /* Desktop Standard */
+  height: 32px;
+  padding: 0 12px;
+  font-size: $font-size-12;
+
+  /* Mobile Touch Target */
+  @include mobile {
+    height: 40px;
+    font-size: $font-size-14;
+  }
+}
+
+/* Base Small Variant (높이 28px) */
+%btn-small {
+  @extend %btn-base;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* Base Micro Variant (높이 20px, 폰트 11px) */
+%btn-micro {
+  @extend %btn-base;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+/* 2. Action Button (기본형: Dark Gray) */
+/* 주요 기능 수행 (저장, 등록 등) */
+.btn-action {
+  @extend %btn-base;
+
+  /* User Policy: Basic Action Style */
+  min-width: 120px;
+  background-color: #424242;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid transparent;
+
+  &:hover {
+    background-color: #333; /* Darken on hover */
+    filter: none;
+  }
+}
+
+/* 2-1. Primary Variant (강조형: Brand Orange) */
+/* 가장 중요한 액션 (예: 최종 저장) */
+.btn-action.btn-primary {
+  background-color: $color-current-time; /* #2F6FED */
+  color: #fff;
+
+  &:hover {
+    background-color: #DC5B00;
+    filter: none;
+  }
+
+  &:disabled {
+    background-color: #8F94A3;
+    color: #fff;
+    border-color: transparent;
+  }
+}
+
+/* 3. Basic Button (취소/일반 - 화이트) */
+/* 보조 기능 (취소, 닫기 등) */
+.btn-basic {
+  @extend %btn-base;
+  background-color: #fff;
+  border: 1px solid $color-border-default;
+  color: $color-text-default;
+
+  &:hover {
+    background-color: $color-surface-hover;
+    border-color: $color-text-strong;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+}
+
+/* Small Variants */
+.btn-basic-sm {
+  @extend .btn-basic;
+  @extend %btn-small;
+}
+
+/* Micro Variants */
+.btn-basic-micro {
+  @extend .btn-basic;
+  @extend %btn-micro;
+  background-color: #EFF1F5; /* 기존 회색톤 유지 */
+  border-color: transparent;
+  color: #424242;
+
+  &:hover {
+    background-color: #8F94A3;
+    color: #fff;
+    border-color: transparent;
+  }
+}
+
+/* 4. Icon Button (아이콘 전용) */
+/* 예: 닫기(X), 메뉴(⋮), 검색(돋보기) */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 0; /* Square for consistency, or standard touch target */
+  width: 32px; /* 데스크탑 */
+  height: 32px;
+  padding: 0;
+  color: $color-text-default;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+
+  /* Mobile */
+  @include mobile {
+    width: 40px;
+    height: 40px;
+  }
+
+  img, svg {
+    width: 20px;
+    height: 20px;
+    pointer-events: none; /* 아이콘 클릭 방지(버튼 클릭 유도) */
+  }
+
+  &.mini {
+    width: 16px;
+  }
+}

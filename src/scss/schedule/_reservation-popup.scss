@@ -1,0 +1,249 @@
+@use '../variables' as *;
+/* status 뱃지 + EXT 뱃지를 한 줄에 인라인 배치하기 위한 wrapper */
+.schedulePopup .popupTitleBadgeGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.schedulePopup .popupTitleBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 18px;
+  border-radius: 2px;
+  background-color: var(--scheduler-grabber, #8F94A3);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+
+  &.is-done {
+    background-color: var(--scheduler-status-done, #2e7d32);
+    color: #fff;
+  }
+
+  &.is-undone {
+    background-color: var(--scheduler-status-undone, #e53935);
+    color: #fff;
+  }
+
+  &.is-cancel {
+    background-color: var(--scheduler-status-cancel, #999);
+    color: #fff;
+  }
+
+  /* 외부 시스템 연동 예약 — Slate Indigo EXT 뱃지
+   * 'EXT' 3글자 한정이라 width auto + padding으로 자연 너비, 좌측 여백은 wrapper의 gap으로 통일 */
+  &.popupTitleBadge--external-sync {
+    background-color: var(--scheduler-external, #5B6CB8);
+    color: #fff;
+    width: auto;
+    padding: 0 8px;
+  }
+}
+
+.schedulePopup__body {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.schedulePopupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding-right: 6px; // 우측 close 버튼 여백
+}
+
+.schedulePopupHeader__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.schedulePopupHeader__title {
+  font-weight: 700;
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.schedulePopupHeader__badge {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #f2f2f2;
+}
+
+.schedulePopupForm {
+  display: grid;
+  /* field 컬럼은 minmax(0, 1fr) — 그냥 1fr 은 암묵적 min=min-content 라,
+     담당의사 행(.doctorRadioList--inline, flex-wrap:nowrap)의 긴 min-content 가
+     컬럼을 강제 확장 → 다른 입력칸까지 같이 넓어지고 팝업 우측 여백을 잡아먹는다.
+     min 을 0 으로 고정해 컬럼이 콘텐츠로 늘어나지 않게 한다(담당의사는 개수 페이징으로 처리). */
+  grid-template-columns: 65px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.schedulePopupForm__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #000;
+}
+
+.schedulePopupForm__datetime {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.schedulePopupForm__tilde {
+  font-weight: 800;
+  opacity: 0.7;
+}
+
+/* 공통 필드 */
+.scheduleField {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #CFCFCF;
+  border-radius: 0;
+  background: #fff;
+  outline: none;
+  font-size: 14px;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+
+  &:hover {
+    border-color: var(--scheduler-brand, #2F6FED);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+}
+
+select.scheduleField {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+
+  background-image: url('@/assets/icons/down.svg');
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 16px;
+  padding-right: 30px;
+  cursor: pointer;
+}
+
+/* 날짜/시간 필드는 폭을 고정해주면 더 안정적 */
+.scheduleField--date {
+  width: 100%;
+  height: 36px;
+  line-height: 35px;
+  position: relative;
+  color: #000000;
+
+  background-image: url('@/assets/icons/calendar.svg');
+  background-repeat: no-repeat;
+  background-size: 18px;
+  background-position: right 10px center;
+  padding-right: 34px;
+
+  cursor: pointer;
+
+  &::-webkit-calendar-picker-indicator {
+    opacity: 0; // 브라우저 기본 아이콘만 숨김
+    cursor: pointer;
+  }
+}
+
+.scheduleField--date::-webkit-calendar-picker-indicator {
+  background: url('@/assets/icons/calendar.svg') no-repeat center / 18px;
+  opacity: 1; // 보이게
+  cursor: pointer;
+}
+
+.scheduleField--time {
+  width: 125px;
+}
+
+/* 버튼 영역 */
+.schedulePopupActions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Patient Search UI */
+.schedulePatientSearch {
+  position: relative;
+  width: 100%;
+
+  form {
+    margin: 0;
+  }
+
+  fieldset {
+    border: 0;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+/* Doctor Section Styles */
+.doctorSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.doctorRegisterRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+
+  input {
+    flex: 1;
+  }
+}
+
+.doctorRadioList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 8px;
+}
+
+.doctorRadioItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #333;
+
+  input[type="radio"] {
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--scheduler-brand, #2F6FED);
+  }
+}

@@ -1,0 +1,142 @@
+/* Notivue custom theme */
+
+/* Notivue wrapper(list) 는 inline style 로 `z-index: var(--nv-z, 500)` 적용.
+ * 기본값 500 은 모달(1501) / 설정 popup(1502+) 아래라
+ * toast 가 popup 뒤에 가려진다. CSS variable 자체를 9999 로 override 하여
+ * inline style 평가 결과를 끌어올림 (선택자 override 가 아니라 변수 override). */
+:root {
+  --nv-z: 9999;
+}
+
+.Notivue__container,
+.Notivue__container * {
+  padding: 12px !important;
+  gap: 10px !important;
+}
+
+/* 기본 transform 제거(이동 애니메이션/포지션 영향) */
+[class^="Notivue__"],
+[class*=" Notivue__"] {
+  transform: none !important;
+}
+
+/* X 버튼 제거 */
+.Notivue__close {
+  display: none !important;
+}
+
+/* ===== 공통 카드 ===== */
+.Notivue__notification {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  min-width: 200px;
+  max-width: 300px;
+
+  padding: 3px 9px;
+  border-radius: 60px;
+
+  font-size: 14px;
+  line-height: 1.25;
+
+  background-color: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+
+  pointer-events: auto !important;
+
+  transition: opacity 0.12s ease-in !important;
+  animation: nv-fade-in 0.14s ease-out !important;
+  opacity: 1 !important;
+
+  bottom: 120px !important;
+}
+
+/* 아이콘 숨김 */
+.Notivue__icon {
+  display: none !important;
+}
+
+/* 첫 요소 left margin 제거 */
+.Notivue__notification > *:first-child {
+  margin-left: 0 !important;
+}
+
+/* ===== 타입별 ===== */
+/* ===== 타입별 ===== */
+.Notivue__notification[data-notivue="success"] {
+  background-color: rgba(66, 66, 66, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.18);
+
+  .Notivue__content-message {
+    color: #f5f5f5;
+    font-weight: 600;
+    font-size: 14px;
+    text-align: center;
+  }
+}
+
+.Notivue__notification[data-notivue="error"] {
+  background-color: rgba(254, 226, 226, 0.95);
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 8px 24px rgba(0, 0, 0, 0.12);
+
+  .Notivue__content-message {
+    text-align: center;
+    color: #7f1d1d;
+    font-weight: 600;
+    font-size: 14px;
+  }
+}
+
+.Notivue__notification[data-notivue="warning"] {
+  background-color: rgba(255, 248, 225, 0.95);
+
+  .Notivue__content-message {
+    color: #5a2a00;
+    font-weight: 600;
+    font-size: 14px;
+  }
+}
+
+.Notivue__notification[data-notivue="info"] {
+  background-color: rgba(238, 246, 255, 0.95);
+
+  .Notivue__content-message {
+    color: #5a2a00;
+    font-weight: 600;
+    font-size: 14px;
+  }
+}
+
+/* 퇴장 시 페이드아웃 */
+.Notivue__notification[data-state="leaving"],
+.Notivue__notification[aria-hidden="true"] {
+  opacity: 0 !important;
+}
+
+@keyframes nv-shake {
+  0%, 100% { transform: translateX(0) !important; }
+  20% { transform: translateX(-6px) !important; }
+  40% { transform: translateX(5px) !important; }
+  60% { transform: translateX(-3px) !important; }
+  80% { transform: translateX(2px) !important; }
+}
+
+@keyframes nv-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

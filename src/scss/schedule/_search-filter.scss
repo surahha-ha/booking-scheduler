@@ -1,0 +1,28 @@
+/* =========================================================
+ * Search Filter Bar (상단 검색필터바 base 레이아웃)
+ * - .scheduleSearchFilter 는 UiSearchInput 의 teleport 앵커이자
+ *   SchedulerSearchFilter.vue 의 base 컨테이너라 전역으로 유지한다.
+ * ========================================================= */
+.scheduleSearchFilter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  background: #fff;
+  flex-wrap: nowrap;
+  /* 진료모드는 상태 버튼이 4개(접수대기/진료완료/미이행/취소)로 늘어 전체 폭을 초과할 수 있음.
+     이때 항목이 쪼그라들어 내부 라벨(의사명·통계)이 2줄로 깨지던 문제 → 직계 항목은
+     쪼그라들지 않게(flex-shrink:0) 고정하고, 폭 초과 시 줄바꿈 대신 가로 스크롤로 처리. */
+  overflow-x: auto;
+
+  & > * {
+    flex-shrink: 0;
+  }
+}
+
+.scheduleSearchFilter__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}

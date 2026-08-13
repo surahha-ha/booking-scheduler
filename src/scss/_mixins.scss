@@ -1,0 +1,26 @@
+@use 'breakpoints' as *;
+
+/* 반응형 Mixins 정의 */
+@mixin mobile {
+  @media (max-width: #{$breakpoint-mobile - 1}) {
+    @content;
+  }
+}
+
+@mixin tablet {
+  @media (min-width: #{$breakpoint-mobile}) and (max-width: #{$breakpoint-tablet - 1}) {
+    @content;
+  }
+}
+
+@mixin desktop {
+  @media (min-width: #{$breakpoint-tablet}) {
+    @content;
+  }
+}
+
+@mixin upto-tablet {
+  @media (max-width: #{$breakpoint-tablet - 1}) {
+    @content;
+  }
+}
