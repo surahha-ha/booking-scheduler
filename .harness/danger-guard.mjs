@@ -13,14 +13,21 @@
  *    스크립트 파일 안에 든 명령도 보지 못한다(판정 단위가 명령 문자열이라).
  *
  * 사용:
- *   (훅) stdin 으로 도구 입력 JSON 을 받는다
- *   node skeletons/danger-guard.mjs --cmd "<명령>"   # 단건 판정
+ *   (훅) stdin 으로 도구 입력 JSON 을 받는다 — PreToolUse 에 건다
+ *   node skeletons/danger-guard.mjs --post           # PostToolUse 훅 — ask 후 실제 실행을 `after` 로 기록
+ *   node skeletons/danger-guard.mjs --cmd "<명령>"   # 단건 판정 (점검용 — 계측 로그에 안 남는다)
  *   node skeletons/danger-guard.mjs --status         # 활성 확인 (설정·규칙 수)
+ *
+ * 계측: 훅 경로의 판정은 `.harness/log.jsonl` 에 fire/pass 로 남는다 (docs/13 §2·§3).
+ * 승격: `.harness/promotions.jsonl` 의 유효 레코드가 있는 ask 규칙은 allow 로 통과하되
+ *       pass(rule·promoted) 로 계속 기록된다. 강등 조건 충족 시 자동으로 ask 복귀 (docs/15 §5·§6).
  *
  * 종료코드: 0 판정 완료(통과 포함) · 2 가드 오류
  */
 
 import { loadConfig, compile, emitDecision, readStdin, CONFIG_NAME } from './lib/config.mjs';
+import { logEvent, normalizeCmdPrefix, readLog } from './lib/log.mjs';
+import { readPromotions, promotionStateFor, currentPatternOf } from './lib/promotions.mjs';
 
 /** 기본 복구 문구 — 규칙에 `recover` 가 없을 때. 없는 것보다는 낫지만 규칙마다 적는 편이 훨씬 낫다. */
 const DEFAULT_RECOVER = {
@@ -30,14 +37,28 @@ const DEFAULT_RECOVER = {
 
 /**
  * 명령 하나를 판정한다. 순수 함수 — 이 함수 자체를 테스트한다.
+ * `rule` 은 로그의 규칙 식별자다(id 가 없으면 패턴 문자열) — `docs/13-v1-eval-design.md` §5.
  * @param {string} command
  * @param {object} config 하네스 설정 전체
- * @returns {{decision:'deny'|'ask', why:string, recover:string}|null}
+ * @returns {{decision:'deny'|'ask', why:string, recover:string, rule:string, probe:boolean}|null}
  */
 export function evaluate(command, config) {
   const g = (config && config.dangerGuard) || {};
   if (g.enabled === false) return null;
   if (!command || !command.trim()) return null;
+
+  // ⭐ 프로브 — 아무것도 막지 않는 검증 전용 표식 (F13). 실규칙보다 먼저 본다:
+  //    프로브 명령은 무해하도록 설계되므로 실규칙에 걸릴 일이 없어야 하고,
+  //    걸린다면 그 프로브는 기준 위반이다(무해하지 않다는 뜻).
+  if (g.probe && typeof g.probe.token === 'string' && g.probe.token && command.includes(g.probe.token)) {
+    return {
+      decision: 'deny',
+      probe: true,
+      rule: 'probe',
+      why: g.probe.why || '검증 전용 프로브 규칙입니다 — 이 차단이 곧 발동 검증 성공입니다.',
+      recover: g.probe.recover || '아무것도 막지 않았습니다. 이 서명이 떴다면 가드가 살아 있습니다.',
+    };
+  }
 
   // deny 가 ask 보다 먼저다 — 더 강한 판정이 이긴다.
   for (const decision of ['deny', 'ask']) {
@@ -51,6 +72,8 @@ export function evaluate(command, config) {
       if (c.re.test(command)) {
         return {
           decision,
+          probe: false,
+          rule: rule.id || String(rule.pattern),
           why: rule.why || '설정에 사유가 적혀 있지 않습니다.',
           recover: rule.recover || DEFAULT_RECOVER[decision],
         };
@@ -67,6 +90,8 @@ export function evaluate(command, config) {
     if (!t.error && !w.error && t.re.test(command) && w.re.test(command)) {
       return {
         decision: 'ask',
+        probe: false,
+        rule: 'shared',
         why: s.why || '공유 환경에 쓰기를 실행합니다.',
         recover: s.recover || DEFAULT_RECOVER.ask,
       };
@@ -83,16 +108,21 @@ export function evaluate(command, config) {
  *    아무것도 막지 않는데 보호받는다고 믿게 된다 — **미설치보다 나쁘다.**
  *    미설치는 의심이라도 하지만, 거짓 활성은 안심시킨다.
  *
- * @returns {{state:'off'|'empty'|'active', deny:number, ask:number, shared:boolean}}
+ * ⭐ 프로브는 실규칙 수와 **분리해 센다** (F13 승격 — `docs/13-v1-eval-design.md` §5).
+ *    프로브가 규칙 수를 채워 `active` 로 보이면 거짓 활성의 재발이다 —
+ *    실규칙 0 + 프로브 1 은 `empty` 다 (발동 검증은 되지만 아무것도 안 막는다).
+ *
+ * @returns {{state:'off'|'empty'|'active', deny:number, ask:number, shared:boolean, probe:boolean}}
  */
 export function statusOf(config) {
   const g = (config && config.dangerGuard) || {};
   const deny = (g.deny || []).length;
   const ask = (g.ask || []).length;
   const shared = !!(g.shared && g.shared.targetPattern && g.shared.writePattern);
-  if (g.enabled === false) return { state: 'off', deny, ask, shared };
-  if (deny + ask === 0 && !shared) return { state: 'empty', deny, ask, shared };
-  return { state: 'active', deny, ask, shared };
+  const probe = !!(g.probe && typeof g.probe.token === 'string' && g.probe.token);
+  if (g.enabled === false) return { state: 'off', deny, ask, shared, probe };
+  if (deny + ask === 0 && !shared) return { state: 'empty', deny, ask, shared, probe };
+  return { state: 'active', deny, ask, shared, probe };
 }
 
 /** 훅 입력에서 명령 문자열을 꺼낸다. 파싱 실패 시 원문 전체를 훑는다(fail-closed 쪽). */
@@ -124,7 +154,24 @@ async function main() {
       process.exit(2);
     }
     const s = statusOf(loaded.config);
-    const detail = `deny ${s.deny} · ask ${s.ask} · 공유자원 규칙 ${s.shared ? '설정됨' : '없음'}`;
+    // 위임 승격(v2)은 활성 확인에 보인다 — allow 로 도는 규칙이 몇인지 모르면 활성 확인이 아니다.
+    const { records } = readPromotions();
+    let promotedActive = 0;
+    if (records.length > 0) {
+      const { events } = readLog();
+      const ruleIds = new Set(records.map((r) => r && r.rule).filter(Boolean));
+      for (const id of ruleIds) {
+        if (
+          promotionStateFor(id, records, events, currentPatternOf(loaded.config.dangerGuard, id))
+            .active
+        )
+          promotedActive++;
+      }
+    }
+    const detail =
+      `deny ${s.deny} · ask ${s.ask} · 공유자원 규칙 ${s.shared ? '설정됨' : '없음'}` +
+      ` · 프로브 ${s.probe ? '설정됨' : '없음'}` +
+      (records.length > 0 ? ` · 승격 allow ${promotedActive}/${records.length}레코드` : '');
     const line = {
       off: `[danger-guard] 꺼짐 — enabled:false 입니다 (${detail})\n`,
       empty:
@@ -145,10 +192,81 @@ async function main() {
     process.exit(2);
   }
 
+  // PostToolUse — ask 발동 뒤 같은 명령이 실제 실행됐다는 행동적 신호를 `after` 로 남긴다.
+  // 사람 응답 4갈래를 직접 볼 수 없는 훅의 근사다 (docs/13 §2 — 근사임을 리포트도 표기한다).
+  if (argv.includes('--post')) {
+    const command = extractCommand(readStdin());
+    const hit = evaluate(command, loaded.config);
+    if (hit) {
+      logEvent({
+        event: 'after',
+        gate: 'danger-guard',
+        rule: hit.rule,
+        decision: hit.decision,
+        probe: hit.probe,
+        cmdPrefix: normalizeCmdPrefix(command),
+      });
+    }
+    process.exit(0);
+  }
+
   const cmdFlag = argv.indexOf('--cmd');
+  const fromHook = cmdFlag < 0;
   const command = cmdFlag >= 0 ? (argv[cmdFlag + 1] ?? '') : extractCommand(readStdin());
   const hit = evaluate(command, loaded.config);
+
+  // v2 위임 승격 — ask 판정에 유효한 승격 레코드가 있으면 allow 로 처리한다 (docs/15 §5).
+  // 강등 조건 충족은 여기서 감지돼 레코드가 무시된다(ask 복귀) — 설정 편집 없는 자동·즉시 강등.
+  // 레코드·로그를 못 읽으면 승격 없음 = ask 유지 (보수 방향 — docs/15 §7).
+  let promoted = false;
+  if (hit && hit.decision === 'ask' && !hit.probe) {
+    const { records } = readPromotions();
+    if (records.length > 0) {
+      const { events } = readLog();
+      promoted = promotionStateFor(
+        hit.rule,
+        records,
+        events,
+        currentPatternOf(loaded.config.dangerGuard, hit.rule),
+      ).active;
+    }
+  }
+
+  // 계측은 훅 경로만 남긴다 — --cmd 는 점검용 단건 판정이라 지표(분모)를 오염시킨다.
+  // ⭐ 승격된 매치도 기록을 끊지 않는다 — pass 에 rule·promoted 를 실어 분모와 강등 감시를 지킨다.
+  if (fromHook && command.trim()) {
+    logEvent(
+      hit
+        ? promoted
+          ? {
+              event: 'pass',
+              gate: 'danger-guard',
+              rule: hit.rule,
+              promoted: true,
+              cmdPrefix: normalizeCmdPrefix(command),
+            }
+          : {
+              event: 'fire',
+              gate: 'danger-guard',
+              rule: hit.rule,
+              decision: hit.decision,
+              probe: hit.probe,
+              cmdPrefix: normalizeCmdPrefix(command),
+            }
+        : { event: 'pass', gate: 'danger-guard', cmdPrefix: normalizeCmdPrefix(command) },
+    );
+  }
+
   if (!hit) process.exit(0);
+
+  if (promoted) {
+    // 점검 경로(--cmd)에서는 이유를 보이게 한다 — 왜 안 막혔는지 모르면 점검이 아니다.
+    if (!fromHook)
+      process.stderr.write(
+        `[danger-guard] 위임 승격 allow — 규칙 ${hit.rule} 에 유효한 승격 레코드가 있습니다 (docs/15 §5)\n`,
+      );
+    process.exit(0);
+  }
 
   emitDecision(hit.decision, reasonFor(hit));
   process.exit(0);

@@ -44,6 +44,11 @@ export default {
     shared: { targetPattern: null, writePattern: null },
   },
 
+  /** v2 위임 승격 (ask→allow) — harness-agent docs/15. 셋 다 채우기 전에는 후보 판정 안 함.
+   * n: 그 규칙이 한 주에 몇 번 걸리나 / immediateSeconds: 판정 메시지 읽는 실측의 절반 아래=즉답 /
+   * spreadDays: 그 작업이 며칠에 한 번 돌아오나(최소 2). */
+  promotion: { n: null, immediateSeconds: null, spreadDays: null },
+
   testFirst: { enabled: false, grandfather: true, scopes: [] },
   drift: { mirrors: [], approvedDifferences: [] },
   // 판별질문: "이 문서가 틀리면 누군가 잘못된 작업을 하나?"

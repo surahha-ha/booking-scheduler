@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluate, extractCommand } from './danger-guard.mjs';
+import { evaluate, extractCommand, statusOf } from './danger-guard.mjs';
 import { compile } from './lib/config.mjs';
 
 /** 합성 설정 — 실제 프로젝트 규칙이 아니라 구조를 보기 위한 최소값. */
@@ -94,6 +94,67 @@ test('⭐ 이스케이프가 소실된 문자열 패턴은 조용히 통과시�
 
 test('패턴이 문자열도 정규식도 아니면 오류로 돌린다', () => {
   assert.ok(compile(42).error);
+});
+
+test('⭐ 규칙이 0개면 active 가 아니라 empty 다 — 거짓 활성은 미설치보다 나쁘다', () => {
+  assert.equal(statusOf({ dangerGuard: { enabled: true } }).state, 'empty');
+  assert.equal(statusOf({ dangerGuard: { enabled: true, deny: [], ask: [] } }).state, 'empty');
+});
+
+test('규칙이 하나라도 있으면 active', () => {
+  assert.equal(statusOf(cfg).state, 'active');
+});
+
+test('공유자원 규칙만 있어도 active 다', () => {
+  const c = { dangerGuard: { enabled: true, shared: { targetPattern: /a/, writePattern: /b/ } } };
+  assert.equal(statusOf(c).state, 'active');
+});
+
+test('enabled:false 는 off — empty 와 구분한다', () => {
+  assert.equal(statusOf({ dangerGuard: { enabled: false, deny: [{}] } }).state, 'off');
+});
+
+test('설정 자체가 없어도 상태 판정이 죽지 않는다', () => {
+  assert.equal(statusOf(undefined).state, 'empty');
+});
+
+test('⭐ 프로브 — 표식이 든 명령은 deny 로 잡히고 probe:true 로 표시된다 (F13)', () => {
+  const c = { dangerGuard: { enabled: true, probe: { token: 'HARNESS-PROBE-7f3a' } } };
+  const hit = evaluate('echo HARNESS-PROBE-7f3a', c);
+  assert.equal(hit.decision, 'deny');
+  assert.equal(hit.probe, true);
+  assert.equal(hit.rule, 'probe');
+});
+
+test('⭐ 프로브만 있으면 empty 다 — 프로브가 규칙 수를 채워 활성으로 보이면 거짓 활성의 재발이다', () => {
+  const c = { dangerGuard: { enabled: true, probe: { token: 'HARNESS-PROBE-7f3a' } } };
+  const s = statusOf(c);
+  assert.equal(s.state, 'empty');
+  assert.equal(s.probe, true);
+});
+
+test('프로브는 실규칙에 앞선다 — 프로브 명령이 실규칙에도 걸리면 그 프로브는 기준 위반이다', () => {
+  const c = {
+    dangerGuard: {
+      enabled: true,
+      deny: [{ pattern: /PROBE/, why: '실규칙이 우연히 덮는다' }],
+      probe: { token: 'HARNESS-PROBE-7f3a' },
+    },
+  };
+  assert.equal(evaluate('echo HARNESS-PROBE-7f3a', c).probe, true);
+});
+
+test('실규칙 발동은 probe:false 이고 rule 은 id, 없으면 패턴 문자열이다', () => {
+  const withId = {
+    dangerGuard: { enabled: true, deny: [{ id: 'no-wipe', pattern: /\bwipe-all\b/, why: 'w' }] },
+  };
+  assert.equal(evaluate('wipe-all', withId).rule, 'no-wipe');
+  assert.equal(evaluate('wipe-all', withId).probe, false);
+  assert.equal(evaluate('wipe-all', cfg).rule, '\\bwipe-all\\b');
+});
+
+test('공유 자원 발동의 rule 은 shared 다', () => {
+  assert.equal(evaluate('cmd --target shared WRITE x', cfg).rule, 'shared');
 });
 
 test('훅 입력 JSON 에서 명령을 꺼낸다', () => {
