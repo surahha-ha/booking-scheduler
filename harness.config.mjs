@@ -40,6 +40,14 @@ export default {
         recover: '남길 것이 있으면 stash 하거나 브랜치를 만든 뒤 진행하세요.',
       },
     ],
+    /**
+     * ⭐ 검증 전용 프로브 — 위험을 막는 규칙이 아니다 (harness-agent 필드 리포트 1 F12 · 2 F13).
+     * 훅 연결이 살아 있는지를 실규칙 발동 없이 확인하는 표식. 이 토큰이 든 명령은 deny 되고
+     * 로그에 probe:true 로 남아 지표에서 제외된다. 실규칙 없이도 "가드가 불리는가" 를 검증한다.
+     */
+    probe: {
+      token: 'HARNESS_PROBE_BS',
+    },
     // 공유 자원 없음 — 이 프로젝트는 외부 저장소에 쓰지 않는다(API 는 mock).
     shared: { targetPattern: null, writePattern: null },
   },
