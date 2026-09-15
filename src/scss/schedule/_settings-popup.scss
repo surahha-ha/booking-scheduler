@@ -16,54 +16,83 @@
     align-items: flex-end;
     justify-content: space-between;
     width: 100%;
-    padding: 0 14px;
+    padding: 0 20px;
     gap: 8px;
   }
 
   .scheduleSettingsPopup__tabs {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 0;
   }
 
   .scheduleSettingsPopup__tab {
-    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    position: relative;
+    height: 39px;
     padding: 0 14px;
-    border: 1px solid $color-border-light;
-    border-bottom: 0;
+    border: 0;
     border-top-left-radius: $radius-2;
     border-top-right-radius: $radius-2;
     background: transparent;
     cursor: pointer;
-    font-size: $font-size-13;
-    font-weight: $font-weight-medium;
+    font-size: 16px;
+    font-weight: 400;
     color: $color-text-segment;
 
+    & + .scheduleSettingsPopup__tab {
+      margin-left: 18px;
+    }
+
+    & + .scheduleSettingsPopup__tab::before {
+      content: "|";
+      position: absolute;
+      top: 50%;
+      left: -9px;
+      transform: translate(-50%, -50%);
+      color: rgba(0, 0, 0, 0.3);
+      font-weight: 400;
+      line-height: 1;
+      pointer-events: none;
+    }
+
     &.is-active {
-      background: #E88B1D;
-      border-color: #E88B1D;
-      color: #fff;
-      font-weight: $font-weight-bold;
+      color: $color-primary;
+      font-weight: 600;
     }
   }
 
-  .scheduleSettingsPopup__panel {
+  .scheduleSettingsPopup__panel,
+  .settings-panel {
     height: 100%;
+    min-height: 0;
   }
 
   .scheduleSettingsPopup__close {
-    width: 32px;
-    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
     border: 0;
     background: transparent;
     cursor: pointer;
-    font-size: 20px;
-    color: #424242;
     padding: 0;
     flex: 0 0 auto;
+    font-size: 0;
+    color: transparent;
+
+    &::before {
+      content: '\2715';
+      color: #000;
+      font-size: 21px;
+      line-height: 1;
+      transform: translateY(-3px);
+    }
 
     &:hover {
-      color: #000;
+      color: transparent;
     }
 
     &:focus-visible {

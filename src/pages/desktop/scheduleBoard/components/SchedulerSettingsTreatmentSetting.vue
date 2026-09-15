@@ -7,16 +7,22 @@ import {push} from 'notivue';
 import {useDialog} from '@/lib/useDialog';
 import {useStaffStore} from '@/stores/staffStore';
 import {useHolidayStore} from '@/stores/holidayStore';
-import {useSchedulerFilterStore} from '@/stores/useSchedulerFilterStore';
-import {getSiteWorkHours, getStaffWorkHours, getTreatmentSettings, saveTreatmentSettings} from '@/api/siteApi';
-import {assignUnassigned, getUnassignedReservations} from '@/api/bookApi';
+import {getSiteWorkHours, getStaffWorkHours, getTeams, saveTreatmentSettings} from '@/api/siteApi';
+import {getUnassignedReservations} from '@/api/bookApi';
+import {isInvalidTimeText, isReversedTimeRange, maskTimeTyping, normalizeTimeInput} from '@/utils/timeInputUtils';
+import {clampOverlayPos, clampPopoverPos, settlePopoverPos} from '@/utils/popoverPlacementUtils';
 import UiSegmentedControl from '@/components/ui/UiSegmentedControl.vue';
+import UnassignedDataModal from '@/components/popup/UnassignedDataModal.vue';
 import CellMorePopover from './CellMorePopover.vue';
+import SchedulerSettingsOffDayControls from './SchedulerSettingsOffDayControls.vue';
+import {monthlyOptionValue, recurringChipLabel, WEEKDAY_LABELS} from '../offDayOptions';
+import {inheritedInstitutionOffOn, isEveryWeekOff, isInstitutionRecurringOff, isStaffOffOn} from '../offDayRules';
+import {useDialogGuard} from '@/composables/useDialogGuard';
+import {DEFAULT_OPERATING_END, DEFAULT_OPERATING_START} from '@/constants/operatingHours';
 
 const staffStore = useStaffStore();
 const {doctors} = storeToRefs(staffStore);
 const holidayStore = useHolidayStore();
-const filterStore = useSchedulerFilterStore();
 const dialog = useDialog();
 
 /* 조회(baseline) 실패 시 안내 문구 — bookStore 의 일시적 장애 안내와 동일 문구를 재사용한다.
@@ -24,10 +30,10 @@ const dialog = useDialog();
  *
  * ★게이트는 **원천별**이다 — 한쪽 장애가 다른 쪽 저장까지 막지 않는다.
  *  BE 계약(POST settings/save) — 필드 미전송(null) = 그 파트를 아예 손대지 않음:
- *   teams 미전송 → 자체 파트 통째 skip / workingHours 미전송 → 담당자 운영시간·오버라이드 미변경 / site 미전송 → 사업장 파트 통째 skip.
- *  - teamLoadFailed : getTreatmentSettings(팀)          → 실패 시 teams=[] 로 저장하면 팀·구성원 전멸
+ *   teams 미전송 → 자체 파트 통째 skip / workingHours 미전송 → 담당자 운영시간·오버라이드 미변경 / site 미전송 → 사업장 설정 파트 통째 skip.
+ *  - teamLoadFailed : getTeams(팀, 자체 DB)          → 실패 시 teams=[] 로 저장하면 팀·구성원 전멸
  *  - staffLoadFailed : getStaffWorkHours(담당자 운영시간)   → 자체 TB
- *  - siteLoadFailed : getSiteWorkHours(사업장 + 휴무규칙) → 원천 사업장 설정
+ *  - siteLoadFailed : getSiteWorkHours(사업장 + 휴무규칙) → 원천 외부 시스템
  *  각 플래그는 소유한 hydrate 함수 하나만 쓴다(서로 덮어쓰기 금지). */
 const SERVICE_UNAVAILABLE_MSG = '일시적인 서비스 접근 불가입니다.\n잠시 후에 다시 시도해주세요.';
 const teamLoadFailed = ref(false);
@@ -74,17 +80,11 @@ const LEFT_TAB_ITEMS = [
   {value: 'WORKING_HOURS', label: '운영시간'},
 ];
 
-const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
+/* 요일 라벨·반복 옵션은 휴무 컨트롤(SchedulerSettingsOffDayControls)과 공유한다 → offDayOptions.ts */
 
-/* 요일 휴무 반복 옵션 (다중 선택) */
-const RECURRING_OPTIONS = [
-  {value: 'WEEKLY', label: '매주'},
-  {value: 'MONTHLY_1', label: '매월 1번째'},
-  {value: 'MONTHLY_2', label: '매월 2번째'},
-  {value: 'MONTHLY_3', label: '매월 3번째'},
-  {value: 'MONTHLY_4', label: '매월 4번째'},
-  {value: 'MONTHLY_5', label: '매월 5번째'},
-];
+/* 진료팀 구성원으로 배정할 수 없는 담당자명. BE 가 사업장 설정 경유 예약의 담당의로 고정 사용하는 자리표시자다
+ * (McsBookSyncService.resolveDoctorName · McsReservationBackfillService 의 선등록). */
+const UNASSIGNABLE_DOCTOR_NAME = '미지정';
 
 /* 담당자 목록은 staffStore.doctors 사용 — 부모(scheduleBoard)에서 bookStore가 loadDoctor() 호출 완료 상태.
  * 식별자는 staffId(number) 사용 — 백엔드 external_staff_no 컬럼과 그대로 매핑됨 */
@@ -114,7 +114,7 @@ const BLOCK_KIND_LABEL = {
   DINNER: '휴게시간2',
 };
 
-/* INSTITUTION 모드 캘린더 셀의 직원 entry 최대 표시 개수 — 초과 시 "더보기" popover */
+/* 캘린더 셀의 직원 entry 최대 표시 개수 — 초과 시 "더보기" popover */
 const CELL_ENTRY_VISIBLE_MAX = 3;
 
 /* 사업장 운영시간(요일별) — 원천은 사업장 설정.
@@ -129,7 +129,7 @@ const institutionBreaksByWeekday = ref(new Map());
  * 요일 축이 없어 사업장당 한 세트뿐인데, 요일 편집 popover 를 그대로 쓰려고
  * 한 칸(HOLIDAY_SLOT)짜리 Map 으로 담는다.
  * ⚠️ institutionWeeklyDayMap 에 특수 키로 섞지 않는다 — 그 Map 을 요일로 순회하는 곳
- *   (institutionDefaultDayMap · institutionBreakSummary · buildInstitutionTimesPayload)에
+ *   (getStaffWorkBlock · buildInstitutionTimesPayload)에
  *   공휴일이 요일 행으로 새어 나가 담당자 기본값이나 site[] 에 엉뚱한 dayCd 로 실린다.
  * 공휴일에 쉬는지 여부는 여기가 아니라 includePublicHolidays(=holidayClosedYn) 가 갖는다 —
  * 휴무로 바꿔도 시간 값은 지우지 않고 보존한다(다시 진료로 되돌렸을 때 살아 있어야 한다). */
@@ -137,6 +137,13 @@ const HOLIDAY_OWNER = 'INSTITUTION_HOLIDAY';
 const HOLIDAY_SLOT = 0;
 const institutionHolidayDayMap = ref(new Map());
 const institutionHolidayBreaks = ref(new Map());
+
+/* 사업장 **일자별** 운영시간 — Map<'YYYY-MM-DD', Block[]>. 임시진료로 지정한 날짜에 실제로 저장된 시각이다.
+ * ⚠️ 조회 전용이다(응답 dateTimes). 자체 에 일자별 시간 편집 UI 가 없어 저장 payload 에도 없고,
+ *   그래서 dirty 판정(SITE_STATE_KEYS)에도 넣지 않는다.
+ * 이 값을 안 보면 보드·타임라인은 그 날짜에 저장된 시각으로 열리는데 이 화면만 요일 시각을 그려
+ * 같은 날 같은 담당자의 시간이 화면마다 갈린다(임시진료 지정 후 요일 운영시간을 바꾼 경우 등). */
+const institutionDateDayMap = ref(new Map());
 
 /* ownerKey('STAFF:<id>') × weekday × WeekdayBlock[]
  * blocks 비어있거나 entry 자체가 없으면 해당 요일 휴무 */
@@ -171,93 +178,114 @@ function hasBlocksFor(ownerKey, weekday) {
 
 /* ===== 담당자 운영시간 7행 인라인 편집 ===== */
 
-/* 사업장 운영시간을 담당자 요일맵 모양으로. 운영시간을 한 번도 정하지 않은 담당자의 기본값이다. */
-function institutionDefaultDayMap() {
-  const m = new Map();
-  for (const [weekday, blocks] of institutionWeeklyDayMap.value) {
-    const work = blocks.find(b => b.kind === 'WORK');
-    if (work) m.set(weekday, [{...work}]);
-  }
-  return m;
+/* 그 담당자의 **그 요일**이 미설정인가 — 미설정이면 사업장의 그 요일 운영시간을 기본값으로 쓴다.
+ *
+ * ★판정 단위는 요일이다(담당자가 아니다). 월요일만 정한 담당자의 화~일은 여전히 미설정이므로
+ *  기관 값을 따른다. 예전에는 "요일을 하나라도 정했으면 그 담당자 전체가 상속 대상에서 빠지는"
+ *  담당자 단위 판정이라, 월요일 1건 때문에 나머지 6일이 빈칸(=휴무)으로 보였다.
+ *  보드(staffStore.loadWorkHours → doctorRules)와 월 캘린더(formatListEntries)는 처음부터
+ *  요일 단위였다 — 이 표만 어긋나 있었다.
+ *
+ * 세 상태는 요일마다 따로 선다(BE SiteService.getStaffWorkHours 규약과 같다):
+ *   entry 없음 = 미설정(기관 값 상속) / entry = [] = 휴무 / entry = [block] = 진료. */
+function usesInstitutionDefault(staffId, weekday) {
+  return !workingHoursByOwner.value.get(`STAFF:${staffId}`)?.has(weekday);
 }
 
-/* 운영시간을 한 번도 정하지 않은 담당자인가 — 그렇다면 화면·저장 모두 사업장 값을 기본값으로 쓴다.
- * (요일 하나라도 정했으면 그 사람의 설정을 그대로 존중한다. 비워 둔 요일은 "그 요일 휴무"이다.) */
-function usesInstitutionDefault(staffId) {
-  return isUnsetStaffOwner(`STAFF:${staffId}`);
+/* 화면에 보이는 그 시각이 **담당자 자기 값이 아니라 사업장에서 빌려온 값**인가.
+ * 표기를 갈라 주지 않으면 두 상태가 똑같이 생겨서, DB 를 열어 본 사람은 "담당자 운영시간이
+ * 사라졌다"고 읽는다 — 실제로는 애초에 저장된 적이 없고 기관 값을 참조해 그리던 것이다.
+ * 같은 이유로 사업장 운영시간을 지우면 이 사람들의 표기가 함께 사라진다(상속의 정상 동작이지
+ * 데이터 삭제가 아니다 — 자기 값을 가진 담당자의 행은 그대로 남는다).
+ *
+ * ★빌린 값을 담당자 행으로 확정 저장하지는 않는다. 사업장 운영시간의 원천은 외부 시스템
+ *  (사업장 운영시간 테이블)고 담당자는 자체 테이블(담당자 운영시간 테이블)이라, 복사하면
+ *  사업장 설정 값이 자체 에 굳어 이후 기관 운영시간을 바꿔도 따라오지 않는다(dayMapToTimes 주석). */
+function showsInheritedStaffTime(staffId, weekday) {
+  return usesInstitutionDefault(staffId, weekday)
+      && getStaffWeekdayBlocks(`STAFF:${staffId}`, weekday).length > 0;
 }
 
-function isUnsetStaffOwner(ownerKey) {
-  if (!ownerKey || !ownerKey.startsWith('STAFF:')) return false;
+/* 그 담당자·요일에 실제로 표시할 진료 블록들. 미설정 요일이면 사업장의 그 요일 블록이다.
+ * 채워 넣지 않고 읽는 시점에 참조하므로, 기관 값을 방금 화면에서 고쳤어도 즉시 따라온다.
+ *
+ * ★상속 판정을 하는 곳은 여기 하나여야 한다 — 담당자 7행 표 · 월 캘린더 라벨 · 일자 지정 popover 가
+ *  같은 값을 보여야 한다. (예전에는 popover 만 raw dayMap 을 읽어, 셀에 기관 시간이 찍혀 있는데
+ *  클릭하면 입력칸이 비어 있었다.) */
+function getStaffWeekdayBlocks(ownerKey, weekday) {
   const dayMap = workingHoursByOwner.value.get(ownerKey);
-  return !dayMap || dayMap.size === 0;
+  if (dayMap?.has(weekday)) return dayMap.get(weekday);
+  const institution = institutionWeeklyDayMap.value.get(weekday) ?? [];
+  return institution.length > 0 ? institution : defaultWorkBlocks();
 }
 
-/* 그 담당자·요일의 진료 시작/종료("HH:MM").
- * 운영시간을 한 번도 정하지 않았으면 사업장 운영시간을 기본값으로 보여준다 —
- * 기관 값을 방금 화면에서 입력했더라도 즉시 따라온다(읽는 시점에 참조하므로). */
+/* 담당자도 사업장도 그 요일을 정하지 않았을 때 화면이 보여줄 운영시간 —
+ * 예약장부 보드·타임라인이 그 칸을 실제로 여는 값과 같다(SSOT = constants/operatingHours).
+ *
+ * 사업장이 매주 쉬는 요일에는 기관 운영시간 행 자체가 없다. 그래서 **기관 휴무를 상속하지 않는**
+ * 담당자(휴무일 탭에서 자기 휴무를 정한 사람)의 칸이 통째로 비어, 화면에는 아무것도 없는데
+ * 보드에서는 09:00~18:00 로 예약을 받는 상태가 됐다.
+ *
+ * ★기관 조회에 실패했거나 아직 받아오기 전에는 쓰지 않는다 — 그건 "정한 것이 없다"가 아니라
+ *  "모른다"이고, 모르는 것을 기본값으로 그리면 화면이 없는 사실을 지어낸다
+ *  (조회 실패는 배너와 저장 차단이 따로 알린다). */
+function defaultWorkBlocks() {
+  if (!settingsLoaded.value || siteLoadFailed.value) return [];
+  return [{kind: 'WORK', start: DEFAULT_OPERATING_START, end: DEFAULT_OPERATING_END}];
+}
+
+function getStaffWorkBlock(staffId, weekday) {
+  return getStaffWeekdayBlocks(`STAFF:${staffId}`, weekday).find(b => b.kind === 'WORK');
+}
+
+/* 그 담당자·요일의 진료 시작/종료("HH:MM") */
 function fetchStaffWorkHours(staffId, weekday, field) {
-  const source = usesInstitutionDefault(staffId)
-      ? institutionDefaultDayMap()
-      : workingHoursByOwner.value.get(`STAFF:${staffId}`);
-
-  const block = source.get(weekday)?.find(b => b.kind === 'WORK');
-  return block?.[field] ?? '';
+  return getStaffWorkBlock(staffId, weekday)?.[field] ?? '';
 }
 
-/* 시작·종료를 모두 비우면 그 요일은 휴무이다 — entry 를 지우지 않고 빈 배열로 남긴다.
- * 지워 버리면 "미설정"으로 되돌아가 사업장 기본값이 도로 나타난다.
- * 한쪽만 입력된 중간 상태는 그대로 두되, 저장 payload 에서 짝이 안 맞으면 휴무로 나간다. */
+/* ★시작·종료를 모두 비우면 그 요일은 **미설정**으로 되돌아간다(entry 를 지운다) — 휴무가 아니다.
+ * 휴무는 휴무일 탭이 정한다(탭 책임 분리). 운영시간 탭이 휴무까지 만들면 같은 상태를 두 화면이
+ * 만들게 되고, 휴무일 탭이 잠가 둔 요일을 운영시간 탭이 다시 여는 모순이 생긴다.
+ * 미설정으로 두면 그 요일은 다시 사업장 값을 따라간다.
+ * 한쪽만 입력된 중간 상태는 그대로 두되, 저장 payload 에서 짝이 안 맞으면 그 행은 나가지 않는다.
+ *
+ * ★고치는 요일만 확정한다 — 다른 요일은 미설정으로 남겨 기관 값을 계속 따르게 한다.
+ *  (예전에는 첫 편집 때 기관 값 전 요일을 한꺼번에 확정시켜, 월요일만 고쳐도 나머지 6일이
+ *   그 시점의 기관 값으로 굳었다. 그러면 이후 기관 운영시간이 바뀌어도 따라오지 않는다.) */
 function setStaffWorkHours(staffId, weekday, field, value) {
   const ownerKey = `STAFF:${staffId}`;
   const next = new Map(workingHoursByOwner.value);
+  const dayMap = new Map(next.get(ownerKey));
 
-  /* 아직 아무 요일도 정하지 않았다면 화면에는 사업장 값이 보이고 있다.
-   * 한 요일을 고치는 순간 보이던 값들을 그대로 확정한다 — 그러지 않으면 나머지 요일이 빈칸이 된다. */
-  const dayMap = usesInstitutionDefault(staffId)
-      ? institutionDefaultDayMap()
-      : new Map(next.get(ownerKey));
-
-  const cur = dayMap.get(weekday)?.find(b => b.kind === 'WORK') ?? {kind: 'WORK', start: '', end: ''};
+  /* 미설정 요일을 고치기 시작했다면 화면에 보이던 값은 사업장 값이다 —
+   * 그것을 기준으로 삼아야 한쪽 칸만 고쳤을 때 나머지 칸이 빈칸으로 날아가지 않는다. */
+  const cur = getStaffWorkBlock(staffId, weekday) ?? {kind: 'WORK', start: '', end: ''};
   const block = {...cur, [field]: value || ''};
 
-  if (!block.start && !block.end) dayMap.set(weekday, []);
+  if (!block.start && !block.end) dayMap.delete(weekday);
   else dayMap.set(weekday, [block]);
 
   next.set(ownerKey, dayMap);
   workingHoursByOwner.value = next;
 }
 
-/* X 버튼 — 그 요일의 진료 시작·종료를 한 번에 비운다(= 그 요일 휴무).
- * setStaffWorkHours 과 동일 규칙: entry 를 지우지 않고 빈 배열로 남긴다(지우면 미설정으로 되돌아가 기관 기본값이 도로 나온다).
- * 미설정 담당자는 보이던 기관 기본값을 먼저 확정해야 나머지 요일이 빈칸이 되지 않는다. */
-function clearStaffWorkHours(staffId, weekday) {
-  const ownerKey = `STAFF:${staffId}`;
-  const next = new Map(workingHoursByOwner.value);
-  const dayMap = usesInstitutionDefault(staffId)
-      ? institutionDefaultDayMap()
-      : new Map(next.get(ownerKey));
-
-  dayMap.set(weekday, []);
-
-  next.set(ownerKey, dayMap);
-  workingHoursByOwner.value = next;
+function onStaffTimeInput(event, staffId, weekday, field) {
+  commitTimeInput(event, v => setStaffWorkHours(staffId, weekday, field, v));
 }
 
-/* 담당자 표 위에 얹는 사업장 휴게시간 안내.
- * 휴게는 사업장이 요일별로 가질 수 있지만, 담당자에게는 편집 대상이 아니라 "따르게 되는 값"이다.
- * 그래서 요일마다 반복하지 않고 한 줄로 보여준다 — 진료하는 요일들의 값이 모두 같으면 그 값을,
- * 요일마다 다르면 그 사실을 알린다(기관 패널에서 요일별로 확인해야 한다). */
-function institutionBreakSummary(kind) {
-  const values = new Set();
-  for (const [weekday, blocks] of institutionWeeklyDayMap.value) {
-    if (blocks.length === 0) continue;
-    const range = getInstitutionBreaks(weekday)[kind];
-    values.add(range ? `${range.start}~${range.end}` : '-');
-  }
-  if (values.size === 0) return '-';
-  if (values.size === 1) return [...values][0];
-  return '요일별 상이';
+/* ※ 그 요일을 "휴무로 만드는" × 버튼은 제거됐다(탭 책임 분리).
+ *   담당자 매주 휴무는 휴무일 탭에서 정한다. 시간을 비우면 미설정으로 돌아갈 뿐이다. */
+
+/* 담당자 표의 휴게시간 열 — 사업장의 그 요일 휴게를 읽기 전용으로 보여준다.
+ * 휴게는 사업장만 소유하고 담당자에게는 "따르게 되는 값"이라 입력칸을 두지 않는다.
+ *
+ * 요일축이 이미 있는 표라 요일마다 실값을 그대로 싣는다 — 예전의 한 줄 요약은 요일마다 값이
+ * 다르면 '요일별 상이'로만 알려 줘, 실제 값을 보려면 사업장 패널을 따로 펼쳐 대조해야 했다.
+ * 그 요일에 진료 자체가 없으면(휴무) 휴게도 의미가 없어 '-' 로 둔다. */
+function staffBreakText(staffId, weekday, kind) {
+  if (!getStaffWorkBlock(staffId, weekday)) return '-';
+  const range = getInstitutionBreaks(weekday)[kind];
+  return range ? `${range.start}~${range.end}` : '-';
 }
 
 /* 특정 날짜 × 특정 직원 override — Map<'STAFF:<id>', Map<'YYYY-MM-DD', Block[]>>
@@ -273,19 +301,8 @@ function getEffectiveBlocks(ownerKey, dateKey, weekday) {
   return getBlocksFor(ownerKey, weekday);
 }
 
-/* 그 날짜를 "휴무로 정한" 것인가 — 아직 정하지 않은 것(미설정)과 구별한다.
- * 둘 다 진료 구간이 없지만 뜻이 다르다: 휴무는 확정된 답이고, 미설정은 사업장 운영시간을 따른다.
- * 일자 지정이 있으면 그것이 답이고(빈 blocks = 그 날짜만 휴무), 없으면 요일 설정을 본다.
- * 요일 entry 자체가 없으면 = 그 요일을 정한 적이 없다. */
-function isExplicitlyOff(ownerKey, dateKey, weekday) {
-  const override = workingHoursOverridesByOwner.value.get(ownerKey)?.get(dateKey);
-  if (override !== undefined) return override.length === 0;
-  const dayMap = getOwnerDayMap(ownerKey);
-  return dayMap?.has(weekday) === true && dayMap.get(weekday).length === 0;
-}
-
 /* ===== 운영시간 서버 응답 변환 =====
- * 백엔드 "HHmm" → 내부 "HH:MM" (popover <input type="time"> 호환) */
+ * 백엔드 "HHmm" → 내부 "HH:MM" (화면 시간 입력칸 표기) */
 function hmmToHHMM(hmm) {
   if (!hmm || hmm.length !== 4) return null;
   return `${hmm.slice(0, 2)}:${hmm.slice(2, 4)}`;
@@ -312,8 +329,27 @@ function overrideRowToBlocks(ov) {
  * 운영시간 탭은 "요일별 주간 패턴"이라 매주 휴무인 요일만 휴무로 표시할 수 있다.
  * "매월 n번째"는 그 요일이 매주 쉬는 것이 아니므로(예: 매월 3번째 수요일만 휴무) 여기서 제외한다 —
  * 특정 날짜의 휴무는 월 캘린더에서 확인한다. */
-function isWeekdayClosed(weekday) {
-  return weekdayOffs.value.get(weekday)?.has('WEEKLY') ?? false;
+function isWeekdayClosed(weekday, ownerKey = 'INSTITUTION') {
+  /* '매주'와 '매월 1~5번째 전부'는 같은 결과라 같게 본다(isEveryWeekOff) — 표기·잠금·저장 제외가 함께 간다. */
+  const institutionOff = isEveryWeekOff(weekdayOffs.value.get(weekday));
+  if (ownerKey === 'INSTITUTION') return institutionOff;
+
+  /* 담당자의 매월 1~5번째 전부도 매주다 — 매주 자체는 entry = [] 로 표현되지만 다섯 개는 매월 표에 남는다. */
+  if (isEveryWeekOff(staffMonthlyOffs.value.get(ownerKey)?.get(weekday))) return true;
+
+  /* ★담당자 설정이 사업장 휴무보다 우선한다(R11) — 사업장이 쉬는 요일이라도 그 담당자가
+   * 운영시간을 정해 뒀으면 잠그지 않는다. 보드(useSchedulerRules)·휴무일 탭 뷰어와 같은 규칙이다.
+   * 휴무일 탭이 만든 상태를 그대로 읽는다: entry = [] 휴무 / entry = [block] 진료 / entry 없음 = 미설정.
+   * 미설정일 때만 사업장을 상속한다. 운영시간 탭은 잠그기만 하고 값은 지우지 않는다. */
+  const entry = getOwnerDayMap(ownerKey)?.get(weekday);
+  if (entry !== undefined) return entry.length === 0;
+
+  /* 미설정 요일 — 상속은 항목이 아니라 **축 단위**다(offDayRules 의 inheritedInstitutionOffOn).
+   * 휴무일 탭에서 자기 반복 휴무를 하나라도 정한 담당자는 사업장 요일 규칙을 더는 따라가지 않는다.
+   * 월 캘린더(isDisplayedOffFor)·휴무일 탭 컨트롤(isInheritedOffWeekday)·보드(staffStore 의
+   * inheritsHospitalWeekdayOff)가 이미 축 단위인데 여기만 요일 단위로 상속하고 있었다 —
+   * 목요일만 쉬기로 한 담당자가 이 표에서는 사업장 휴무요일(일·금)까지 '휴무'으로 잠겼다. */
+  return hasOwnRecurringOff(ownerKey) ? false : institutionOff;
 }
 
 /* times[](저장된 요일 행만) → Map<dayCd, Block[]>.
@@ -333,10 +369,15 @@ function timesToDayMap(times) {
 
 /* 사업장 패널 — 그 요일의 운영시간 "09:00~18:00". 사업장 설정에 등록된 실값이다.
  * (담당자 운영시간을 합산해 기관 시간을 추정하던 방식은 폐기했다 — 기관 운영시간이 요일별
- *  실값으로 존재하므로 추정할 이유가 없다.) */
+ *  실값으로 존재하므로 추정할 이유가 없다.)
+ *
+ * ★미설정이면 '휴무'이 아니라 휴게시간과 같은 '-' 다. 저장하면 그 요일은 '매주 휴무'이 되지만
+ *  (missingTimeWeekdays) **아직은 아니다** — 지금 '휴무'이라 적으면 휴무일 탭이 정한 요일과
+ *  구별되지 않고, 그 사이 보드는 기본 운영시간으로 예약을 받고 있어 표기가 동작보다 앞선다.
+ *  무엇이 저장될지는 배너가 말하고, 진짜 휴무는 isWeekdayClosed 가 가른다. */
 function formatSiteHours(weekday) {
   const block = (institutionWeeklyDayMap.value.get(weekday) ?? []).find(b => b.kind === 'WORK');
-  return block ? `${block.start}~${block.end}` : '';
+  return block ? `${block.start}~${block.end}` : '-';
 }
 
 /* 사업장 패널 — 그 요일의 휴게시간1/2. 미설정이면 '-' */
@@ -345,8 +386,21 @@ function formatInstitutionBreak(weekday, kind) {
   return range ? `${range.start}~${range.end}` : '-';
 }
 
-function hasInstitutionDisplayBlocks(weekday) {
-  return (institutionWeeklyDayMap.value.get(weekday) ?? []).length > 0;
+/* 그 요일에 사업장 운영시간이 **온전히** 정해져 있는가 — 공휴일의 hasSiteHolidayHoursRange
+ * 와 같은 판정이다. 휴게시간만 있거나 반쪽만 채운 상태는 정해진 것으로 보지 않는다
+ * (반쪽은 미완성 게이트가 따로 잡는다 — 여기서 통과시키면 두 게이트 사이로 빠져나간다). */
+function hasInstitutionWorkRange(weekday) {
+  return (institutionWeeklyDayMap.value.get(weekday) ?? [])
+      .some(b => b.kind === 'WORK' && b.start && b.end);
+}
+
+/* 그 요일의 사업장 운영시간에 **입력한 것이 하나라도** 있는가 — 시작·종료 중 한쪽만 채웠어도 참.
+ * '매주 휴무' 예고(missingTimeWeekdays)는 이것이 거짓인 요일, 즉 **둘 다 비어 있는** 요일만 대상으로 한다.
+ * 반쪽만 채운 요일은 채우다 만 것이지 쉬기로 한 것이 아니고, 그 상태는 미완성 게이트(findIncompleteOwner)가
+ * 저장 전에 먼저 막는다 — 여기서 휴무로 예고하면 같은 칸을 두 안내가 다르게 말한다. */
+function hasInstitutionWorkValue(weekday) {
+  return (institutionWeeklyDayMap.value.get(weekday) ?? [])
+      .some(b => b.kind === 'WORK' && (b.start || b.end));
 }
 
 /* 사업장 패널 — 공휴일 운영시간/휴게시간. 요일별과 같은 규약이되 칸이 하나뿐이다. */
@@ -385,19 +439,67 @@ const settingsLoaded = ref(false);
 const selectedYear = ref(props.initialYear);
 const selectedMonth = ref(dayjs().month() + 1); // 1~12
 
+/* 사업장 반복 휴무 — Map<weekday, Set<'WEEKLY' | 'MONTHLY_n'>>. 매주·매월을 한 자리에 담는다.
+ * (요일 드롭다운의 열림 상태는 컨트롤 컴포넌트가 갖는다 — 한 번에 한 패널만 떠 있다.) */
 const weekdayOffs = ref(new Map());
-const openWeekday = ref(null);
-const dropdownPosition = ref({top: 0, left: 0});
-const weekdayBtnRefs = new Map();
-
-function setWeekdayBtnRef(idx, el) {
-  if (el) weekdayBtnRefs.set(idx, el);
-  else weekdayBtnRefs.delete(idx);
-}
 const dateOverrides = ref(new Map());
 
+/* 담당자 "매월 N번째 O요일" 휴무 — Map<ownerKey, Map<weekday, Set<'MONTHLY_n'>>>.
+ * ★담당자의 **매주** 휴무는 여기 없다 — 운영시간 표(workingHoursByOwner) 의 `entry = []` 그 자체다.
+ *  같은 상태를 두 자리에 두면 운영시간 탭과 휴무일 탭이 서로를 덮어쓴다(계획서 R1). */
+const staffMonthlyOffs = ref(new Map());
+
+/* 담당자 공휴일 진료여부 — Map<ownerKey, 'Y' | 'N'>. NOT NULL 2상태라 서버가 전원 값을 내려준다.
+ * 상속은 팀 배치 시점 복사(applyInheritedSettings)로 해결한다 — 키 부재는 조회 전 과도 상태뿐. */
+const staffHolidayOff = ref(new Map());
+
 const teams = ref([]);
-const selectedTeamIds = ref(new Set());
+
+/* 휴무일 탭: 지금 보고 있는 대상 ('INSTITUTION' | 'STAFF:<staffId>') — 한 번에 하나만.
+ * 팀은 선택 단위가 아니다. 휴무는 사업장과 담당자에만 붙고 팀에는 붙지 않는다.
+ * 운영시간 탭의 expandedTreatmentKey 와 키를 공유하지 않는다 — 그쪽은 팀도 선택 단위라 뜻이 다르다. */
+const OFF_OWNER_INSTITUTION = 'INSTITUTION';
+const selectedOffOwner = ref(OFF_OWNER_INSTITUTION);
+
+function staffOffOwnerKey(doctorId) {
+  return `STAFF:${doctorId}`;
+}
+
+function selectOffOwner(key) {
+  selectedOffOwner.value = key;
+}
+
+/* 선택된 대상 **하나만** 컨트롤을 펼친다 — 두 패널이 동시에 떠 있으면 어느 쪽이 우측 캘린더에
+ * 반영되는지 알 수 없다. 자리는 둘(사업장 헤더 아래 / 그 담당자가 속한 팀의 칩 리스트 아래)이고
+ * 넘기는 값은 하나라, 같은 props 를 v-bind 로 그대로 준다. */
+const offControlsProps = computed(() => {
+  const ownerKey = selectedOffOwner.value;
+  return {
+    ownerKey,
+    optionsByWeekday: offOptionsMapFor(ownerKey),
+    inheritedWeekdays: inheritedWeekdaysFor(ownerKey),
+    chips           : recurringChipsFor(ownerKey),
+    dateGroups      : specificDatesByType.value,
+    holidayOff      : holidayOffFor(ownerKey),
+    showHoliday     : settingsLoaded.value,
+    holidayTip      : ownerKey === OFF_OWNER_INSTITUTION
+        ? '공휴일은 현재 연도부터 최대 3년까지 표기됩니다.'
+        : '체크하면 이 담당자는 공휴일에 휴무합니다.',
+  };
+});
+
+/* 선택된 담당자가 이 팀에 있는가 — 컨트롤을 그 팀 칩 리스트 아래에 붙인다(§4-5-3). */
+function isOffOwnerInTeam(team) {
+  return (team.doctorIds ?? []).some(docId => staffOffOwnerKey(docId) === selectedOffOwner.value);
+}
+
+function onOffOptionToggle(weekday, option) {
+  toggleOptionFor(selectedOffOwner.value, weekday, option);
+}
+
+function onOffHolidayChange(value) {
+  setHolidayOffFor(selectedOffOwner.value, value);
+}
 
 /* 운영시간 탭: 현재 펼쳐진 항목 키 ('staff:<staffId>' | 'institution' | null) — 한 번에 하나만 */
 const expandedTreatmentKey = ref(null);
@@ -406,12 +508,29 @@ function toggleTreatmentExpansion(key) {
   expandedTreatmentKey.value = expandedTreatmentKey.value === key ? null : key;
 }
 
+/* ===== popover 위치 =====
+ * 규칙 본체는 @/utils/popoverPlacementUtils 로 옮겼다 — 운영일정 보기 탭의 더보기와
+ * 스케줄러 카드 ⋮ 메뉴가 같은 규칙을 쓴다. */
+/* 측정 전 임시 계산용 — CSS min-width 와 같은 값이다(실폭은 렌더 후 다시 잰다). */
+const POPOVER_FALLBACK_WIDTH = 320;
+const POPOVER_FALLBACK_HEIGHT = 120;
+
+const weekdayEditorEl = ref(null);
+const cellStaffEditorEl = ref(null);
+
 /* ===== 요일 편집 popover =====
  * 사업장 요일 버튼과 담당자 일자별 지정(월 캘린더)에서 쓴다.
  * 담당자 주간 운영시간은 popover 를 쓰지 않는다 — 7행 인라인 표에서 바로 편집한다.
  * draft 구조:
  *   WORK  { WORK: {active, start, end} } — 비활성 블록도 시간 보존
- *   BREAK { [LUNCH|DINNER]: {start, end} } — 사업장에서만. 토글 없이 시간 존재 여부로 활성 판단 */
+ *   BREAK { [LUNCH|DINNER]: {start, end} } — 사업장에서만. 토글 없이 시간 존재 여부로 활성 판단
+ *
+ * ★시간 popover(요일 편집 · 일자 지정 · 셀 더보기)는 한 번에 하나만 뜬다 — 여는 쪽이 먼저
+ *  settleTimePopovers 로 나머지를 닫는다. 두 개가 겹치면 어느 입력이 어디로 가는지 알 수 없다.
+ * ★popover 는 닫을 때 검증하지 않는다. 외부 클릭이면 입력을 **그대로 상태에 보존**하고 닫는다
+ *  (담당자 7행 인라인 표와 같은 규약). 미완성·형식·순서는 저장 버튼에서 한 번만 본다(onSave).
+ *  예전에는 commit 이 붙잡고 안내를 띄웠는데, 외부 클릭마다 안내가 뜨고 패널을 접어도 popover 가
+ *  남는 등 배경 이벤트와 얽혔다. */
 const weekdayEditor = ref({
   open    : false,
   ownerKey: null,
@@ -419,8 +538,6 @@ const weekdayEditor = ref({
   top     : 0,
   left    : 0,
   draft   : null,
-  /* 닫기를 시도했는가 — 미완성 입력 하이라이트를 그 뒤에만 그린다(입력 중엔 빨갛게 하지 않는다). */
-  tried   : false,
 });
 
 /* 휴게시간은 사업장만 소유한다 — 담당자는 기관 휴게를 그대로 따르므로 편집 대상이 아니다.
@@ -430,13 +547,15 @@ function editorHasBreaks(ownerKey) {
 }
 
 /* popover draft → 진료 Block[].
- * 사용여부 토글을 두지 않는다 — 시작·종료가 모두 있으면 진료, 비우면 그 요일/날짜는 휴무이다.
- * (휴게시간과 같은 규약이고, 담당자 7행 인라인 표와도 같다.) */
+ * 사용여부 토글을 두지 않는다 — 시작·종료가 모두 있으면 진료, 둘 다 비우면 그 요일/날짜는 휴무가다.
+ * (휴게시간과 같은 규약이고, 담당자 7행 인라인 표와도 같다.)
+ * ★한쪽만 채운 블록도 그대로 담는다 — 닫을 때 버리면 반쪽 입력이 조용히 사라져 그 요일이 휴무가
+ *  된다. 상태에 남겨 두고 저장 게이트(findIncompleteOwner)가 잡는다. */
 function draftToBlocks(draft) {
   const blocks = [];
   for (const kind of WORK_BLOCK_KINDS) {
     const slot = draft[kind];
-    if (slot?.start && slot?.end) blocks.push({kind, start: slot.start, end: slot.end});
+    if (slot?.start || slot?.end) blocks.push({kind, start: slot.start ?? '', end: slot.end ?? ''});
   }
   return blocks;
 }
@@ -449,6 +568,13 @@ function isEditorSlotEmpty(draft, kind) {
 
 const INCOMPLETE_TIME_MSG = '시작시간과 종료시간을 모두 입력해 주세요.';
 
+/* 시간 입력칸은 일반 텍스트다 — `<input type="time">` 이 보장하던 형식·범위를 화면이 직접 본다.
+ * 이 두 가드가 없으면 "2590" 같은 값이 state 에 남아 HHMMToHmm(콜론만 제거)을 그대로 지나
+ * 서버로 나간다. 문자·자릿수는 입력 단계(maskTimeTyping)에서 이미 걸러지므로 여기 남는 것은
+ * 범위를 벗어난 숫자다 — "몇 시부터 몇 시까지 되는가"를 알려 줘야 사용자가 고칠 수 있다. */
+const INVALID_TIME_MSG = '시간을 00:00 ~ 23:59 범위로 입력해 주세요.';
+const REVERSED_TIME_MSG = '종료시간은 시작시간보다 늦어야 합니다.';
+
 /* 공휴일에 진료하기로 했으면 공휴일 운영시간을 반드시 정해야 한다.
  * 시간이 없어도 그날은 휴무가 아니라 **종일진료**다(useSchedulerRules 주석 참조) — 즉 시간 제한 없이
  * 하루가 통째로 열린다. 대개는 그런 의도가 아니라 입력 누락이라 저장 시점에 한 번 잡아 준다.
@@ -456,32 +582,206 @@ const INCOMPLETE_TIME_MSG = '시작시간과 종료시간을 모두 입력해 �
  * 자체가 저장되지 않는다는 점도 같다 — 입력하지 않으면 정한 것이 아무것도 남지 않는다. */
 const HOLIDAY_TIME_REQUIRED_MSG = '공휴일에 진료하려면 공휴일 운영시간을 입력해 주세요.';
 
-/* 한쪽만 채워진 시간 행 = 미완성. 하나라도 입력했으면 시작·종료 둘 다 있어야 한다.
- * 둘 다 비운 것은 정상이다 — 진료행은 "그 요일 휴무", 휴게행은 "휴게 없음"이라는 뜻이다.
+/* 진료팀은 구성원이 있어야 뜻이 있다 — 이름만 있는 팀은 예약을 받을 수도, 운영시간을 가질 수도 없다.
+ * 서버는 이 상태를 거부하지 않고 팀만 저장하므로(구성원 목록이 비면 그냥 넣지 않는다) 화면에서 막는다.
+ * ★문구에 팀 이름을 넣지 않는다 — 빈 팀이 여럿이면 하나만 말하게 되어 나머지를 감춘다.
+ *  어느 팀인지는 화면에서 빈 팀 전부를 하이라이트해 보여준다(시간 미완성 칸과 같은 규약). */
+/* 빌려온 시각의 안내 문구 — 7행 표 · 달력 셀 · 더보기 popover 가 같은 말을 해야 한다. */
+const INHERITED_TIME_HINT = '사업장 운영시간을 따릅니다. 이 담당자의 운영시간은 아직 정해지지 않았습니다.';
+
+const TEAM_MEMBERS_REQUIRED_MSG = '팀 구성원이 없습니다.\n구성원을 선택해 주세요.';
+
+/* ===== 저장 게이트 — 시간 입력 3종(미완성 → 형식 → 순서) =====
+ * 최종 차단은 **저장 버튼**이 한다. popover 는 바깥을 눌러 닫으려 할 때마다 같은 3단으로 한 번 더
+ * 잡고(onDocumentClickCapture), 그래도 나가고 싶으면 우상단 [X] 로 검증 없이 닫는다. 담당자 7행
+ * 인라인 표는 종전대로 닫을 때 막지 않는다(닫는다는 조작 자체가 없다).
+ * 순서가 뜻이 있다: 덜 채운 칸을 "형식 오류"라고 하거나, 형식이 깨진 값을 "순서가 틀렸다"고
+ * 안내하면 사용자가 엉뚱한 곳을 고친다.
  *
+ * 한쪽만 채워진 시간 행 = 미완성. 하나라도 입력했으면 시작·종료 둘 다 있어야 한다.
+ * 둘 다 비운 것은 정상이다 — 진료행은 "그 요일 휴무", 휴게행은 "휴게 없음"이라는 뜻이다.
  * ★이 가드가 없으면 반쪽 입력이 조용히 버려진다(blocksToWorkRange 가 짝이 안 맞으면 null 로 바꾼다).
  *  사용자는 09:00 을 입력해 두고 저장했는데 그 요일이 휴무로 저장돼 있는 상황이 된다.
- * @returns 미완성인 첫 행의 kind, 없으면 null */
-function findIncompleteSlot(draft) {
-  for (const kind of [...WORK_BLOCK_KINDS, ...BREAK_BLOCK_KINDS]) {
-    const slot = draft?.[kind];
-    if (!slot) continue; // 그 소유자가 갖지 않는 행(예: 담당자의 휴게)
-    if (!!slot.start !== !!slot.end) return kind;
+ * {ownerKey, key} 를 돌려주는 이유 = 저장 가드가 그 패널을 펼치고 그 요일/날짜 popover 를 다시 열어
+ * 비어 있는 칸을 화면에 올리기 위해서다(revealTimeGateViolation). key = 요일(주간) 또는 'YYYY-MM-DD'(지정일자). */
+function findIncompleteOwner(dayMapByOwner) {
+  return findOwnerBy(dayMapByOwner, b => isIncompletePair(b.start, b.end));
+}
+
+/* 형식 오류가 남은 첫 소유자. 놓치면 "2590" 이 그대로 payload 에 실린다. */
+function findInvalidOwner(dayMapByOwner) {
+  return findOwnerBy(dayMapByOwner, b => isInvalidTimeText(b.start) || isInvalidTimeText(b.end));
+}
+
+/* 시작·종료가 역전된 첫 소유자. */
+function findReversedOwner(dayMapByOwner) {
+  return findOwnerBy(dayMapByOwner, b => isReversedTimeRange(b.start, b.end));
+}
+
+/* 진료 요일인데 사업장 운영시간이 없는 요일들 — **저장하면 '매주 휴무'이 될 요일**이다.
+ * 배너와 buildPayload 가 같은 값을 본다: 안내한 것과 다른 것이 저장되면 안 된다.
+ *
+ * 막지 않고 보정하는 이유 — 원천(마이페이지)이 "운영시간이 모두 없으면 휴무"으로 읽으므로
+ * 그 요일을 미설정으로 남겨 두면 원천과 자체 보드의 해석이 갈린다(buildPayload 주석).
+ * 저장을 막는 쪽은 팀 이름만 고치러 온 사용자까지 볼모로 잡는 덫이 된다.
+ *
+ * ★siteLocked(= 조회 실패로 요일버튼이 잠긴 상태)면 대상이 없다. 그건 "비어 있다"가 아니라
+ *  "원천이 뭘 갖고 있는지 모른다"이고, 여기서 휴무로 확정하면 장애를 데이터로 굳힌다.
+ *  잠금 축이라 나중에 권한이 붙어도 따라온다 — siteLoadFailed 를 따로 보지 않는 이유다.
+ * ★대상은 사업장뿐이다. 담당자의 미설정은 "사업장 값을 따른다"는 정상 상태이고
+ *  (getStaffWeekdayBlocks), 기관 시간이 채워지면 상속칸도 함께 풀린다.
+ * ★반복 휴무(매주·매월)이 하나라도 있는 요일은 뺀다 — 매주면 이미 휴무가고, 매월 n번째는
+ *  사용자가 직접 고른 값이라 자동 '매주'로 덮지 않는다. 휴무일 탭이 매주·매월을 한 요일에
+ *  같이 두지 않는(toggleOption) 배타를 여기서 깨면 payload 에 두 행이 실린다.
+ * ★대상은 **시작·종료가 둘 다 비어 있는** 요일이다(hasInstitutionWorkValue). 한쪽만 채운 요일은
+ *  채우다 만 것이지 쉬기로 한 것이 아니라, 미완성 게이트가 저장 자체를 먼저 막는다 — 그 요일까지
+ *  여기서 세면 저장되지도 않을 '매주 휴무'을 예고하게 된다. */
+const missingTimeWeekdays = computed(() => {
+  if (!settingsLoaded.value || siteLocked.value) return [];
+  const found = [];
+  for (let w = 0; w < 7; w++) {
+    if ((weekdayOffs.value.get(w)?.size ?? 0) > 0) continue;
+    if (!hasInstitutionWorkValue(w)) found.push(w);
+  }
+  return found;
+});
+
+/* 매월 n번째**만** 쉬는 요일인가 — 나머지 주에 진료하는 요일. 매주이거나 다섯 개 전부(isEveryWeekOff)면
+ * 쉬지 않는 주가 없어 여기 들지 않는다. */
+function isMonthlyOnlyOff(weekday) {
+  const options = weekdayOffs.value.get(weekday);
+  return (options?.size ?? 0) > 0 && !isEveryWeekOff(options);
+}
+
+/* 매월 n번째만 쉬는 요일인데 사업장 운영시간이 없는 요일들 — **운영시간이 있어야 저장되는 요일**이다.
+ * 나머지 주에 진료하는 요일이라 자동 '매주 휴무'(missingTimeWeekdays)의 대상이 아니고, 미설정으로
+ * 두면 보드가 기본 운영시간으로 열린다. 배너 둘째 줄과 저장 게이트(findTimeGateViolation)가 같은
+ * 값을 본다. 잠금·로드 전 제외는 missingTimeWeekdays 와 같은 이유다. */
+const monthlyOnlyMissingTimeWeekdays = computed(() => {
+  if (!settingsLoaded.value || siteLocked.value) return [];
+  const found = [];
+  for (let w = 0; w < 7; w++) {
+    if (isMonthlyOnlyOff(w) && !hasInstitutionWorkRange(w)) found.push(w);
+  }
+  return found;
+});
+
+/* 배너 문구의 요일 나열 — "수, 목요일". 어느 요일인지 말해 주지 않으면 7행을 눈으로 훑어야 한다. */
+function weekdaysLabel(weekdays) {
+  return weekdays.map(w => WEEKDAY_LABELS[w]).join(', ');
+}
+const missingTimeWeekdaysLabel = computed(() => weekdaysLabel(missingTimeWeekdays.value));
+
+/* 그 요일의 매월 차수 나열 — "1, 3". 몇 번째만 쉬는지 말해 주지 않으면 휴무일 탭을 열어 봐야 한다. */
+function monthlyOrdinalsLabel(weekday) {
+  return [...(weekdayOffs.value.get(weekday) ?? [])]
+      .map(monthlyOptionValue)
+      .filter(n => n !== null)
+      .sort((a, b) => a - b)
+      .join(', ');
+}
+
+/* 배너 둘째 줄·게이트 안내가 함께 쓰는 조각 — [{weekday, label:'수', ordinals:'1, 3'}] */
+const monthlyOnlyMissingTimeSegments = computed(() => monthlyOnlyMissingTimeWeekdays.value.map(w => ({
+  weekday : w,
+  label   : WEEKDAY_LABELS[w],
+  ordinals: monthlyOrdinalsLabel(w),
+})));
+
+/* 게이트 안내는 배너 둘째 줄과 같은 문장이어야 한다 — 같은 문제를 누르기 전과 후에 다르게 말하면
+ * 사용자가 다른 문제로 읽는다. "수요일은 매월 1, 3번째, 금요일은 매월 2번째 휴무가라 …" */
+function monthlyTimeRequiredMsg(weekdays) {
+  const head = weekdays
+      .map(w => `${WEEKDAY_LABELS[w]}요일은 매월 ${monthlyOrdinalsLabel(w)}번째`)
+      .join(', ');
+  return `${head} 휴무가라 나머지 주에 진료합니다.\n운영시간을 입력해 주세요.`;
+}
+
+/* 매월 n번째만 쉬는 사업장 요일의 빈 운영시간 — 붉은 표시 판정. 게이트 4단이 가리키는 칸이다.
+ * 미완성(한쪽만)과 같은 규약으로 넘어가려 시도한 뒤에만 그린다(입력 도중 상시 경고가 되지 않게). */
+function monthlyTimeMissing(ownerKey, weekday, start, end) {
+  return saveTried.value && ownerKey === 'INSTITUTION' && isMonthlyOnlyOff(weekday) && !start && !end;
+}
+
+/* @returns 첫 적중 {ownerKey, key}, 없으면 null */
+function findOwnerBy(dayMapByOwner, predicate) {
+  for (const [ownerKey, dayMap] of dayMapByOwner.entries()) {
+    for (const [key, blocks] of (dayMap?.entries?.() ?? [])) {
+      for (const b of blocks ?? []) {
+        if (predicate(b)) return {ownerKey, key};
+      }
+    }
   }
   return null;
 }
 
-/* 미완성 블록(시작·종료 중 하나만 있는 것)을 가진 첫 소유자의 ownerKey — 저장 직전 최종 가드.
- * popover 는 commit 에서 이미 막지만, 담당자 주간 7행 인라인 표는 중간 상태를 그대로 두므로
- * (입력 중에 매 글자 막을 수 없다) 저장 시점에 한 번 더 본다.
- * ownerKey 를 돌려주는 이유 = 저장 가드가 그 패널을 펼쳐 하이라이트를 화면에 올리기 위해서다. */
-function findIncompleteOwner(dayMapByOwner) {
-  for (const [ownerKey, dayMap] of dayMapByOwner.entries()) {
-    for (const blocks of (dayMap?.values?.() ?? [])) {
-      for (const b of blocks ?? []) {
-        if (!!b.start !== !!b.end) return ownerKey;
-      }
+/* 휴게시간 Map<weekday, {LUNCH, DINNER}> → 진료 블록과 같은 Map<weekday, {start,end}[]> 모양.
+ * 게이트가 진료·휴게를 한 predicate 로 보게 하기 위한 어댑터다(값은 복사하지 않는다). */
+function breaksToGateBlocks(breaksMap) {
+  const out = new Map();
+  for (const [weekday, entry] of breaksMap ?? []) {
+    out.set(weekday, Object.values(entry ?? {}).filter(Boolean));
+  }
+  return out;
+}
+
+/* 저장 게이트가 훑는 시간 상태 전부 — 담당자 주간 · 일자 지정 · 사업장 요일/공휴일 진료 · 휴게.
+ * 소유자 키가 겹치는 Map(담당자 주간과 일자 지정은 둘 다 STAFF:)이 있어 하나로 합치지 않고 순서대로 본다.
+ * 순서가 곧 안내 순서다 — 먼저 걸린 소유자의 패널을 펼친다.
+ * ★잠긴 자리는 보지 않는다 — 매주 휴무 요일·공휴일 휴무는 버튼이 disabled 라 고칠 길이 없고,
+ *  payload 도 그 행을 싣지 않는다(buildInstitutionTimesPayload). 보면 저장이 영영 막히는 덫이 된다. */
+function timeGateSources() {
+  const openWeekdays = map => new Map([...map].filter(([w]) => !isWeekdayClosed(w)));
+  const unlessHolidayLocked = map => (holidayTimeLocked.value ? new Map() : map);
+  return [
+    workingHoursByOwner.value,
+    workingHoursOverridesByOwner.value,
+    new Map([
+      ['INSTITUTION', openWeekdays(institutionWeeklyDayMap.value)],
+      [HOLIDAY_OWNER, unlessHolidayLocked(institutionHolidayDayMap.value)],
+    ]),
+    new Map([
+      ['INSTITUTION', breaksToGateBlocks(openWeekdays(institutionBreaksByWeekday.value))],
+      [HOLIDAY_OWNER, breaksToGateBlocks(unlessHolidayLocked(institutionHolidayBreaks.value))],
+    ]),
+  ];
+}
+
+/* 저장을 막는 첫 시간 오류 — {ownerKey, key, message}. 없으면 null. */
+function findTimeGateViolation() {
+  const gates = [
+    [findIncompleteOwner, INCOMPLETE_TIME_MSG],
+    [findInvalidOwner, INVALID_TIME_MSG],
+    [findReversedOwner, REVERSED_TIME_MSG],
+  ];
+  for (const [findOwner, message] of gates) {
+    for (const source of timeGateSources()) {
+      const hit = findOwner(source);
+      if (hit) return {...hit, message};
     }
+  }
+  /* 4단 — 매월 n번째만 쉬는 요일의 운영시간 부재. 위 3단은 "입력한 것이 맞는가"이고 이것은 "입력이
+   * 있어야 하는가"라, 한쪽만 채운 행은 미완성으로 먼저 걸리고 둘 다 빈 행만 여기까지 온다. 규칙이 없는
+   * 요일의 빈 행은 자동 '매주 휴무'(missingTimeWeekdays)이라 게이트 대상이 아니다. */
+  const monthlyOnly = monthlyOnlyMissingTimeWeekdays.value;
+  if (monthlyOnly.length) {
+    return {ownerKey: 'INSTITUTION', key: monthlyOnly[0], message: monthlyTimeRequiredMsg(monthlyOnly)};
+  }
+  return null;
+}
+
+/* 열려 있는 popover 한 개의 draft 를 저장 게이트와 같은 3단(미완성 → 형식 → 순서)으로 본다.
+ * 저장 게이트는 상태로 옮겨진 뒤를 훑고 이쪽은 아직 상태로 가기 전의 draft 를 보지만, 판정 순서와
+ * 문구는 같아야 한다 — 같은 오류를 닫을 때와 저장할 때 다르게 말하면 사용자가 다른 문제로 읽는다.
+ * @returns 걸린 안내 문구, 통과하면 null */
+function findDraftTimeViolation(draft, {ownerKey, weekday} = {}) {
+  const slots = Object.values(draft ?? {}).filter(Boolean);
+  if (slots.some(s => isIncompletePair(s.start, s.end))) return INCOMPLETE_TIME_MSG;
+  if (slots.some(s => isInvalidTimeText(s.start) || isInvalidTimeText(s.end))) return INVALID_TIME_MSG;
+  if (slots.some(s => isReversedTimeRange(s.start, s.end))) return REVERSED_TIME_MSG;
+  /* 4단 — 저장 게이트와 같다: 매월 n번째만 쉬는 사업장 요일은 둘 다 비운 것이 "휴무"이 아니다. */
+  if (ownerKey === 'INSTITUTION' && isMonthlyOnlyOff(weekday) && isEditorSlotEmpty(draft, 'WORK')) {
+    return monthlyTimeRequiredMsg([weekday]);
   }
   return null;
 }
@@ -489,36 +789,155 @@ function findIncompleteOwner(dayMapByOwner) {
 /* ===== 미완성 입력 하이라이트 =====
  * 예약등록 팝업과 같은 규약 — `data-invalid="true"` 에 빨간 테두리. 입력 중에는 그리지 않고
  * **넘어가려 시도한 뒤에만**(tried) 그린다. 시작·종료 중 한쪽만 채운 행에서 **비어 있는 칸**,
- * 즉 사용자가 채워야 할 칸을 가리킨다. 짝이 맞춰지면 판정이 스스로 풀리므로 해제 코드는 없다. */
+ * 즉 사용자가 채워야 할 칸을 가리킨다. 짝이 맞춰지면 판정이 스스로 풀리므로 해제 코드는 없다.
+ * "넘어가려 시도"는 저장 버튼과 popover 바깥 클릭 둘 다다 — 이름은 저장에서 왔지만 뜻은 처음부터
+ * tried 이고, 닫기 가드도 같은 규약으로 이 값을 켠다. */
 const saveTried = ref(false);
+
+/* 구성원 없는 팀 하이라이트 — **저장을 시도한 그 순간 비어 있던 팀만** 표시한다.
+ * saveTried 처럼 한 번 켜고 두면, 그 뒤에 새로 만드는 팀은 반드시 빈 상태로 시작하므로
+ * 이름을 적기도 전에 빨간 테두리가 뜬다(경고가 상시가 되어 뜻을 잃는다).
+ * 저장을 누를 때마다 다시 계산하므로 해제 코드는 없다 — 채워지면 그 영역 자체가 사라진다. */
+const emptyTeamsAtSave = ref(new Set());
 
 function isIncompletePair(start, end) {
   return !!start !== !!end;
 }
 
-/* 담당자 주간 7행 인라인 표 — 저장 시도 후에만. */
-function staffTimeInvalid(staffId, weekday, field) {
-  if (!saveTried.value) return false;
-  const start = fetchStaffWorkHours(staffId, weekday, 'start');
-  const end = fetchStaffWorkHours(staffId, weekday, 'end');
+/* 한 칸의 오류 표시 여부 — 세 컨텍스트(담당자 7행 · 요일 popover · 일자 override)가 함께 쓴다.
+ *
+ * ★형식 오류·역전은 tried 와 무관하게 즉시 그린다. 정규화를 지나고도 남은 값이라 이미 확정된
+ *  오류이고(입력 도중 상태가 아니다), 저장을 눌러야 알게 하면 어디가 틀렸는지 찾기 늦다.
+ * ★미완성(한쪽만)은 입력 도중에도 계속 참이므로 종전대로 넘어가려 시도한 뒤에만 그린다.
+ * 역전은 **종료칸**을 가리킨다 — 대개 고쳐야 할 쪽이 종료다. */
+function timeFieldInvalid(start, end, field, tried) {
+  if (isInvalidTimeText(field === 'start' ? start : end)) return true;
+  if (field === 'end' && isReversedTimeRange(start, end)) return true;
+  if (!tried) return false;
   if (!isIncompletePair(start, end)) return false;
   return field === 'start' ? !start : !end;
 }
 
-/* popover(요일 편집 · 일자 override) — 그 editor 에서 닫기를 시도한 뒤에만. */
-function editorSlotInvalid(editor, kind, field) {
-  if (!editor?.tried) return false;
-  const slot = editor.draft?.[kind];
-  if (!slot || !isIncompletePair(slot.start, slot.end)) return false;
-  return field === 'start' ? !slot.start : !slot.end;
+/* 담당자 주간 7행 인라인 표 — 미완성은 저장 시도 후에만. */
+function staffTimeInvalid(staffId, weekday, field) {
+  const start = fetchStaffWorkHours(staffId, weekday, 'start');
+  const end = fetchStaffWorkHours(staffId, weekday, 'end');
+  return timeFieldInvalid(start, end, field, saveTried.value);
 }
 
-/* 미완성 행이 있는 담당자 패널을 펼쳐 하이라이트를 화면에 올린다.
- * 좌측 탭이 휴무일이면 운영시간 탭으로 옮긴다 — 거기서도 저장 버튼을 누를 수 있기 때문이다. */
+/* popover(요일 편집 · 일자 override) — 미완성은 7행 표와 같이 저장 시도 후에만.
+ * 저장이 막힌 뒤 다시 연 popover 에서 비어 있는 칸이 바로 보여야 한다. */
+function editorSlotInvalid(editor, kind, field) {
+  const slot = editor?.draft?.[kind];
+  if (!slot) return false;
+  if (kind === 'WORK' && monthlyTimeMissing(editor.ownerKey, editor.weekday, slot.start, slot.end)) return true;
+  return timeFieldInvalid(slot.start, slot.end, field, saveTried.value);
+}
+
+/* 사업장 요일/공휴일 버튼의 오류 표시 — popover 를 닫아 버린 뒤에는 버튼이 그 요일을 가리키는
+ * 유일한 자리다. 진료·휴게 어느 한 칸이라도 timeFieldInvalid 면 켠다(어느 칸인지는 열어 보면 보인다). */
+function ownerWeekdayInvalid(ownerKey, weekday) {
+  if (ownerKey === 'INSTITUTION' && !hasInstitutionWorkRange(weekday)
+      && monthlyTimeMissing(ownerKey, weekday, '', '')) return true;
+  const ranges = [
+    ...getBlocksFor(ownerKey, weekday),
+    ...Object.values(getBreaksFor(ownerKey, weekday)).filter(Boolean),
+  ];
+  return ranges.some(r => timeFieldInvalid(r.start, r.end, 'start', saveTried.value)
+      || timeFieldInvalid(r.start, r.end, 'end', saveTried.value));
+}
+
+/* 달력 셀 항목(일자 지정)의 오류 표시 — 같은 판정을 블록 목록에 적용한다. */
+function blocksInvalid(blocks) {
+  return blocks.some(b => timeFieldInvalid(b.start, b.end, 'start', saveTried.value)
+      || timeFieldInvalid(b.start, b.end, 'end', saveTried.value));
+}
+
+/* 시간 입력칸의 blur/Enter 시점 처리 — 세 컨텍스트가 함께 쓴다.
+ *
+ * ★살릴 수 있으면 정규화해 확정하고("930"→"09:30"), 못 살리면 **원문을 그대로 둔다.**
+ *  말없이 지우면 진료행에서는 그 요일이 휴무로 바뀐다 — 사용자는 시간을 쳐 놨는데 쉬는 날이 된다.
+ *  대신 빨간 테두리로 가리키고 저장 게이트에서 막는다.
+ * ★DOM 값을 직접 맞춘다: "0930"→"09:30" 처럼 state 가 이미 같은 값이면 재렌더가 일어나지 않아
+ *  :value 바인딩만으로는 입력칸에 친 원문("0930")이 그대로 남는다. */
+/* 입력 중(타이핑·붙여넣기) — 숫자 외 문자와 5번째 숫자는 칸에 들어오지도 못하게 한다.
+ * state 는 건드리지 않는다(확정은 blur 의 commitTimeInput 이 한다) — 여기서 반영하면
+ * "09" 까지 친 중간 상태가 09:00 으로 저장돼 버린다.
+ *
+ * 값을 다시 써 넣으면 커서가 끝으로 간다. 5자짜리 칸이라 끝에서 이어 치는 게 대부분이고,
+ * 실제로 바뀔 때만 대입하므로 정상 입력 중에는 커서가 움직이지 않는다. */
+function maskTimeInput(event) {
+  const el = event?.target;
+  if (!el) return;
+  const masked = maskTimeTyping(el.value);
+  if (masked !== el.value) el.value = masked;
+}
+
+function commitTimeInput(event, apply) {
+  const raw = event?.target?.value ?? '';
+  const next = normalizeTimeInput(raw) ?? String(raw).trim();
+  if (event?.target) event.target.value = next;
+  apply(next);
+}
+
+/* 오류가 있는 소유자의 패널을 펼쳐 하이라이트를 화면에 올린다.
+ * 좌측 탭이 휴무일이면 운영시간 탭으로 옮긴다 — 거기서도 저장 버튼을 누를 수 있기 때문이다.
+ * 사업장·공휴일은 한 패널(사업장)에 있다 — 요일/공휴일 버튼이 빨갛게 가리킨다. */
 function expandIncompleteOwner(ownerKey) {
-  if (!ownerKey?.startsWith?.('STAFF:')) return; // 기관·공휴일은 popover commit 이 이미 막는다
   activeLeftTab.value = 'WORKING_HOURS';
-  expandedTreatmentKey.value = `staff:${ownerKey.slice('STAFF:'.length)}`;
+  if (ownerKey?.startsWith?.('STAFF:')) {
+    expandedTreatmentKey.value = `staff:${ownerKey.slice('STAFF:'.length)}`;
+  } else if (ownerKey === 'INSTITUTION' || ownerKey === HOLIDAY_OWNER) {
+    expandedTreatmentKey.value = 'institution';
+  }
+}
+
+/* 저장 게이트가 가리킬 앵커 — 사업장 요일/공휴일 버튼 · 달력 셀 항목. v-for 안이라 배열 ref 순서를
+ * 믿지 않고 함수 ref 로 키를 붙여 모은다(Vue 는 unmount 때 null 로 부른다). */
+const rootEl = ref(null);
+const weekdayBtnEls = new Map();
+const cellEntryEls = new Map();
+function setWeekdayBtnEl(ownerKey, weekday, el) {
+  const k = `${ownerKey}:${weekday}`;
+  if (el) weekdayBtnEls.set(k, el); else weekdayBtnEls.delete(k);
+}
+function setCellEntryEl(ownerKey, dateKey, el) {
+  const k = `${ownerKey}|${dateKey}`;
+  if (el) cellEntryEls.set(k, el); else cellEntryEls.delete(k);
+}
+function anchorEvent(el) {
+  return {stopPropagation() {}, currentTarget: el};
+}
+
+/* 저장 게이트가 막은 **그 칸**을 화면에 올린다 — 안내 문구만으로는 어느 시간이 비었는지 알 수 없다.
+ *  담당자 7행 표: 패널을 펼치면 빨간 칸이 그 자리에 있다.
+ *  사업장·공휴일: popover 는 이미 닫혀 있으므로 그 요일 popover 를 **다시 열어** 빈 칸을 보인다.
+ *  일자 지정: 그 달로 옮기고 그 셀 항목의 편집기를 다시 연다(더보기 안에 숨은 항목은 앵커가 없어 펼침까지만).
+ * 안내(alert)보다 먼저 연다 — [확인] 뒤에 시선이 갈 곳이 이미 떠 있어야 한다. */
+async function revealTimeGateViolation({ownerKey, key}) {
+  expandIncompleteOwner(ownerKey);
+  const isDateKey = ownerKey?.startsWith?.('STAFF:') && typeof key === 'string';
+  if (isDateKey) {
+    const d = dayjs(key);
+    selectedYear.value = d.year();
+    selectedMonth.value = d.month() + 1;
+  }
+  await nextTick();
+  if (ownerKey === 'INSTITUTION' || ownerKey === HOLIDAY_OWNER) {
+    const el = weekdayBtnEls.get(`${ownerKey}:${key}`);
+    if (el) openWeekdayEditor(anchorEvent(el), ownerKey, key);
+  } else if (isDateKey) {
+    const el = cellEntryEls.get(`${ownerKey}|${key}`);
+    if (el) openCellStaffEditor(anchorEvent(el), ownerKey, key, dayjs(key).day());
+  }
+  await nextTick();
+  focusFirstInvalidInput();
+}
+
+/* 첫 오류 칸에 포커스 — 열린 popover 안을 먼저, 없으면 화면 전체(담당자 7행 표). */
+function focusFirstInvalidInput() {
+  const scope = weekdayEditorEl.value ?? cellStaffEditorEl.value ?? rootEl.value;
+  scope?.querySelector?.('input[data-invalid="true"]')?.focus?.();
 }
 
 function buildWeekdayDraft(ownerKey, weekday) {
@@ -538,26 +957,31 @@ function buildWeekdayDraft(ownerKey, weekday) {
   return draft;
 }
 
-/* 사업장 요일 편집 popover 는 site(사업장 설정) 번들 소유다 — openWeekdayEditor 호출부가 INSTITUTION 뿐이다. */
+/* 열려 있는 시간 popover 를 전부 정리한다 — 편집기는 입력을 상태로 옮기고(commit) 닫고, 더보기는 닫는다.
+ * 새 popover 를 여는 쪽과 외부 클릭·스크롤이 같은 경로를 쓴다: 한 번에 하나만 떠 있어야 한다. */
+function settleTimePopovers() {
+  if (weekdayEditor.value.open) commitWeekdayEditor();
+  if (cellStaffEditor.value.open) commitCellStaffEditor();
+  if (cellMorePopover.value.open) closeCellMore();
+}
+
+/* 사업장 요일 편집 popover 는 site 번들 소유다 — openWeekdayEditor 호출부가 INSTITUTION 뿐이다. */
 function openWeekdayEditor(event, ownerKey, weekday) {
   event.stopPropagation();
   if (siteLocked.value) return;
   /* 공휴일에 쉬기로 했으면 시간을 정할 수 없다 — 버튼 disabled 와 같은 규칙을 여기서 한 번 더 막는다. */
   if (ownerKey === HOLIDAY_OWNER && holidayTimeLocked.value) return;
-  /* 다른 popover가 열려 있으면 먼저 commit (이전 요일 편집 보존).
-   * 미완성 입력이라 커밋이 막히면 새 편집기를 열지 않는다 — 열면 붙잡아 둔 입력이 그대로 버려진다. */
-  if (weekdayEditor.value.open && !commitWeekdayEditor()) return;
+  settleTimePopovers();
 
   const rect = event.currentTarget.getBoundingClientRect();
   weekdayEditor.value = {
     open    : true,
     ownerKey,
     weekday,
-    top     : rect.bottom + 4,
-    left    : rect.left,
+    ...clampPopoverPos(rect, POPOVER_FALLBACK_WIDTH, POPOVER_FALLBACK_HEIGHT),
     draft   : buildWeekdayDraft(ownerKey, weekday),
-    tried   : false, // 새로 열 때마다 하이라이트는 꺼진 상태로 시작
   };
+  void settlePopoverPos(() => weekdayEditorEl.value, weekdayEditor, rect, clampPopoverPos);
 }
 
 function setEditorBlockTime(kind, field, value) {
@@ -570,25 +994,23 @@ function setEditorBlockTime(kind, field, value) {
   };
 }
 
-/* @returns 커밋하고 닫았으면 true, 미완성 입력이라 붙잡아 뒀으면 false */
+function onEditorTimeInput(event, kind, field) {
+  commitTimeInput(event, v => setEditorBlockTime(kind, field, v));
+}
+
+/* draft 를 상태로 옮기고 닫는다. 여기서는 검증하지 않는다 — 스크롤·리사이즈와 [X] 가 이 경로로
+ * 들어오는데 셋 다 막을 자리가 아니다. 바깥 클릭의 검증은 캡처 가드(onDocumentClickCapture)가,
+ * 최종 차단은 저장 게이트가 맡는다. 입력은 그대로 상태에 남아 다시 열면 이어서 고칠 수 있다. */
 function commitWeekdayEditor() {
   /* 잠긴 파트는 커밋도 하지 않고 닫는다 — 외부클릭/스크롤 경로에서도 호출되므로 여기서 한 번 더 막는다 */
   if (siteLocked.value) {
     closeWeekdayEditor();
-    return true;
+    return;
   }
   const {ownerKey, weekday, draft} = weekdayEditor.value;
   if (!ownerKey || !draft) {
     closeWeekdayEditor();
-    return true;
-  }
-
-  /* 한쪽만 입력한 채로 닫으면 그 값이 조용히 사라진다 — 닫지 말고 알린다.
-   * 외부클릭/스크롤로도 들어오므로, 여기서 붙잡아야 입력이 보존된다. */
-  if (findIncompleteSlot(draft)) {
-    weekdayEditor.value.tried = true; // 어느 칸을 채워야 하는지 하이라이트로 가리킨다
-    void alertIncompleteTime();
-    return false;
+    return;
   }
 
   const blocks = draftToBlocks(draft);
@@ -603,7 +1025,8 @@ function commitWeekdayEditor() {
     else nextDayMap.set(weekday, blocks);
     dayMapRef.value = nextDayMap;
 
-    /* 휴게시간 — 시작·종료가 모두 있어야 유효. 진료 블록이 하나도 없는(휴무) 요일은 휴게도 지운다. */
+    /* 휴게시간 — 둘 다 비우면 없음(null). 진료 블록이 하나도 없는(휴무) 요일은 휴게도 지운다.
+     * 한쪽만 채운 휴게도 진료 블록과 같이 보존한다 — 저장 게이트(timeGateSources)가 잡는다. */
     const nextBreaks = new Map(breaksRef.value);
     if (blocks.length === 0) {
       nextBreaks.delete(weekday);
@@ -611,7 +1034,7 @@ function commitWeekdayEditor() {
       const entry = {};
       for (const kind of BREAK_BLOCK_KINDS) {
         const slot = draft[kind];
-        entry[kind] = (slot?.start && slot?.end) ? {start: slot.start, end: slot.end} : null;
+        entry[kind] = (slot?.start || slot?.end) ? {start: slot.start ?? '', end: slot.end ?? ''} : null;
       }
       nextBreaks.set(weekday, entry);
     }
@@ -626,7 +1049,6 @@ function commitWeekdayEditor() {
   }
 
   closeWeekdayEditor();
-  return true;
 }
 
 function closeWeekdayEditor() {
@@ -634,8 +1056,10 @@ function closeWeekdayEditor() {
 }
 
 /* ===== 미지정 데이터 적용 modal =====
- * 팀에 등록된 담당자 중 1명을 선택 → 미지정 예약/진료건 일괄 적용 대상 */
-const unassignedDataModal = ref({open: false, selectedStaffId: null});
+ * 팀에 등록된 담당자 중 1명을 선택 → 미지정 예약/진료건 일괄 적용 대상.
+ * 모달 본체는 공용 UnassignedDataModal (메인 화면 담당자 순서 변경 팝업과 동일 컴포넌트).
+ * 대상 목록은 '저장 전 편집 draft(teams)' 기준이라 여기서 만들어 prop 으로 내려준다. */
+const unassignedDataModalOpen = ref(false);
 
 /* 팀에 등록된 담당자 (중복 제거, 팀/구성원 순서 유지) */
 const teamDoctors = computed(() => {
@@ -666,50 +1090,6 @@ async function fetchUnassignedAssignable() {
   }
 }
 
-function openUnassignedDataSetting() {
-  unassignedDataModal.value = {
-    open          : true,
-    selectedStaffId: teamDoctors.value[0]?.staffId ?? null,
-  };
-}
-
-function selectUnassignedDoctor(staffId) {
-  unassignedDataModal.value = {...unassignedDataModal.value, selectedStaffId: staffId};
-}
-
-function closeUnassignedDataModal() {
-  unassignedDataModal.value = {...unassignedDataModal.value, open: false};
-}
-
-const applyingUnassigned = ref(false);
-
-async function applyUnassignedData() {
-  if (applyingUnassigned.value) return;
-  const staffId = unassignedDataModal.value.selectedStaffId;
-  if (staffId == null) return;
-
-  applyingUnassigned.value = true;
-  try {
-    const res = await assignUnassigned(staffId);
-    const body = res?.data ?? res;
-    /* 백엔드가 HTTP 200 + code 실패로 내려주는 케이스 처리 */
-    if (body?.code && body.code !== 'succeed') {
-      push.error(body.message || '미지정 데이터 적용에 실패했습니다.');
-      return;
-    }
-    if (body?.message) push.success(body.message);
-    /* 성공 시에만 모달 닫기 */
-    closeUnassignedDataModal();
-    /* 적용 결과를 스케줄러에 반영 — load() 직접 호출 금지, searchVersion watch chain 으로 재조회 */
-    filterStore.triggerSearch();
-  } catch (e) {
-    push.error(e?.response?.data?.message || '미지정 데이터 적용에 실패했습니다.');
-    console.error('[미지정 데이터 적용] 실패', e);
-  } finally {
-    applyingUnassigned.value = false;
-  }
-}
-
 /* 핸들러 */
 function prevYear() {
   selectedYear.value -= 1;
@@ -737,15 +1117,7 @@ function nextMonth() {
   }
 }
 
-function hasOption(weekday, option) {
-  return weekdayOffs.value.get(weekday)?.has(option) ?? false;
-}
-
-function hasAnyOption(weekday) {
-  return (weekdayOffs.value.get(weekday)?.size ?? 0) > 0;
-}
-
-/* 매주 · 매월 n번째 반복 휴무 규칙 토글.
+/* 매주 · 매월 n번째 반복 휴무 규칙 토글 (사업장).
  *
  * "매주"와 "매월"은 함께 쓸 수 없다 — 매주 휴무가면 매월 몇 번째인지가 의미를 잃는다.
  * 그래서 매주를 켜면 매월 선택을 모두 비운다(매월 쪽은 비활성). 매월 n번째끼리는
@@ -781,52 +1153,185 @@ function setIncludePublicHolidays(value) {
   includePublicHolidays.value = value;
 }
 
-function toggleWeekdayDropdown(weekday) {
-  if (openWeekday.value === weekday) {
-    openWeekday.value = null;
-    return;
-  }
+/* ===== 휴무 컨트롤의 owner 일반화 (§4-5) =====
+ * 화면은 사업장과 담당자에 **같은 컨트롤**을 준다. 그런데 저장 표현은 축마다 다르다:
+ *   사업장 — weekdayOffs(매주·매월) / dateOverrides / includePublicHolidays
+ *   담당자   — 운영시간 표 entry=[](매주) + staffMonthlyOffs(매월) / 운영시간 override / staffHolidayOff
+ * 아래 함수들이 그 차이를 흡수해, 컨트롤 컴포넌트는 한 가지 모양만 보게 한다. */
 
-  const btn = weekdayBtnRefs.get(weekday);
-  if (btn) {
-    const rect = btn.getBoundingClientRect();
-    dropdownPosition.value = {
-      top : rect.bottom + 4,
-      left: rect.left,
-    };
-  }
-  openWeekday.value = weekday;
+const EMPTY_OPTION_SET = new Set();
+
+/* 그 대상·요일에 걸린 반복 휴무 옵션 집합 (읽기 전용으로 다룬다)
+ *
+ * ★그 요일을 아무것도 정하지 않은 담당자는 **사업장 것을 상속해 보여준다.** 우측 달력은 상속을
+ *  그리는데 이 컨트롤만 비어 있으면, 체크한 적 없는 날이 휴무로 칠해진 것으로 보인다.
+ *  운영시간 탭의 '휴무' 표기(isWeekdayClosed)도 같은 상속을 하므로 두 탭이 갈리지 않는다. */
+function offOptionsFor(ownerKey, weekday) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) return weekdayOffs.value.get(weekday) ?? EMPTY_OPTION_SET;
+
+  if (isInheritedOffWeekday(ownerKey, weekday)) return weekdayOffs.value.get(weekday) ?? EMPTY_OPTION_SET;
+
+  const monthly = staffMonthlyOffs.value.get(ownerKey)?.get(weekday);
+  const entry = workingHoursByOwner.value.get(ownerKey)?.get(weekday);
+  if (entry?.length !== 0) return monthly ?? EMPTY_OPTION_SET;
+
+  const set = new Set(monthly ?? []);
+  set.add('WEEKLY');
+  return set;
 }
 
-function closeWeekdayDropdown() {
-  openWeekday.value = null;
+/* 이 담당자가 **반복 휴무를 하나라도 직접 정했는가** (매주 휴무 행 또는 매월 규칙).
+ * ★상속은 항목 단위가 아니라 **축 단위**다 — 팀 배치 때 한 번 물려받고, 그 뒤로 스스로 정하기
+ *  시작하면 사업장 요일 규칙을 더는 따라가지 않는다. 항목마다 따라가면 "설정을 시작했는데도
+ *  기관이 요일을 추가할 때마다 끌려가는" 상태가 되고, 화면에서 자기 것과 빌린 것이 섞인다. */
+function hasOwnRecurringOff(ownerKey) {
+  for (const blocks of workingHoursByOwner.value.get(ownerKey)?.values() ?? []) {
+    if (blocks.length === 0) return true;   // 매주 휴무로 정한 요일이 있다
+  }
+  for (const options of staffMonthlyOffs.value.get(ownerKey)?.values() ?? []) {
+    if (options.size > 0) return true;
+  }
+  return false;
 }
 
-/* 칩: (요일, 옵션) 조합별로 1개씩 생성 */
-const recurringChips = computed(() => {
+/* 그 요일의 반복 휴무 표기가 **사업장에서 상속한 것**인가 (자기 값이 아니라).
+ * 반복 휴무를 하나도 정하지 않았고, 그 요일에 자기 운영시간도 없을 때만 상속이다. */
+function isInheritedOffWeekday(ownerKey, weekday) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) return false;
+  if (hasOwnRecurringOff(ownerKey)) return false;
+  return workingHoursByOwner.value.get(ownerKey)?.get(weekday) === undefined;
+}
+
+/* Map<weekday, Set<option>> — 컨트롤이 요일 버튼과 칩을 그리는 입력.
+ * 사업장은 저장된 순서를 그대로 쓰고(칩 순서 유지), 담당자는 요일 순으로 만든다. */
+function offOptionsMapFor(ownerKey) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) return weekdayOffs.value;
+
+  const map = new Map();
+  for (let w = 0; w < 7; w++) {
+    const options = offOptionsFor(ownerKey, w);
+    if (options.size > 0) map.set(w, options);
+  }
+  return map;
+}
+
+/* 칩: (요일, 옵션) 조합별로 1개씩 생성.
+ * locked = 사업장에서 상속해 보여주는 것 — 지울 자기 값이 없으므로 × 를 두지 않는다.
+ * ★매주도 잠근다. 축 단위 상속에서는 상속된 것을 누르면 "켜기"라 × 가 도리어 자기 휴무를 만든다. */
+function recurringChipsFor(ownerKey) {
   const chips = [];
-
-  for (const [weekday, options] of weekdayOffs.value.entries()) {
+  for (const [weekday, options] of offOptionsMapFor(ownerKey).entries()) {
+    const inherited = isInheritedOffWeekday(ownerKey, weekday);
     for (const option of options) {
-      const label = option === 'WEEKLY'
-          ? `매주 ${WEEKDAY_LABELS[weekday]}요일`
-          : `매월 ${option.split('_')[1]}번째 ${WEEKDAY_LABELS[weekday]}요일`;
-
-      chips.push({weekday, option, label});
+      chips.push({
+        weekday, option,
+        label : recurringChipLabel(weekday, option),
+        locked: inherited,
+      });
     }
   }
-
   return chips;
-});
+}
 
-/* 해당 날짜가 반복 휴무 규칙에 해당하는지 판정 */
+/* 지금 상속으로 그려지고 있는 요일 — 컨트롤이 자기 값과 빌린 값을 눈으로 가르는 데 쓴다. */
+function inheritedWeekdaysFor(ownerKey) {
+  const set = new Set();
+  for (const weekday of offOptionsMapFor(ownerKey).keys()) {
+    if (isInheritedOffWeekday(ownerKey, weekday)) set.add(weekday);
+  }
+  return set;
+}
+
+/* 담당자 매주 휴무 = 운영시간 표의 `entry = []`.
+ * ⚠️ 켜면 그 요일에 넣어 둔 운영시간은 사라진다 — 한 요일에 "휴무"과 "운영시간"을 함께 담을 자리가
+ *   원천 테이블(담당자 운영시간 테이블, 시분 NULL = 휴무)에 없다.
+ * 끄면 그 요일 행을 지운다. 자기 반복 휴무가 하나도 남지 않으면 그 담당자는 다시 사업장을 따라간다. */
+function setStaffWeekdayOff(ownerKey, weekday, off) {
+  const next = new Map(workingHoursByOwner.value);
+  const dayMap = new Map(next.get(ownerKey) ?? []);
+  if (off) dayMap.set(weekday, []);
+  else dayMap.delete(weekday);
+  next.set(ownerKey, dayMap);
+  workingHoursByOwner.value = next;
+}
+
+function setStaffMonthlyOptions(ownerKey, weekday, options) {
+  const next = new Map(staffMonthlyOffs.value);
+  const dayMap = new Map(next.get(ownerKey) ?? []);
+  if (options.size === 0) dayMap.delete(weekday);
+  else dayMap.set(weekday, options);
+
+  if (dayMap.size === 0) next.delete(ownerKey);
+  else next.set(ownerKey, dayMap);
+  staffMonthlyOffs.value = next;
+}
+
+/* 그 담당자의 매월 규칙 → API 계약 모양 [{dayCd, monthlyNth}]. 요일·차수 오름차순으로 고정한다
+ * — 순서가 흔들리면 baseline 비교가 "변경됨"으로 오판해 저장 버튼이 잘못 켜진다(계획서 G2). */
+function monthlyOffRulesOf(ownerKey) {
+  const rules = [];
+  for (const [dayCd, options] of staffMonthlyOffs.value.get(ownerKey) ?? []) {
+    for (const option of options) {
+      const monthlyNth = monthlyOptionValue(option);
+      if (monthlyNth !== null) rules.push({dayCd, monthlyNth});
+    }
+  }
+  rules.sort((a, b) => a.dayCd - b.dayCd || a.monthlyNth - b.monthlyNth);
+  return rules;
+}
+
+/* 담당자 반복 휴무 토글 — 배타 규칙은 사업장과 같다(매주를 켜면 매월을 비운다).
+ *
+ * ★아직 아무것도 정하지 않아 **사업장 것을 빌려 보여주는 중**이면, 누르는 것은 언제나 "켜기"다.
+ *  그 순간 그 요일이 자기 값이 되고 상속이 끊겨, 빌려 보여주던 나머지 요일 표기는 사라진다.
+ *  (빌린 표기를 끄는 조작은 두지 않는다 — 지울 자기 값이 없어 눌러도 아무 일이 없다.) */
+function toggleStaffOption(ownerKey, weekday, option) {
+  const inherited = !hasOwnRecurringOff(ownerKey);
+  const weeklyOff = inherited ? false : offOptionsFor(ownerKey, weekday).has('WEEKLY');
+
+  if (option === 'WEEKLY') {
+    setStaffWeekdayOff(ownerKey, weekday, !weeklyOff);
+    if (!weeklyOff) setStaffMonthlyOptions(ownerKey, weekday, new Set());
+    return;
+  }
+  /* 매주가 켜져 있으면 매월은 의미가 없다 — 드롭다운에서도 disabled 지만 여기서 한 번 더 막는다. */
+  if (weeklyOff) return;
+
+  const options = new Set(staffMonthlyOffs.value.get(ownerKey)?.get(weekday) ?? []);
+  if (options.has(option)) options.delete(option);
+  else options.add(option);
+  setStaffMonthlyOptions(ownerKey, weekday, options);
+}
+
+function toggleOptionFor(ownerKey, weekday, option) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) toggleOption(weekday, option);
+  else toggleStaffOption(ownerKey, weekday, option);
+}
+
+/* 그 대상이 공휴일에 쉬는가. 담당자 값 부재는 조회 전 과도 상태뿐이라 기관 값으로 표시만 한다. */
+function holidayOffFor(ownerKey) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) return includePublicHolidays.value;
+  const yn = staffHolidayOff.value.get(ownerKey);
+  if (yn === 'N') return true;
+  if (yn === 'Y') return false;
+  return includePublicHolidays.value;
+}
+
+/* 체크박스를 만지는 순간 'Y'/'N' 으로 확정된다 — 상속(미설정)으로 되돌리는 조작은 두지 않는다.
+ * 3상태 순환을 만들면 사업장 체크박스와 모양이 갈린다(§4-5-5). */
+function setHolidayOffFor(ownerKey, value) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) {
+    setIncludePublicHolidays(value);
+    return;
+  }
+  const next = new Map(staffHolidayOff.value);
+  next.set(ownerKey, value ? 'N' : 'Y');
+  staffHolidayOff.value = next;
+}
+
+/* 해당 날짜가 반복 휴무 규칙에 해당하는지 판정 — 규칙은 offDayRules 가 소유한다(뷰어와 공용). */
 function isRecurringOff(date) {
-  const options = weekdayOffs.value.get(date.day());
-  if (!options || options.size === 0) return false;
-  if (options.has('WEEKLY')) return true;
-
-  const occurrence = Math.ceil(date.date() / 7); // 1~5
-  return options.has(`MONTHLY_${occurrence}`);
+  return isInstitutionRecurringOff(date, weekdayOffs.value);
 }
 
 /* 공휴일 여부 (체크박스 무관 — 날짜 자체가 국가 공휴일인지).
@@ -835,11 +1340,15 @@ function isHolidayDate(date) {
   return holidayStore.isHoliday(date.format('YYYY-MM-DD'));
 }
 
-function toggleTeam(teamId) {
-  const next = new Set(selectedTeamIds.value);
-  next.has(teamId) ? next.delete(teamId) : next.add(teamId);
-  selectedTeamIds.value = next;
-}
+/* 팀에서 빠진 담당자가 선택된 채로 남으면 우측 뷰어가 목록에 없는 대상을 계속 그린다 —
+ * 구성원 삭제·팀 삭제 어느 경로로 빠지든 사업장 선택으로 되돌린다. */
+watch(teams, () => {
+  if (selectedOffOwner.value === OFF_OWNER_INSTITUTION) return;
+
+  const stillListed = teams.value.some(team =>
+      (team.doctorIds ?? []).some(docId => staffOffOwnerKey(docId) === selectedOffOwner.value));
+  if (!stillListed) selectedOffOwner.value = OFF_OWNER_INSTITUTION;
+}, {deep: true});
 
 /* ===== 팀 생성/편집 ===== */
 /* 신규 팀 작성 폼 (id=null). 기존 팀 편집은 인라인 rename / picker로 분리됨 */
@@ -946,6 +1455,7 @@ function openStaffPickerForNew(event) {
   const trigger = event.currentTarget;
   if (!trigger) return;
 
+  closeTeamMenu();
   const rect = trigger.getBoundingClientRect();
   staffPicker.value = {
     open  : true,
@@ -980,10 +1490,78 @@ const staffPickerDisabledIds = computed(() => {
   return ids;
 });
 
-/* picker 완료 — teamId=null: 신규 팀 생성 / teamId=existing: 구성원만 업데이트 */
+/* 구성원 picker 목록 — 진료팀에 배정할 수 없는 담당자를 걸러낸다.
+ * "미지정"은 사람이 아니라 사업장 설정 경유 예약의 담당의 자리표시자이며, BE 가 병원마다 담당자 원장에 1회 선등록한다.
+ * 팀에 넣으면 "미지정 예약"(= 원장에는 있으나 팀 멤버가 아닌 건)이라는 정의가 무너져 미지정 데이터 설정이 대상을 잃는다.
+ * 이미 팀에 들어가 있는 경우에는 staged 에 그대로 남으므로 저장으로 빠지지는 않는다(목록에서만 감춘다). */
+const staffPickerDoctors = computed(() =>
+    doctors.value.filter(d => d.text !== UNASSIGNABLE_DOCTOR_NAME)
+);
+
+/* ===== 팀 배치 시점 상속(복사) — 화면정의서 APB032/033 §4 =====
+ * "사업장 값은 첫 직원에게, 첫 직원 값은 다음 직원들에게 상속됨"은 런타임 참조가 아니라
+ * **배치 시점 복사**다 — 복사 후 개별 수정은 자유고, 원본이 나중에 바뀌어도 따라가지 않는다.
+ * (개별 편집 UI 가 있는 이상 라이브 추종은 성립하지 않는다.)
+ * 팀 이탈은 설정 삭제(4-2)이므로, 재배치되는 직원의 잔존 상태는 덮어써도 된다. */
+function inheritedStaffSettingsFrom(sourceKey) {
+  if (sourceKey === OFF_OWNER_INSTITUTION) {
+    const dayMap = new Map();
+    const monthly = new Map();
+    for (const [weekday, options] of weekdayOffs.value) {
+      if (options.has('WEEKLY')) dayMap.set(weekday, []);
+      const monthlyOptions = new Set([...options].filter(o => o !== 'WEEKLY'));
+      if (monthlyOptions.size > 0) monthly.set(weekday, monthlyOptions);
+    }
+    /* 기관 임시진료(WORK) 일자는 담당자에겐 시간이 필요하다 — 이 시점엔 요일 시간이 없으니 기본값. */
+    const overrides = new Map();
+    for (const [dateKey, type] of dateOverrides.value) {
+      overrides.set(dateKey, type === 'OFF' ? [] : [{...DEFAULT_WORK_BLOCK}]);
+    }
+    return {dayMap, monthly, overrides, phdy: includePublicHolidays.value ? 'N' : 'Y'};
+  }
+  const dayMap = new Map([...(workingHoursByOwner.value.get(sourceKey) ?? [])]
+      .map(([w, blocks]) => [w, blocks.map(b => ({...b}))]));
+  const monthly = new Map([...(staffMonthlyOffs.value.get(sourceKey) ?? [])]
+      .map(([w, opts]) => [w, new Set(opts)]));
+  const overrides = new Map([...(workingHoursOverridesByOwner.value.get(sourceKey) ?? [])]
+      .map(([d, blocks]) => [d, blocks.map(b => ({...b}))]));
+  return {
+    dayMap, monthly, overrides,
+    phdy: staffHolidayOff.value.get(sourceKey) ?? (includePublicHolidays.value ? 'N' : 'Y'),
+  };
+}
+
+function applyInheritedSettings(newDoctorIds, sourceKey) {
+  if (newDoctorIds.length === 0) return;
+  const s = inheritedStaffSettingsFrom(sourceKey);
+  const hoursNext = new Map(workingHoursByOwner.value);
+  const overridesNext = new Map(workingHoursOverridesByOwner.value);
+  const monthlyNext = new Map(staffMonthlyOffs.value);
+  const holidayNext = new Map(staffHolidayOff.value);
+  for (const id of newDoctorIds) {
+    const key = staffOffOwnerKey(id);
+    /* 대상마다 새 사본 — 같은 Map/배열을 공유하면 한 명을 고칠 때 전원이 바뀐다. */
+    if (s.dayMap.size) hoursNext.set(key, new Map([...s.dayMap].map(([w, b]) => [w, b.map(x => ({...x}))])));
+    else hoursNext.delete(key);
+    if (s.overrides.size) overridesNext.set(key, new Map([...s.overrides].map(([d, b]) => [d, b.map(x => ({...x}))])));
+    else overridesNext.delete(key);
+    if (s.monthly.size) monthlyNext.set(key, new Map([...s.monthly].map(([w, o]) => [w, new Set(o)])));
+    else monthlyNext.delete(key);
+    holidayNext.set(key, s.phdy);
+  }
+  workingHoursByOwner.value = hoursNext;
+  workingHoursOverridesByOwner.value = overridesNext;
+  staffMonthlyOffs.value = monthlyNext;
+  staffHolidayOff.value = holidayNext;
+}
+
+/* picker 완료 — teamId=null: 신규 팀 생성 / teamId=existing: 구성원만 업데이트.
+ * 어느 팀에도 없던 직원이 새로 배치되면 상위(기존 첫 직원, 없으면 사업장) 값을 복사한다. */
 function confirmStaffPicker() {
   const {teamId, staged} = staffPicker.value;
   const doctorIds = [...staged];
+  const assignedBefore = new Set(teams.value.flatMap(t => t.doctorIds));
+  const newMembers = doctorIds.filter(id => !assignedBefore.has(id));
 
   if (teamId === null) {
     if (!editingTeam.value) {
@@ -993,12 +1571,15 @@ function confirmStaffPicker() {
     const trimmedName = editingTeam.value.name.trim() || '새 팀';
     const newId = `TEAM_${Date.now()}`;
     teams.value = [...teams.value, {id: newId, name: trimmedName, doctorIds}];
-    selectedTeamIds.value = new Set([...selectedTeamIds.value, newId]);
     editingTeam.value = null;
+    applyInheritedSettings(newMembers, OFF_OWNER_INSTITUTION);
   } else {
+    const priorTop = teams.value.find(t => t.id === teamId)?.doctorIds[0];
     teams.value = teams.value.map(t =>
         t.id === teamId ? {...t, doctorIds} : t
     );
+    applyInheritedSettings(newMembers,
+        priorTop != null ? staffOffOwnerKey(priorTop) : OFF_OWNER_INSTITUTION);
   }
   closeStaffPicker();
 }
@@ -1031,9 +1612,16 @@ function handleMenuRename() {
 
 function handleMenuMembers() {
   const {teamId, top, left} = teamMenu.value;
-  const team = teams.value.find(t => t.id === teamId);
   closeTeamMenu();
+  openStaffPickerFor(teamId, {top, left});
+}
+
+/* 구성원 picker 를 연다 — 팀 메뉴(⋯)의 「구성원 설정」과 빈 팀 영역 클릭이 같은 경로를 쓴다.
+ * triggerRect 가 없으면(메뉴 경로) top 기준 pseudo-rect 로 flip 처리한다. */
+function openStaffPickerFor(teamId, {top, left, triggerRect = null}) {
+  const team = teams.value.find(t => t.id === teamId);
   if (!team) return;
+  closeTeamMenu();
   staffPicker.value = {
     open: true,
     top,
@@ -1041,8 +1629,16 @@ function handleMenuMembers() {
     staged: new Set(team.doctorIds),
     teamId: team.id,
   };
-  /* 트리거 rect 가 없으므로 menu top 기준 pseudo-rect 로 flip 처리 */
-  clampStaffPickerIntoView({top});
+  clampStaffPickerIntoView(triggerRect ?? {top});
+}
+
+/* 구성원이 0명인 팀의 안내 영역 클릭 — 그 자리에서 바로 배정할 수 있게 picker 를 연다.
+ * 빈 팀에 사람을 넣는 길이 ⋯ 메뉴 하나뿐이면 찾기 어렵고, 드래그로만 넣으려 해도 놓을 자리가 보이지 않는다.
+ * ★호출부에 @click.stop 이 필요하다 — document 클릭 리스너가 방금 연 picker 를 그 클릭으로 닫는다
+ *   (신규 팀 폼의 memberArea 도 같은 이유로 .stop 을 달고 있다). */
+function onEmptyMemberAreaClick(event, teamId) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  openStaffPickerFor(teamId, {top: rect.bottom + 4, left: rect.left, triggerRect: rect});
 }
 
 function handleMenuDelete() {
@@ -1066,9 +1662,6 @@ function handleMenuDelete() {
     title    : `[${team.name}]을 삭제하시겠습니까?`,
     onConfirm: () => {
       teams.value = teams.value.filter(t => t.id !== teamId);
-      const next = new Set(selectedTeamIds.value);
-      next.delete(teamId);
-      selectedTeamIds.value = next;
       if (renamingTeam.value?.id === teamId) renamingTeam.value = null;
     },
   });
@@ -1153,8 +1746,11 @@ function onChipListDragOver(event, teamId) {
   if (!chipDrag.value.active) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  /* 컨테이너 자체에 드롭 → 끝에 추가 (chip li의 dragover는 별도로 stopPropagation됨) */
-  if (chipDrag.value.targetTeamId !== teamId || chipDrag.value.targetIndex !== null) {
+  /* 컨테이너 자체에 드롭 → 끝에 추가 (chip li의 dragover는 별도로 stopPropagation됨).
+   * ★같은 팀 안에서는 targetIndex 를 건드리지 않는다 — 칩 사이 gap(4px) 위를 지날 때마다
+   *  여기가 발동해 "끝으로"(null)로 덮어쓰면, 드래그하는 내내 드롭 위치 표시가 깜빡이며 튄다.
+   *  팀이 바뀔 때만(빈 팀 포함) 끝에 추가로 초기화한다. */
+  if (chipDrag.value.targetTeamId !== teamId) {
     chipDrag.value = {...chipDrag.value, targetTeamId: teamId, targetIndex: null};
   }
 }
@@ -1216,13 +1812,11 @@ function reorderWithinTeam(teamId, fromIndex, toIndex) {
   if (!team || fromIndex == null) return;
   const ids = [...team.doctorIds];
   const [moved] = ids.splice(fromIndex, 1);
-  /* toIndex=null → 끝, 아니면 "target 앞에 삽입" 시맨틱 */
-  let insertAt;
-  if (toIndex === null) {
-    insertAt = ids.length;
-  } else {
-    insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
-  }
+  /* toIndex=null → 끝, 아니면 "그 칩이 있던 자리로" 시맨틱 —
+   * 뺀 뒤의 배열에 toIndex 로 그대로 꽂는다. 담당자 순서 변경 팝업(SchedulerDoctorOrderPopup)과 같은 규약이다.
+   * ★"target 앞에 삽입"(fromIndex<toIndex 일 때 toIndex-1 보정)으로 두면 아래로 끌었을 때 한 칸 덜 가
+   *  잡은 자리에 놓이지 않는다 — 드래그가 겉도는 것처럼 느껴지던 원인. */
+  const insertAt = toIndex === null ? ids.length : toIndex;
   if (insertAt === fromIndex) return; // 같은 위치
   ids.splice(insertAt, 0, moved);
   teams.value = teams.value.map(t => t.id === teamId ? {...t, doctorIds: ids} : t);
@@ -1245,6 +1839,49 @@ function isDisplayedOff(date) {
  * 표시(캘린더 셀)와 토글(자연 상태면 override 를 지운다)이 같은 규칙을 써야 클릭이 헛돌지 않는다. */
 function isNaturallyOff(date) {
   return isHolidayDate(date) ? includePublicHolidays.value : isRecurringOff(date);
+}
+
+/* ===== 우측 뷰어의 owner 일반화 (§4-5-2) =====
+ * 12개월 뷰어는 선택한 대상의 휴무일을 그린다. 담당자 판정은 순수함수(offDayRules.ts)가 하고,
+ * "정하지 않음"은 사업장 판정을 상속한다 — 미설정을 휴무로 접으면 기관이 진료하는 날에도
+ * 그 담당자만 통째로 쉬는 것처럼 보인다. */
+function staffOffContextFor(ownerKey, date) {
+  const dateKey = date.format('YYYY-MM-DD');
+  return {
+    dateBlocks     : workingHoursOverridesByOwner.value.get(ownerKey)?.get(dateKey),
+    weekdayBlocks  : workingHoursByOwner.value.get(ownerKey)?.get(date.day()),
+    monthlyOffRules: monthlyOffRulesOf(ownerKey),
+    holidayOpenYn     : staffHolidayOff.value.get(ownerKey) ?? null,
+    isHoliday      : isHolidayDate(date),
+  };
+}
+
+/* 정한 것이 없는 담당자가 상속하는 사업장 판정.
+ *
+ * ★상속은 **축 단위**다. 요일 축을 스스로 정한 담당자에게는 기관 반복 휴무를, 일자 축을 스스로 정한
+ *  담당자에게는 기관 일자 지정을 더는 적용하지 않는다. 축마다 따로 끊기므로 둘을 함께 묻지 않는다 —
+ *  요일 휴무를 하나 정했다고 병원 임시휴무일까지 안 따라가면 그건 정한 적 없는 결정이다.
+ *
+ * ★공휴일 축은 다르다 — `HOLIDAY_OPEN_YN` 은 NOT NULL 2상태라 늘 자기 값이고, 기관 값은 팀 배치 시점에
+ *  이미 복사됐다(계획서 §3-2). 그래서 기관에서 런타임으로 내려받을 것이 없다. 답을 holidayOffFor 로
+ *  내는 이유는 **판정과 체크박스 표시를 한 함수로 묶기 위해서다** — 조회 전 과도 상태로 값이 비어 있을 때
+ *  둘이 갈리면, 체크는 기관 값으로 켜져 보이는데 판정만 진료가 된다.
+ * 공휴일에 기관 **요일** 휴무를 보지 않는 것은 기관 축과 같은 규약이다(isNaturallyOff) — 기관도 공휴일을
+ * 반복 휴무에서 빼고 공휴일 스위치로만 가른다. */
+function inheritedInstitutionOff(date, ownerKey) {
+  return inheritedInstitutionOffOn({
+    hasOwnDateOverrides: hasOwnDateOverrides(ownerKey),
+    institutionDateOverride: dateOverrides.value.get(date.format('YYYY-MM-DD')),
+    isHoliday: isHolidayDate(date),
+    holidayOff: holidayOffFor(ownerKey),
+    hasOwnRecurringOff: hasOwnRecurringOff(ownerKey),
+    institutionRecurringOff: isRecurringOff(date),
+  });
+}
+
+function isDisplayedOffFor(ownerKey, date) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) return isDisplayedOff(date);
+  return isStaffOffOn(date, staffOffContextFor(ownerKey, date), inheritedInstitutionOff(date, ownerKey));
 }
 
 /* 범위 OFF 토글 (단일 클릭/드래그 공통)
@@ -1286,6 +1923,68 @@ function toggleRangeOff(startKey, endKey) {
   dateOverrides.value = next;
 }
 
+/* 캘린더에서 "그 날짜 진료"로 뒤집을 때 채울 운영시간 (§4-4).
+ * 그 담당자의 그 요일 → 없으면 사업장의 그 요일 → 그것도 없으면 기본값.
+ *
+ * ★채우는 주체가 FE 인 이유 — BE 가 저장 시점에 채우면 "휴무일 탭이 진료로 뒤집은 날짜"와
+ *  "운영시간 탭에서 정상적으로 휴무 지정한 날짜"를 구분할 수 없어 후자까지 진료로 뒤집힌다(계획서 D5).
+ * 지정 자체가 만들어지는 시점에 채운다 — 일자 지정은 "빈 blocks = 휴무 / 값 있음 = 진료" 로만
+ * 뜻이 갈려, 값 없는 진료 지정을 만들어 두면 그 순간부터 휴무와 구분되지 않는다. */
+const DEFAULT_WORK_BLOCK = {kind: 'WORK', start: '09:00', end: '18:00'};
+
+/* 그 담당자·요일을 "진료"로 확정할 때 넣을 운영시간 (계획서 §4-4)
+ * — 자기 그 요일 → 없으면 사업장 그 요일 → 그것도 없으면 09:00~18:00. */
+function staffWorkBlocksFor(ownerKey, weekday) {
+  const blocks = getStaffWeekdayBlocks(ownerKey, weekday);
+  return blocks.length > 0 ? blocks.map(b => ({...b})) : [{...DEFAULT_WORK_BLOCK}];
+}
+
+function workDayBlocksFor(ownerKey, date) {
+  return staffWorkBlocksFor(ownerKey, date.day());
+}
+
+/* 담당자 범위 토글 — 규칙은 사업장과 같다(자연 상태와 같아지면 지정을 지운다).
+ * 담기는 곳만 다르다: 담당자의 일자 지정은 운영시간 override 그 자체다(계획서 R1). */
+function toggleStaffRangeOff(ownerKey, startKey, endKey) {
+  const a = dayjs(startKey);
+  const b = dayjs(endKey);
+  const [from, to] = a.isBefore(b) ? [a, b] : [b, a];
+
+  let allOff = true;
+  let cursor = from;
+  while (!cursor.isAfter(to, 'day')) {
+    if (!isDisplayedOffFor(ownerKey, cursor)) {
+      allOff = false;
+      break;
+    }
+    cursor = cursor.add(1, 'day');
+  }
+
+  const newOff = !allOff;
+  const next = new Map(workingHoursOverridesByOwner.value);
+  const dayMap = new Map(next.get(ownerKey) ?? []);
+
+  cursor = from;
+  while (!cursor.isAfter(to, 'day')) {
+    const key = cursor.format('YYYY-MM-DD');
+    /* ★누르고 지나간 날은 **자연 상태와 같아도** 자기 지정으로 남긴다 — 사용자가 고른 값이다.
+     *  사업장과 달리 지우지 않는 이유: 일자 축 상속은 축 단위라, 같은 드래그가 다른 날에 지정을
+     *  만드는 순간 이 대상은 기관 일자 지정을 더는 따라가지 않는다. 그때 "어차피 상속으로 휴무"이라며
+     *  지정을 만들지 않고 넘어간 날만 진료로 되살아난다(기관 임시휴무일을 가로질러 휴무로 끌면
+     *  그 하루만 진료로 남던 결함). 지우는 조작은 칩의 × 하나로 둔다. */
+    dayMap.set(key, newOff ? [] : workDayBlocksFor(ownerKey, cursor));
+    cursor = cursor.add(1, 'day');
+  }
+
+  next.set(ownerKey, dayMap);
+  workingHoursOverridesByOwner.value = next;
+}
+
+function toggleRangeOffFor(ownerKey, startKey, endKey) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) toggleRangeOff(startKey, endKey);
+  else toggleStaffRangeOff(ownerKey, startKey, endKey);
+}
+
 function onCellMouseDown(cell, event) {
   if (!cell.isCurrentMonth) return;
   event.preventDefault();
@@ -1305,7 +2004,7 @@ function onDocumentMouseUp() {
 
   if (!startKey || !endKey) return;
 
-  toggleRangeOff(startKey, endKey);
+  toggleRangeOffFor(selectedOffOwner.value, startKey, endKey);
 }
 
 function isInDragRange(cell) {
@@ -1320,22 +2019,51 @@ function isInDragRange(cell) {
  *   숨기면 (1) 있는 데이터를 못 보고 (2) 저장 payload 에서도 빠져 사업장 설정 행이 통삭제된다.
  * 병합 경계: 타입 + 공휴일 여부 + 연도가 모두 같고 날짜가 연속일 때만 한 칩으로 묶는다.
  *   공휴일과 일반 휴무일을 한 칩으로 묶으면, × 로 지울 때 무엇이 지워지는지 보이지 않는다. */
+/* 이 담당자가 **일자 지정을 하나라도 직접 했는가** — 요일 축의 hasOwnRecurringOff 와 같은 규약이다. */
+function hasOwnDateOverrides(ownerKey) {
+  return (workingHoursOverridesByOwner.value.get(ownerKey)?.size ?? 0) > 0;
+}
+
+/* 그 대상의 일자 지정 — Map<'YYYY-MM-DD', 'OFF' | 'WORK'>.
+ * 담당자 쪽은 운영시간 override 가 그대로 답이다: 빈 blocks = 그 날짜 휴무 / 값 있음 = 그 날짜 진료.
+ *
+ * ★일자 축을 **아직 하나도 정하지 않았을 때만** 사업장 지정을 상속해 보여준다.
+ *  하나라도 정했으면 자기 것만 그린다 — 섞어 그리면 자기가 정한 날과 병원을 따라가는 날이
+ *  한 칩 목록에 나란히 앉아, 어느 쪽이 자기 결정인지 화면에서 사라진다. */
+function dateOverridesFor(ownerKey) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) return dateOverrides.value;
+
+  const map = hasOwnDateOverrides(ownerKey) ? new Map() : new Map(dateOverrides.value);
+  for (const [dateKey, blocks] of workingHoursOverridesByOwner.value.get(ownerKey) ?? []) {
+    map.set(dateKey, blocks.length === 0 ? 'OFF' : 'WORK');
+  }
+  return map;
+}
+
+/* 그 날짜 지정이 이 담당자 자신의 것인가 (아니면 사업장에서 상속한 것) */
+function ownsDateOverride(ownerKey, dateKey) {
+  if (ownerKey === OFF_OWNER_INSTITUTION) return true;
+  return workingHoursOverridesByOwner.value.get(ownerKey)?.has(dateKey) === true;
+}
+
 const specificDates = computed(() => {
-  const sorted = [...dateOverrides.value.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const sorted = [...dateOverridesFor(selectedOffOwner.value).entries()].sort(([a], [b]) => a.localeCompare(b));
   const ranges = [];
 
   for (const [key, type] of sorted) {
     const d = dayjs(key);
     const isHoliday = holidayStore.isHoliday(key);
+    /* 상속분과 자기 지정은 한 칩으로 묶지 않는다 — 한쪽만 × 를 갖게 되어 무엇이 지워지는지 흐려진다. */
+    const locked = !ownsDateOverride(selectedOffOwner.value, key);
     const last = ranges[ranges.length - 1];
 
-    if (last && last.type === type && last.isHoliday === isHoliday
+    if (last && last.type === type && last.isHoliday === isHoliday && last.locked === locked
         && last.endDate.year() === d.year()
         && last.endDate.add(1, 'day').isSame(d, 'day')) {
       last.endDate = d;
       last.endKey = key;
     } else {
-      ranges.push({startDate: d, endDate: d, startKey: key, endKey: key, type, isHoliday});
+      ranges.push({startDate: d, endDate: d, startKey: key, endKey: key, type, isHoliday, locked});
     }
   }
 
@@ -1368,28 +2096,77 @@ const specificDatesByType = computed(() =>
         .filter(g => g.ranges.length > 0));
 
 function removeSpecificRange(range) {
-  const next = new Map(dateOverrides.value);
+  const ownerKey = selectedOffOwner.value;
+  const dateKeys = [];
   let cursor = range.startDate;
   while (!cursor.isAfter(range.endDate, 'day')) {
-    next.delete(cursor.format('YYYY-MM-DD'));
+    dateKeys.push(cursor.format('YYYY-MM-DD'));
     cursor = cursor.add(1, 'day');
   }
-  dateOverrides.value = next;
+
+  if (ownerKey === OFF_OWNER_INSTITUTION) {
+    const next = new Map(dateOverrides.value);
+    for (const key of dateKeys) next.delete(key);
+    dateOverrides.value = next;
+    return;
+  }
+
+  const next = new Map(workingHoursOverridesByOwner.value);
+  const dayMap = new Map(next.get(ownerKey) ?? []);
+  /* 자기 지정만 지운다(미설정으로 되돌아가 사업장을 따른다).
+   * 상속분 칩에는 × 가 없다(§4-5-7) — 지울 것이 없기 때문이다. 뒤집으려면 달력에서 그 날짜를 누른다. */
+  for (const key of dateKeys) dayMap.delete(key);
+  next.set(ownerKey, dayMap);
+  workingHoursOverridesByOwner.value = next;
 }
 
-/* 캘린더에 표시할 운영시간 owner 결정.
- *  - 직원 expand 중 → 그 직원 + 이름 prefix
- *  - 그 외 (사업장 expand / 미선택) → INSTITUTION (직원별 리스트 모드) */
+/* 캘린더에 표시할 운영시간 조회 단위 — 직원 / 팀 / 사업장 셋이다.
+ *  - 직원 선택 중 → STAFF        그 직원 하나 + 이름 prefix (단일 라벨 모드)
+ *  - 팀 선택 중   → TEAM         그 팀 소속 직원들 (직원별 리스트 모드)
+ *  - 그 외        → INSTITUTION  전 직원 (직원별 리스트 모드)
+ * 팀이 사라진 뒤(삭제·구성원 변경) 키만 남으면 INSTITUTION 으로 떨어진다 — 빈 캘린더보다 낫다. */
 function getCalendarOwner() {
   const key = expandedTreatmentKey.value;
   if (key && key.startsWith('staff:')) {
     const docId = Number(key.slice('staff:'.length));
-    return {ownerKey: `STAFF:${docId}`, doctorName: getDoctor(docId)?.text ?? ''};
+    return {scope: 'STAFF', ownerKey: `STAFF:${docId}`, doctorName: getDoctor(docId)?.text ?? '', doctorId: docId};
   }
-  return {ownerKey: 'INSTITUTION', doctorName: ''};
+  if (key && key.startsWith('team:')) {
+    /* ★팀 id 는 문자열이다(loadSettings 의 `String(t.id)`) — 숫자로 바꿔 비교하면 항상 어긋난다.
+     * 신규 생성 팀도 같은 규약이라 문자열끼리 비교한다. */
+    const teamId = key.slice('team:'.length);
+    if (teams.value.some(t => String(t.id) === teamId)) {
+      return {scope: 'TEAM', ownerKey: 'INSTITUTION', doctorName: '', teamId};
+    }
+  }
+  return {scope: 'INSTITUTION', ownerKey: 'INSTITUTION', doctorName: ''};
 }
 
-/* 블록들의 첫 시작 ~ 마지막 종료를 단일 범위로 (오전/오후/야간 구분 없이) */
+/* 블록들의 첫 시작 ~ 마지막 종료를 단일 범위로 (오전/오후/야간 구분 없이).
+ * ★직원 단위 전용 라벨 함수(formatAppointmentLabel)는 폐기했다 — 그 함수는 요일 운영시간만 보고
+ *  일자 지정과 사업장 폴백을 타지 않아, 같은 날짜가 직원 단위에서만 빈칸으로 보였다.
+ *  라벨을 만드는 곳은 formatListEntries 하나뿐이어야 한다. */
+/* 그 날짜에 미설정 담당자가 빌려 쓸 사업장 운영시간.
+ * ★공휴일이면 기관의 **공휴일 운영시간**(holidayHours)을 먼저 본다. 요일 시간을 쓰면 기관이 그날 실제로
+ *  여는 시간과 다른 값이 찍힌다 — 기관 공휴일이 09:00~13:00 인데 그날이 금요일이라 09:00~18:00 으로
+ *  표기되던 것이 그 예다. 기관이 공휴일 시간을 따로 등록했다는 건 "이날은 요일 시간과 다르다"는
+ *  명시적 의사표시이므로 상속도 그것을 따라야 한다.
+ * 공휴일 시간을 등록하지 않은 기관은 요일 시간으로 내려간다 — 종전 동작 유지다. 여기서 미표기로
+ *  바꾸면 지금 보이던 줄이 통째로 사라진다.
+ * 기관이 공휴일 휴무(holidayClosedYn)이어도 등록된 시간 값은 보존되므로(institutionHolidayDayMap 주석)
+ *  담당자만 holidayOpenYn='Y' 로 진료하는 경우에도 이 값을 쓴다 — 그 사람이 실제로 여는 시간에 가장 가깝다. */
+function institutionBlocksOn(date, weekday) {
+  /* 일자 > 공휴일 > 요일 — 보드 예약검증(pickDailySchedule)·타임라인 밴드(resolveUnitHours)와 같은 순서다.
+   * 날짜를 콕 집어 저장된 시각이 가장 구체적인 의도라 공휴일 시간보다도 먼저다. */
+  const dateBlocks = institutionDateDayMap.value.get(date.format('YYYY-MM-DD'));
+  if (dateBlocks?.length > 0) return dateBlocks;
+
+  if (isHolidayDate(date) && hasSiteHolidayHoursRange()) {
+    return institutionHolidayDayMap.value.get(HOLIDAY_SLOT) ?? [];
+  }
+  return institutionWeeklyDayMap.value.get(weekday) ?? [];
+}
+
 function formatBlocksRange(blocks) {
   if (blocks.length === 0) return null;
   let minStart = blocks[0].start;
@@ -1401,23 +2178,21 @@ function formatBlocksRange(blocks) {
   return `${minStart} ~ ${maxEnd}`;
 }
 
-/* STAFF 모드 단일 라벨 — INSTITUTION 모드는 entries[] 별도 처리 */
-function formatAppointmentLabel(weekday, isOff) {
-  const {ownerKey, doctorName} = getCalendarOwner();
-  const blocks = getBlocksFor(ownerKey, weekday);
-  if (blocks.length === 0) return null;
-
-  if (isOff) {
-    return doctorName ? `${doctorName} (휴무)` : null;
+/* 캘린더 셀의 직원 표시 순서 — 세 조회 단위 모두 이 하나를 쓴다.
+ * 직원:     그 한 명. 단위가 달라도 표기가 갈리면 안 되므로 "1명짜리 목록"으로 다룬다
+ *           (예전에는 STAFF 만 별도 라벨 함수를 써서 cascade·일자 지정이 통째로 빠져 있었다).
+ * 사업장: teams[] 순회 + 각 팀의 doctorIds 순서대로 (같은 직원이 N팀 소속이면 N번 표시 — 의도된 중복).
+ *           팀 미소속 STAFF 는 끝에 staffId 오름차순.
+ * 팀:       그 팀의 doctorIds 만. 팀 미소속(orphan)은 넣지 않는다 —
+ *           "그 팀 소속 직원"을 보려고 고른 것이라 남이 섞이면 조회 단위가 무의미해진다. */
+function getCalendarDoctorOrder(owner) {
+  if (owner.scope === 'STAFF') {
+    return owner.doctorId == null ? [] : [owner.doctorId];
   }
-  const timeText = formatBlocksRange(blocks);
-  return doctorName ? `${doctorName} ${timeText}` : timeText;
-}
+  if (owner.scope === 'TEAM') {
+    return teams.value.find(t => String(t.id) === owner.teamId)?.doctorIds ?? [];
+  }
 
-/* 사업장 모드 캘린더 셀의 직원 표시 순서.
- * teams[] 순회 + 각 팀의 doctorIds 순서대로 (같은 직원이 N팀 소속이면 N번 표시 — 의도된 중복).
- * 팀 미소속 STAFF 는 끝에 staffId 오름차순. */
-function getInstitutionDoctorOrder() {
   const ordered = [];
   const inAnyTeam = new Set();
   for (const team of teams.value) {
@@ -1436,40 +2211,64 @@ function getInstitutionDoctorOrder() {
   return [...ordered, ...orphan];
 }
 
-/* INSTITUTION 모드 한 셀의 entries — {staffId, label, isOff}[]
+/* 한 셀의 entries — {staffId, label, isOff, isDesignated}[]
+ * 대상 직원만 달라질 뿐 라벨 판정(cascade)은 조회 단위 셋(직원·팀·사업장)이 완전히 같다 —
+ * 갈라놓으면 같은 날짜가 단위에 따라 다르게 보인다.
  *  - 셀 isOff=true → 모든 직원 "(휴무)"
  *  - 직원이 그 날짜를 휴무로 정함 → "(휴무)"
  *  - 정한 적 없음 + 사업장 운영시간을 앎 → 기관 시간으로 표기
- *  - 정한 적 없음 + 기관 운영시간도 모름 → "(운영시간 없음)"
+ *  - 정한 적 없음 + 기관 운영시간도 모름 → 표기하지 않음(화면정의서 §2-1)
  *  - 그 외 → "이름 09:00 ~ 14:00"
- * effective: date override > weekly recurring */
-function formatInstitutionEntries(weekday, isOff, dateKey) {
+ * effective: date override > weekly recurring
+ *
+ * isDesignated = 그 (직원, 날짜)에 일자 지정이 걸려 있다 → 셀에서 그 줄만 강조한다(화면정의서 APB033 §6-2
+ * "해당 운영시간만 하이라이트되어 표시"). 요일 반복만 따르는 줄과 눈으로 갈리지 않으면
+ * 어느 날을 따로 지정해 뒀는지 캘린더에서 확인할 방법이 없다.
+ * 사업장 휴무일에도 억제하지 않는다 — 직원별 판정이 갈리면서(지정 진료는 기관 휴무를 이긴다, R11)
+ * 그런 날일수록 "이 줄만 지정"이라는 신호가 필요해졌다. */
+function formatListEntries(doctorIds, date, dateKey) {
+  const weekday = date.day();
   const entries = [];
-  /* cascade(사용자 모델): 담당자별 운영시간 → (미설정이면)사업장 운영시간(⚙ TB) → (그것도 모르면)운영시간 없음.
-   *  - isOff(휴무일/공휴일)은 운영시간과 무관하게 항상 휴무.
+  /* cascade(사용자 모델): 담당자별 운영시간 → (미설정이면)사업장 운영시간(⚙ TB) → (그것도 모르면)미표기.
+   *  - 휴무 여부는 직원마다 담당자 축(isDisplayedOffFor, §4-2)으로 판정한다. 셀의 isOff(사업장 축)를
+   *    그대로 덮으면 공휴일 진료('Y')·기관 휴무 요일의 명시적 진료(R11)로 정한 담당자까지 (휴무)이 된다 —
+   *    날짜 옆 '휴무' 라벨(사업장 축)과 직원 리스트(각자 판정)는 축이 다르다(화면정의서 APB031 §2-1).
+   *    명시적 휴무(요일·일자)·매월 규칙은 모두 이 판정에 접혀 있어 별도 분기가 필요 없다.
    *  - ★"휴무로 정함"과 "아직 안 정함"을 갈라야 한다. 예전에는 둘 다 진료 구간이 없다는 이유로
    *    똑같이 "(휴무)"으로 찍었는데, 그래서 사업장 운영시간을 못 불러온 것뿐인데도
    *    전원이 휴무로 보였다. 쉬기로 한 것과 모르는 것은 다르다. */
-  const dayBlocks = institutionWeeklyDayMap.value.get(weekday) ?? [];
-  const institutionBlocks = dayBlocks.length > 0 ? dayBlocks : null;
-  for (const id of getInstitutionDoctorOrder()) {
+  /* 빌려 쓸 값: 사업장의 그 날짜 운영시간 → 그것도 없으면 보드·타임라인이 여는 기본 운영시간.
+   * (기관 조회 실패 상태에서는 defaultWorkBlocks 가 비어 종전대로 미표기다.) */
+  const dayBlocks = institutionBlocksOn(date, weekday);
+  const borrowed = dayBlocks.length > 0 ? dayBlocks : defaultWorkBlocks();
+  const institutionBlocks = borrowed.length > 0 ? borrowed : null;
+  for (const id of doctorIds) {
     const name = getDoctor(id)?.text;
     if (!name) continue;
     const ownerKey = `STAFF:${id}`;
     const blocks = getEffectiveBlocks(ownerKey, dateKey, weekday);
-    if (isOff) {
-      entries.push({staffId: id, label: `${name} (휴무)`, isOff: true});
+    /* entry 는 name·time 분리(퍼블리싱 셀 렌더링) + label(테스트·popover 겸용)을 함께 담는다. */
+    const isDesignated = workingHoursOverridesByOwner.value.get(ownerKey)?.has(dateKey) === true;
+    if (isDisplayedOffFor(ownerKey, date)) {
+      entries.push({staffId: id, name, time: '(휴무)', label: `${name} (휴무)`, isOff: true, isDesignated});
     } else if (blocks.length > 0) {
-      entries.push({staffId: id, label: `${name} ${formatBlocksRange(blocks)}`, isOff: false});
-    } else if (isExplicitlyOff(ownerKey, dateKey, weekday)) {
-      entries.push({staffId: id, label: `${name} (휴무)`, isOff: true});
+      const time = formatBlocksRange(blocks);
+      /* isInvalid — [X] 로 검증을 건너뛰고 닫으면 반쪽·형식오류 값이 셀에 그대로 남는다.
+       * 저장 게이트가 막은 뒤 어느 줄인지 가리키는 표시다(담당자 7행 표의 data-invalid 와 같은 규약). */
+      entries.push({staffId: id, name, time, label: `${name} ${time}`, isOff: false, isDesignated,
+        isOwn: true, isInvalid: blocksInvalid(blocks)});
     } else if (institutionBlocks) {
-      // 담당자별 미설정 → 사업장 운영시간(자체 TB) 으로 표기
-      entries.push({staffId: id, label: `${name} ${formatBlocksRange(institutionBlocks)}`, isOff: false});
-    } else {
-      // 미설정인데 사업장 운영시간도 모른다 — 휴무가 아니라 "알 수 없음"이다
-      entries.push({staffId: id, label: `${name} (운영시간 없음)`, isOff: true});
+      /* 담당자별 미설정(공휴일 진료 'Y'인데 자기 시간이 없는 경우 포함) → 사업장 운영시간으로 표기.
+       * 원천은 외부 시스템(사업장 운영시간 테이블)이다 — 자체 DB 에는 이 테이블이 없다.
+       * isInherited 로 갈라 둔다: 빌린 값과 자기 값이 똑같이 생기면, 사업장 운영시간을 지웠을 때
+       * 표기가 사라지는 것을 "담당자 운영시간이 삭제됐다"고 읽게 된다(showsInheritedStaffTime). */
+      const time = formatBlocksRange(institutionBlocks);
+      entries.push({staffId: id, name, time, label: `${name} ${time}`, isOff: false, isDesignated,
+        isInherited: true, isInvalid: blocksInvalid(institutionBlocks)});
     }
+    /* 미설정인데 사업장 운영시간도 모르는 직원은 표기하지 않는다 — 화면정의서(§2-1)는
+     * 진료하는 직원의 시간과 휴무 직원의 (휴무)만 정의한다. 휴무로 정한 적이 없는데
+     * (휴무)으로 찍으면 거짓이고, 기관 조회 실패 상태는 배너·저장차단이 따로 알린다. */
   }
   return entries;
 }
@@ -1490,6 +2289,7 @@ function openCellMore(event, cell) {
   event.stopPropagation();
   const cellEl = event.currentTarget.closest('.schedulerTreatmentSetting__monthCell');
   if (!cellEl) return;
+  settleTimePopovers(); // 열려 있던 편집기는 닫고 하나만 띄운다
   const rect = cellEl.getBoundingClientRect();
   cellMorePopover.value = {
     open     : true,
@@ -1501,6 +2301,9 @@ function openCellMore(event, cell) {
     weekday  : cell.weekday,
     entries  : cell.entries,
   };
+  /* 위치 계산은 호출처 책임이라(CellMorePopover 는 셸일 뿐) 여기서 접는다.
+   * 셸에 ref 를 뚫는 대신 DOM 으로 찾는다 — 이 popover 는 한 번에 하나만 열린다. */
+  void settlePopoverPos(() => document.querySelector('.cellMorePopover'), cellMorePopover, rect, clampOverlayPos);
 }
 
 function closeCellMore() {
@@ -1509,8 +2312,8 @@ function closeCellMore() {
 }
 
 /* ===== 셀 × 직원 popover editor (날짜별 override 편집) =====
- * weekdayEditor 와 같은 3블록 토글 UI 지만 키가 (ownerKey, dateKey) — 그 날짜 한정 override.
- * draft 폴백 순서: 기존 override → weekly recurring → 기본 프리필 시간 */
+ * weekdayEditor 와 같은 UI 지만 키가 (ownerKey, dateKey) — 그 날짜 한정 override.
+ * draft 폴백 순서: 기존 지정 → 담당자 그 요일 → 사업장 그 요일 (getStaffWeekdayBlocks) */
 const cellStaffEditor = ref({
   open    : false,
   ownerKey: null,
@@ -1519,13 +2322,13 @@ const cellStaffEditor = ref({
   top     : 0,
   left    : 0,
   draft   : null,
-  /* weekdayEditor 와 같은 규약 — 닫기를 시도한 뒤에만 하이라이트를 그린다. */
-  tried   : false,
 });
 
 function buildCellStaffDraft(ownerKey, dateKey, weekday) {
   const override = workingHoursOverridesByOwner.value.get(ownerKey)?.get(dateKey);
-  const source = override !== undefined ? override : getBlocksFor(ownerKey, weekday);
+  /* 지정이 없으면 셀 라벨과 같은 cascade 를 프리필한다 — 담당자 요일값, 미설정이면 사업장 요일값.
+   * 셀에 보이던 시간이 그대로 입력칸에 들어와야 "무엇을 고치는지"가 화면과 어긋나지 않는다. */
+  const source = override !== undefined ? override : getStaffWeekdayBlocks(ownerKey, weekday);
   const existing = new Map(source.map(b => [b.kind, b]));
   const draft = {};
   for (const kind of WORK_BLOCK_KINDS) {
@@ -1537,11 +2340,8 @@ function buildCellStaffDraft(ownerKey, dateKey, weekday) {
 
 function openCellStaffEditor(event, ownerKey, dateKey, weekday) {
   event.stopPropagation();
-  /* 다른 운영시간 popover 가 열려 있으면 commit 후 진행 */
-  if (weekdayEditor.value.open) commitWeekdayEditor();
-  if (cellStaffEditor.value.open) commitCellStaffEditor();
-  /* cellMorePopover 안의 entry 클릭이라면 cellMorePopover 도 닫음 (Z-order 단순화) */
-  if (cellMorePopover.value.open) closeCellMore();
+  /* 다른 시간 popover(요일 편집·이전 일자 지정·더보기)는 먼저 정리한다 — 한 번에 하나만. */
+  settleTimePopovers();
 
   const rect = event.currentTarget.getBoundingClientRect();
   cellStaffEditor.value = {
@@ -1549,11 +2349,10 @@ function openCellStaffEditor(event, ownerKey, dateKey, weekday) {
     ownerKey,
     dateKey,
     weekday,
-    top     : rect.bottom + 4,
-    left    : rect.left,
+    ...clampPopoverPos(rect, POPOVER_FALLBACK_WIDTH, POPOVER_FALLBACK_HEIGHT),
     draft   : buildCellStaffDraft(ownerKey, dateKey, weekday),
-    tried   : false, // 새로 열 때마다 하이라이트는 꺼진 상태로 시작
   };
+  void settlePopoverPos(() => cellStaffEditorEl.value, cellStaffEditor, rect, clampPopoverPos);
 }
 
 function setCellStaffBlockTime(kind, field, value) {
@@ -1565,46 +2364,66 @@ function setCellStaffBlockTime(kind, field, value) {
   };
 }
 
-/* @returns 커밋하고 닫았으면 true, 미완성 입력이라 붙잡아 뒀으면 false */
+function onCellStaffTimeInput(event, kind, field) {
+  commitTimeInput(event, v => setCellStaffBlockTime(kind, field, v));
+}
+
+/* 진료 블록 목록이 같은가 — 단일 구간(WORK)이라 kind·시작·종료만 보면 된다. */
+function sameBlocks(a, b) {
+  return a.length === b.length
+      && a.every((x, i) => x.kind === b[i].kind && x.start === b[i].start && x.end === b[i].end);
+}
+
+/* draft 를 지정(override)으로 옮기고 닫는다. 요일 편집기와 같은 규약 —
+ * 여기서는 검증하지 않고, 캡처 가드와 저장 게이트가 나눠 맡는다. */
 function commitCellStaffEditor() {
-  const {ownerKey, dateKey, draft} = cellStaffEditor.value;
+  const {ownerKey, dateKey, weekday, draft} = cellStaffEditor.value;
   if (!ownerKey || !dateKey || !draft) {
     closeCellStaffEditor();
-    return true;
-  }
-  /* 요일 편집기와 같은 규약 — 한쪽만 입력한 채로는 닫지 않는다(조용히 휴무로 저장되는 것 방지). */
-  if (findIncompleteSlot(draft)) {
-    cellStaffEditor.value.tried = true; // 어느 칸을 채워야 하는지 하이라이트로 가리킨다
-    void alertIncompleteTime();
-    return false;
+    return;
   }
   const blocks = draftToBlocks(draft);
-  /* blocks=[] 도 정상 저장 — "그 날짜만 휴무" override */
+
+  /* ★열어보기만 하고 닫았다면 지정을 만들지 않는다 — 프리필과 값이 같으면 "지정 없음"을 유지한다.
+   * 요일 7행의 "고친 요일만 확정한다" 와 같은 규율이다. 지정이 생겨 버리면 그 날짜가 그 시각으로
+   * 굳어, 이후 담당자 요일값·사업장 값을 바꿔도 따라오지 않고 하이라이트까지 켜진다.
+   * 이미 지정이 있는 날은 값이 같아도 지우지 않는다 — 사용자가 그 날을 명시적으로 정해 둔 것이다. */
+  const hadDesignation = workingHoursOverridesByOwner.value.get(ownerKey)?.has(dateKey) === true;
+  if (!hadDesignation && sameBlocks(blocks, getStaffWeekdayBlocks(ownerKey, weekday))) {
+    closeCellStaffEditor();
+    return;
+  }
+
   const next = new Map(workingHoursOverridesByOwner.value);
   const dayMap = new Map(next.get(ownerKey) ?? []);
-  dayMap.set(dateKey, blocks);
+
+  /* ★시간을 모두 비우는 것은 "그 날짜 지정 해제(미설정)" 다 — 휴무가 아니다.
+   * 휴무는 휴무일 탭이 정한다(탭 책임 분리). 여기서 휴무 override 를 만들면 같은 상태를
+   * 두 화면이 만들게 되고, 휴무일 탭이 잠가 둔 날을 운영시간 탭이 다시 열어버린다.
+   * 지정을 지우면 그 날짜는 요일 규칙·기관 값을 다시 따라간다. */
+  if (blocks.length === 0) dayMap.delete(dateKey);
+  else dayMap.set(dateKey, blocks);
+
   next.set(ownerKey, dayMap);
   workingHoursOverridesByOwner.value = next;
   closeCellStaffEditor();
-  return true;
 }
 
 function closeCellStaffEditor() {
   cellStaffEditor.value = {...cellStaffEditor.value, open: false, draft: null};
 }
 
-/* 캘린더 셀 계산.
- * INSTITUTION 모드: entries[] 채움 (직원별 리스트)
- * STAFF 모드:       appointmentLabel 채움 (단일 라벨) */
-function buildMonthCells(year, month) {
+/* 캘린더 셀 계산 — 조회 단위 셋(직원·팀·사업장)이 모두 entries[] 를 쓴다.
+ * 대상 직원 목록만 다르고 라벨 판정은 하나뿐이다(formatListEntries). */
+function buildMonthCells(year, month, offOwnerKey = OFF_OWNER_INSTITUTION) {
   const startOfMonth = dayjs(`${year}-${String(month).padStart(2, '0')}-01`);
   const endOfMonth = startOfMonth.endOf('month');
 
   const gridStart = startOfMonth.subtract(startOfMonth.day(), 'day');
   const gridEnd = endOfMonth.add(6 - endOfMonth.day(), 'day');
 
-  const {ownerKey} = getCalendarOwner();
-  const isInstitution = ownerKey === 'INSTITUTION';
+  /* 대상 직원은 셀마다 같다 — 루프 밖에서 한 번만 구한다(월 42셀 × 팀 순회를 피한다). */
+  const doctorIds = getCalendarDoctorOrder(getCalendarOwner());
 
   const cells = [];
   let cursor = gridStart;
@@ -1613,23 +2432,16 @@ function buildMonthCells(year, month) {
     const isCurrentMonth = cursor.month() === startOfMonth.month();
     const key = cursor.format('YYYY-MM-DD');
 
-    /* 국가 공휴일 — 토글 ON + 현재 달 셀만 빨간날 표기(휴무 라벨은 isOff 가 담당). */
-    const isHoliday = isCurrentMonth && includePublicHolidays.value && isHolidayDate(cursor);
+    /* 국가 공휴일 — 그 대상이 공휴일에 쉬기로 했고 현재 달 셀일 때만 빨간날 표기(휴무 라벨은 isOff 가 담당). */
+    const isHoliday = isCurrentMonth && holidayOffFor(offOwnerKey) && isHolidayDate(cursor);
 
     /* 우선순위 = 일자별 지정(override) > 공휴일 체크박스 > 반복 휴무요일.
-     * 지정한 것이 일반 규칙을 이긴다 — BE 운영중 판정(서버 운영시간 판정)도 일자별 운영시간을 먼저 본다.
-     * (공휴일이라도 임시진료로 지정했으면 진료다.) */
-    const isOff = isCurrentMonth && isDisplayedOff(cursor);
+     * 지정한 것이 일반 규칙을 이긴다 — BE 운영중 판정(McsService)도 일자별 운영시간을 먼저 본다.
+     * (공휴일이라도 임시진료로 지정했으면 진료다.)
+     * 담당자를 보고 있으면 그 담당자 축으로 판정하고, 정하지 않은 날은 사업장 판정을 상속한다. */
+    const isOff = isCurrentMonth && isDisplayedOffFor(offOwnerKey, cursor);
 
-    let appointmentLabel = null;
-    let entries = null;
-    if (isCurrentMonth) {
-      if (isInstitution) {
-        entries = formatInstitutionEntries(cursor.day(), isOff, key);
-      } else {
-        appointmentLabel = formatAppointmentLabel(cursor.day(), isOff);
-      }
-    }
+    const entries = isCurrentMonth ? formatListEntries(doctorIds, cursor, key) : null;
 
     cells.push({
       key,
@@ -1638,7 +2450,6 @@ function buildMonthCells(year, month) {
       isCurrentMonth,
       isOff,
       isHoliday,
-      appointmentLabel,
       entries,
     });
 
@@ -1648,11 +2459,12 @@ function buildMonthCells(year, month) {
   return cells;
 }
 
+/* 휴무일 탭 12개월 뷰어 — 선택한 대상(사업장 / 담당자)의 휴무일을 그린다(§4-5-2). */
 const yearMonths = computed(() =>
     Array.from({length: 12}, (_, i) => ({
       key  : `${selectedYear.value}-${String(i + 1).padStart(2, '0')}`,
       label: `${i + 1}월`,
-      cells: buildMonthCells(selectedYear.value, i + 1),
+      cells: buildMonthCells(selectedYear.value, i + 1, selectedOffOwner.value),
     }))
 );
 
@@ -1663,42 +2475,92 @@ const monthCells = computed(() =>
 /* 선택 연도 공휴일 보장 — 이미 로드된 연도는 no-op. 연 이동 시 자동 보충 */
 watch(selectedYear, (y) => holidayStore.ensureYears([y]), {immediate: true});
 
+/* ===== 닫을 때의 시간 검증 =====
+ * 사용자가 popover 바깥을 눌러 닫으려 할 때, 저장까지 미루지 않고 그 자리에서 잡는다.
+ * 판정은 저장 게이트와 같은 3단(findDraftTimeViolation) — 문구도 순서도 같다.
+ *
+ * ★캡처 단계에 붙는다. 배경 요소의 @click(패널 접기·탭 이동·다른 popover 열기)보다 **먼저** 보고
+ *  클릭 자체를 삼켜야 하기 때문이다. 버블에서 막으면 배경은 이미 바뀐 뒤라 popover 만 앵커를 잃고
+ *  body 에 떠 있게 된다 — 되돌렸던 구현(14252b6)이 정확히 그 상태였다.
+ * ★바깥 클릭은 **매번** 막는다. 덫이 되지 않는 이유는 popover 우상단의 [X] 가 검증 없이 닫아 주기
+ *  때문이다 — 이 둘은 한 쌍이라 X 를 떼면 나갈 길이 없어진다(14252b6 의 두 번째 사고).
+ * ★막는 범위는 **설정 팝업 안쪽 클릭까지**다. 팝업 바깥 여백과 ESC 는 DxPopup 이 click 이 아니라
+ *  pointerdown·keydown 으로 먼저 닫으므로(devextreme ui.overlay 의 _outsideClickHandler) 여기까지
+ *  오지 않는다. 그 경로는 부모가 settlePopovers 로 정리하고 미저장 확인창을 띄우며, 잘못된 값은
+ *  저장 게이트가 받는다 — 검증이 비는 것이 아니라 **막는 주체가 다르다.**
+ * ★스크롤·리사이즈는 검증하지 않는다. popover 가 fixed 라 유지하면 버튼과 어긋난 자리에 떠 버리고,
+ *  애초에 사용자가 닫으려 한 조작도 아니다. */
+
+/* 지금 열려 있는 시간 편집 popover — {draft, el}. 없으면 null. 더보기는 입력칸이 없어 대상이 아니다. */
+function openTimeEditor() {
+  if (weekdayEditor.value.open) {
+    const {draft, ownerKey, weekday} = weekdayEditor.value;
+    return {draft, ownerKey, weekday, el: weekdayEditorEl.value};
+  }
+  if (cellStaffEditor.value.open) return {draft: cellStaffEditor.value.draft, el: cellStaffEditorEl.value};
+  return null;
+}
+
+function onDocumentClickCapture(event) {
+  if (dialogBusy.value) return; // 안내의 [확인] 클릭이 여기로 돌아온다
+  const editor = openTimeEditor();
+  if (!editor) return;
+  if (editor.el?.contains?.(event.target)) return; // popover 안쪽([X] 포함)은 닫으려는 조작이 아니다
+  const message = findDraftTimeViolation(editor.draft, editor);
+  if (!message) return;
+
+  event.stopPropagation(); // 배경 @click 도 아래 버블의 닫기도 이 한 줄로 함께 멈춘다
+  void blockCloseWithTimeError(message);
+}
+
+async function blockCloseWithTimeError(message) {
+  saveTried.value = true; // 미완성 칸을 그 자리에서 빨갛게 — 저장 게이트와 같은 규약
+  await alertTimeError(message);
+  focusFirstInvalidInput(); // 모달이 가져간 포커스를 그 칸으로 되돌린다
+}
+
 /* 드롭다운 외부 클릭 시 닫기
- * 토글 버튼/패널에 @click.stop 이 걸려있어 내부 클릭은 document로 전파되지 않음
+ * 토글 버튼/패널에 @click.stop 이 걸려있어 내부 클릭은 document로 전파되지 않음.
+ * 시간 popover 는 외부 클릭이면 commit·닫힘(확인 버튼 없는 즉시반영 UX) — 사업장 행·다른 패널·
+ * 탭을 눌러도 popover 가 떠 있는 채로 남지 않는다. 시간 오류가 남아 있는 동안은 위 캡처 가드가 삼킨다.
  *
  * ★안내 다이얼로그가 떠 있는 동안에는 아무것도 하지 않는다.
- *   다이얼로그는 popover 바깥(모달)에 그려지므로 [확인] 클릭이 document 까지 올라온다.
- *   그때 commit 을 다시 돌리면 → 여전히 미완성 → 안내 재노출 → **무한 반복**이 되고,
- *   입력칸에 손도 못 대게 된다. 스크롤/리사이즈 경로도 같다. */
+ *   다이얼로그는 팝업 바깥(모달)에 그려지므로 [확인] 클릭이 document 까지 올라온다.
+ *   저장 게이트 안내 뒤에 열린 드롭다운이 그 클릭으로 닫히는 것을 막는다. 스크롤/리사이즈 경로도 같다. */
 function handleDocumentClick() {
   if (dialogBusy.value) return;
-  if (openWeekday.value !== null) closeWeekdayDropdown();
-  if (staffPicker.value.open) closeStaffPicker();
-  if (teamMenu.value.open) closeTeamMenu();
-  /* 운영시간 요일 popover는 외부 클릭시 commit (확인 버튼 없는 즉시반영 UX) */
-  if (weekdayEditor.value.open) commitWeekdayEditor();
-  if (cellStaffEditor.value.open) commitCellStaffEditor();
-  if (cellMorePopover.value.open) closeCellMore();
+  settleAllPopovers();
 }
 
 /* fixed 위치 드롭다운은 사이드바 스크롤/창 리사이즈 시 버튼과 분리됨 → 닫음 */
 function handleScrollOrResize() {
   if (dialogBusy.value) return;
-  if (openWeekday.value !== null) closeWeekdayDropdown();
+  settleAllPopovers();
+}
+
+/* 떠 있는 레이어를 한 번에 정리한다 — 드롭다운은 닫고, 시간 편집기는 draft 를 상태로 옮기고 닫는다.
+ * 부르는 곳 셋: document 클릭 · 스크롤/리사이즈 · **설정 팝업이 닫힐 때**(부모가 settlePopovers 로).
+ *
+ * ★이 셋이 같은 목록을 봐야 한다. 레이어는 Teleport 로 body 에 그려져 설정 팝업 DOM 밖에 있으므로,
+ *  팝업이 닫혀도 스스로 사라지지 않는다 — 목록에서 빠진 레이어는 팝업이 사라진 스케줄러 화면 위에
+ *  그대로 떠 있게 된다(실제 사고). 새 popover 를 만들면 여기에 반드시 추가한다.
+ * ★확인 오버레이(confirmDialog)는 뺀다 — 그건 isDialogBusy 로 팝업 닫힘 자체를 막는 쪽이다. */
+function settleAllPopovers() {
   if (staffPicker.value.open) closeStaffPicker();
   if (teamMenu.value.open) closeTeamMenu();
-  if (weekdayEditor.value.open) commitWeekdayEditor();
-  if (cellStaffEditor.value.open) commitCellStaffEditor();
-  if (cellMorePopover.value.open) closeCellMore();
+  settleTimePopovers();
 }
 
 /* 서버 → 내부 state 변환 — 팀만 담당한다.
+ * ★조회는 GET /site/teams(자체 DB 전용) 로 한다. /site/settings 는 팀에 휴무 규칙(원천 외부 시스템)을 번들해
+ *   BE 가 사업장 설정 응답을 기다린 뒤에야 팀을 내려주므로, 사업장 설정 장애 시 팀·구성원 표시까지 함께 멈췄다.
  * 휴무 규칙(recurringOffRules/workDates/offDates/holidayClosedYn) baseline 은 site strict 번들에서 받는다
  * (applyOffRulesBaseline). 원천이 사업장 설정라 운영시간과 원자적으로 읽어 저장 게이트와 정합을 맞춘다.
- * - teams.id는 서버 number → 클라 string으로 변환 (신규 팀 TEAM_xxx 패턴과 통일) */
+ * - teams.id는 서버 number → 클라 string으로 변환 (신규 팀 TEAM_xxx 패턴과 통일)
+ * - doctorIds 는 응답 doctors[].staffId 로 조립 */
 async function hydrateFromServer() {
   try {
-    const res = await getTreatmentSettings();
+    const res = await getTeams();
     const body = (res?.data ?? res);
     /* code=failed 는 "장애" — 무음으로 넘기면 teams 가 초기값 [] 인 채 저장돼 팀·구성원이 전멸한다(#1). */
     if (body?.code && body.code !== 'succeed') {
@@ -1722,7 +2584,7 @@ async function hydrateFromServer() {
     teams.value = (payload.teams ?? []).map(t => ({
       id       : String(t.id),
       name     : t.name,
-      doctorIds: [...(t.doctorIds ?? [])],
+      doctorIds: (t.doctors ?? []).map(d => d.staffId),
     }));
     teamLoadFailed.value = false;
   } catch (e) {
@@ -1851,12 +2713,25 @@ function buildInstitutionHolidayPayload() {
  * staffId / date 오름차순 — 결정적 순서로 dirty 비교 안정 */
 function buildWorkingHoursPayload() {
   /* 미설정 담당자는 빈 times 로 나가고 그대로 미설정으로 남는다 — dayMapToTimes 가 사업장 값을
-   * 끌어다 채우지 않기 때문이다. 사업장 조회 실패 중이라 해서 따로 걸러낼 필요가 없다. */
+   * 끌어다 채우지 않기 때문이다. 사업장 설정 조회 실패 중이라 해서 따로 걸러낼 필요가 없다. */
+  /* ★대상은 세 상태의 **합집합**이다 — 운영시간은 한 번도 안 정했지만 매월 휴무가나 공휴일만
+   *  정한 담당자가 있다. 운영시간 표만 순회하면 그 사람이 통째로 빠져 저장되지 않는다. */
+  const staffKeys = new Set();
+  for (const source of [workingHoursByOwner.value, staffMonthlyOffs.value, staffHolidayOff.value]) {
+    for (const key of source.keys()) {
+      if (key.startsWith('STAFF:')) staffKeys.add(key);
+    }
+  }
+
   const staff = [];
-  for (const [key, dayMap] of workingHoursByOwner.value) {
-    if (!key.startsWith('STAFF:')) continue;
-    const staffId = Number(key.slice('STAFF:'.length));
-    staff.push({staffId, times: dayMapToTimes(dayMap)});
+  for (const key of staffKeys) {
+    staff.push({
+      staffId : Number(key.slice('STAFF:'.length)),
+      times          : dayMapToTimes(workingHoursByOwner.value.get(key)),
+      monthlyOffRules: monthlyOffRulesOf(key),
+      /* 미설정은 null 로 보낸다 — BE 가 거래처 전체를 NULL 로 리셋한 뒤 요청분만 확정한다. */
+      holidayOpenYn     : staffHolidayOff.value.get(key) ?? null,
+    });
   }
   staff.sort((a, b) => a.staffId - b.staffId);
 
@@ -1935,9 +2810,24 @@ function applyInstitutionHolidayTime(row) {
   institutionHolidayBreaks.value = breaksNext;
 }
 
+/* 응답 dateTimes → institutionDateDayMap.
+ * 보드(staffStore.dateTimesToDailyMap)와 같은 규약이다:
+ *  - `closed`(임시휴무) 인 날짜는 담지 않는다 — 휴무는 dateOverrides 가 갖고 있고, 시간과 섞으면 판정이 흐려진다.
+ *  - 시작·종료가 온전한 행만 담는다. 반쪽 행은 담지 않아 종전 폴백(공휴일 → 요일 → 기본값)으로 내려간다. */
+function applyInstitutionDateTimes(rows) {
+  const next = new Map();
+  for (const row of rows ?? []) {
+    if (!row?.date || row.closed) continue;
+    const start = hmmToHHMM(row.openHm);
+    const end = hmmToHHMM(row.closeHm);
+    if (start && end) next.set(row.date, [{kind: 'WORK', start, end}]);
+  }
+  institutionDateDayMap.value = next;
+}
+
 /* site strict 번들의 휴무 규칙 → 편집 baseline (weekdayOffs/dateOverrides/공휴일).
  * 휴무 규칙의 원천도 사업장 설정이므로, 운영시간과 함께 site 응답으로 strict 하게 받는다
- * (teams 만 getTreatmentSettings 로 별도 조회). recurringOffRules 는 매주(WEEKLY)와 매월 n번째(MONTHLY_n) 로 정규화. */
+ * (teams 만 getTeams 로 별도 조회). recurringOffRules 는 매주(WEEKLY)와 매월 n번째(MONTHLY_n) 로 정규화. */
 function applyOffRulesBaseline(payload) {
   const wMap = new Map();
   for (const rule of payload.recurringOffRules ?? []) {
@@ -2002,6 +2892,7 @@ async function hydrateWorkingHoursFromServer({site = true, staff = true} = {}) {
         } else {
           applyInstitutionTimes(sitePayload.site);
           applyInstitutionHolidayTime(sitePayload.holidayHours);
+          applyInstitutionDateTimes(sitePayload.dateTimes);
           applyOffRulesBaseline(sitePayload);
           siteLoadFailed.value = false;
         }
@@ -2033,10 +2924,28 @@ async function hydrateWorkingHoursFromServer({site = true, staff = true} = {}) {
       return;
     }
     const weeklyNext = new Map();
+    const monthlyNext = new Map();
+    const holidayNext = new Map();
     for (const staffRow of staffPayload.staff ?? []) {
-      weeklyNext.set(`STAFF:${staffRow.staffId}`, timesToDayMap(staffRow.times));
+      const key = `STAFF:${staffRow.staffId}`;
+      weeklyNext.set(key, timesToDayMap(staffRow.times));
+
+      /* 매월 N번째 휴무 — 요일별 Set 으로 되접어 사업장 weekdayOffs 와 같은 모양으로 만든다. */
+      const monthlyDayMap = new Map();
+      for (const rule of staffRow.monthlyOffRules ?? []) {
+        if (rule?.dayCd == null || rule?.monthlyNth == null) continue;
+        const options = monthlyDayMap.get(rule.dayCd) ?? new Set();
+        options.add(`MONTHLY_${rule.monthlyNth}`);
+        monthlyDayMap.set(rule.dayCd, options);
+      }
+      if (monthlyDayMap.size > 0) monthlyNext.set(key, monthlyDayMap);
+
+      /* null(미설정)은 담지 않는다 — 키가 없는 것이 곧 "사업장 판정 상속" 이다. */
+      if (staffRow.holidayOpenYn === 'Y' || staffRow.holidayOpenYn === 'N') holidayNext.set(key, staffRow.holidayOpenYn);
     }
     workingHoursByOwner.value = weeklyNext;
+    staffMonthlyOffs.value = monthlyNext;
+    staffHolidayOff.value = holidayNext;
 
     const overrideNext = new Map();
     for (const ov of staffPayload.overrides ?? []) {
@@ -2086,6 +2995,7 @@ function rebaseOriginFor(keys) {
 }
 
 onMounted(async () => {
+  document.addEventListener('click', onDocumentClickCapture, true); // 배경 @click 보다 먼저 봐야 한다
   document.addEventListener('click', handleDocumentClick);
   document.addEventListener('mouseup', onDocumentMouseUp);
   window.addEventListener('scroll', handleScrollOrResize, true);
@@ -2102,6 +3012,7 @@ onMounted(async () => {
   originState = captureState();
 });
 onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocumentClickCapture, true);
   document.removeEventListener('click', handleDocumentClick);
   document.removeEventListener('mouseup', onDocumentMouseUp);
   window.removeEventListener('scroll', handleScrollOrResize, true);
@@ -2119,6 +3030,8 @@ const STATE_REFS = {
   teams,
   workingHoursByOwner,
   workingHoursOverridesByOwner,
+  staffMonthlyOffs,
+  staffHolidayOff,
   institutionWeeklyDayMap,
   institutionBreaksByWeekday,
   institutionHolidayDayMap,
@@ -2153,7 +3066,9 @@ let originState = null;
  *  그 항목만 바꿨을 때 dirty 로 잡히지 않아 저장 API 자체가 스킵되는 조용한 버그가 된다.
  *  아래 STATE_KEY_GROUPS 합집합 == captureState() 키 집합을 개발 중 단언한다. */
 const TEAM_STATE_KEYS = ['teams'];
-const WORKING_HOURS_STATE_KEYS = ['workingHoursByOwner', 'workingHoursOverridesByOwner'];
+/* 담당자 매월 휴무·공휴일도 workingHours 파트로 나간다(staff[] 의 필드) — 여기에 넣지 않으면
+ * 그 둘만 고쳤을 때 dirty 로 잡히지 않아 저장 API 자체가 스킵된다(계획서 G3). */
+const WORKING_HOURS_STATE_KEYS = ['workingHoursByOwner', 'workingHoursOverridesByOwner', 'staffMonthlyOffs', 'staffHolidayOff'];
 const SITE_STATE_KEYS = ['weekdayOffs', 'dateOverrides', 'includePublicHolidays', 'institutionWeeklyDayMap', 'institutionBreaksByWeekday',
   'institutionHolidayDayMap', 'institutionHolidayBreaks'];
 
@@ -2199,6 +3114,17 @@ function buildPayload() {
       }
     }
   }
+  /* ★운영시간을 정하지 않은 요일은 '매주 휴무'으로 명시해 내보낸다(배너가 미리 알린다).
+   * site 진료행에서 빼는 것만으로는 원천에 휴무로 남지 않는다 — 그건 "행 없음"(미설정)이고,
+   * 휴무는 recurringOffRules(WEEKLY)로만 표현된다(#휴무 이중표현 — buildInstitutionTimesPayload).
+   * 그 자리를 비워 두면 원천은 미설정으로 두는데 자체 보드는 기본 운영시간(useSchedulerRules 의
+   * DEFAULT_OPEN_DAILY)으로 열어 예약을 받아, 같은 요일을 두 시스템이 다르게 읽는다.
+   * 원천(마이페이지)이 "운영시간이 모두 없으면 휴무"으로 읽는 것과 같은 결론을 명시로 남긴다.
+   * missingTimeWeekdays 는 반복 휴무(매주·매월)이 있는 요일을 빼므로 위 루프와 같은 dayCd 가 겹치지 않는다. */
+  for (const weekday of missingTimeWeekdays.value) {
+    recurringOffRules.push({dayCd: weekday, repeatTy: 'WEEKLY', monthlyNth: null});
+  }
+
   recurringOffRules.sort((a, b) => {
     if (a.dayCd !== b.dayCd) return a.dayCd - b.dayCd;
     if (a.repeatTy !== b.repeatTy) return a.repeatTy === 'WEEKLY' ? -1 : 1;
@@ -2270,26 +3196,16 @@ const saving = ref(false);
  * 이 값을 보고 팝업 닫힘을 취소한다. 없으면 alert 의 [확인] 클릭이 그대로 팝업 외부클릭으로 이어져
  * "저장하지 않고 화면을 닫으시겠습니까?" 확인창이 연달아 뜬다(사용자가 닫을 의도가 없었는데도).
  * 부모는 optional chaining 으로 호출하므로, 노출하지 않으면 가드가 조용히 무력화된다. */
-const dialogBusy = ref(false);
+/* 띄우는 동안 팝업 닫힘을 막는다. 호출은 전부 withDialog 를 지난다(useDialogGuard — 해제는 한 tick 뒤,
+ * [확인] 클릭과 팝업 hiding 이 같은 클릭에서 이어지기 때문. 진료항목 설정·예약 팝업과 같은 가드). */
+const {dialogOpen: dialogBusy, withDialog} = useDialogGuard();
 
-/* 서비스 접근 불가 안내 — 띄우는 동안 팝업 닫힘을 막는다.
- * 해제는 한 tick 뒤에 한다: [확인] 클릭과 팝업 hiding 이 같은 클릭에서 이어지므로,
- * 다이얼로그가 닫히자마자 풀면 가드가 걸리기 전에 false 가 된다. */
-/* 시작·종료 중 한쪽만 입력한 채 넘어가려 할 때. alertServiceUnavailable 과 같은 dialogBusy 규약을 쓴다
- * — 안내를 띄우는 동안 팝업이 닫히면 붙잡아 둔 입력이 그대로 사라진다.
- *
- * ★재진입 방어: 이 안내는 popover commit 에서 나오고 commit 은 외부클릭·스크롤 등 여러 경로로 불린다.
- *   이미 떠 있는데 또 띄우면 안내가 겹겹이 쌓여 입력칸에 손도 못 대게 된다(무한 반복처럼 보인다).
- *   handleDocumentClick/handleScrollOrResize 의 dialogBusy 가드와 한 쌍이다. */
-async function alertIncompleteTime() {
+/* 시간 오류(미완성·형식·순서)를 알릴 때 — 안내의 [확인] 클릭이 팝업 외부클릭으로 이어져 팝업이
+ * 닫히면 입력이 사라진다. 부르는 곳은 둘 — 저장 버튼(onSave)과 popover 바깥 클릭(blockCloseWithTimeError).
+ * popover commit 에서는 부르지 않는다: commit 은 스크롤·리사이즈와 [X] 로도 들어온다. */
+async function alertTimeError(message) {
   if (dialogBusy.value) return;
-  dialogBusy.value = true;
-  try {
-    await dialog.alert(INCOMPLETE_TIME_MSG, {title: '운영시간 입력'});
-  } finally {
-    await nextTick();
-    dialogBusy.value = false;
-  }
+  await withDialog(() => dialog.alert(message, {title: '운영시간 입력'}));
 }
 
 /* 공휴일 진료인데 공휴일 운영시간이 비어 있을 때. 안내만으로는 어디를 고칠지 알 수 없어
@@ -2297,23 +3213,17 @@ async function alertIncompleteTime() {
 async function alertHolidayTimeRequired() {
   activeLeftTab.value = 'WORKING_HOURS';
   expandedTreatmentKey.value = 'institution';
-  dialogBusy.value = true;
-  try {
-    await dialog.alert(HOLIDAY_TIME_REQUIRED_MSG, {title: '공휴일 운영시간 입력'});
-  } finally {
-    await nextTick();
-    dialogBusy.value = false;
-  }
+  await withDialog(() => dialog.alert(HOLIDAY_TIME_REQUIRED_MSG, {title: '공휴일 운영시간 입력'}));
+}
+
+/* 구성원이 없는 팀 — 저장 전에 막는다. 어느 팀인지는 문구가 아니라 화면 하이라이트가 알린다
+ * (호출부에서 saveTried 를 켠다). 상태는 건드리지 않는다 — 사용자가 사람을 넣거나 팀을 지우면 된다. */
+async function alertTeamMembersRequired() {
+  await withDialog(() => dialog.alert(TEAM_MEMBERS_REQUIRED_MSG, {title: '구성원 선택'}));
 }
 
 async function alertServiceUnavailable() {
-  dialogBusy.value = true;
-  try {
-    await dialog.alert(SERVICE_UNAVAILABLE_MSG, {title: '서비스 이용 안내'});
-  } finally {
-    await nextTick();
-    dialogBusy.value = false;
-  }
+  await withDialog(() => dialog.alert(SERVICE_UNAVAILABLE_MSG, {title: '서비스 이용 안내'}));
 }
 
 /* 저장은 settings/save 한 콜로 나간다 — 사업장(site)·휴무요일·지정일자·팀·담당자 운영시간을 한 번에.
@@ -2336,18 +3246,24 @@ async function onSave() {
     return;
   }
 
-  /* ★최종 가드 — 시작·종료 중 한쪽만 채워진 행이 남아 있으면 저장하지 않는다.
-   * popover 는 commit 에서 이미 막지만, 담당자 주간 7행 인라인 표는 입력 중간 상태를 그대로 둔다
-   * (매 글자 막을 수 없다). 그대로 보내면 짝이 안 맞는 행이 휴무(null)으로 저장돼,
-   * 시간을 입력해 둔 요일이 쉬는 날로 뒤집힌다. */
-  const incompleteOwner = findIncompleteOwner(workingHoursByOwner.value)
-      ?? findIncompleteOwner(workingHoursOverridesByOwner.value);
-  if (incompleteOwner) {
-    /* 안내만으로는 어느 칸인지 알 수 없다 — 그 담당자 패널을 펼쳐 하이라이트가 보이게 한다.
-     * (접힌 패널에 빨간 테두리를 그려 봐야 화면에 없다.) */
+  /* 열려 있는 popover 의 draft 를 먼저 상태로 옮긴다 — 저장은 상태만 보므로, 정리하지 않으면
+   * 방금 입력한 값이 저장에서 통째로 빠진다. 배경 클릭 정리(handleDocumentClick)는 버블이라
+   * 저장 버튼 @click 보다 **뒤에** 돌아, 이 자리를 대신하지 못한다.
+   * 시간 게이트보다 앞이어야 한다: 게이트가 그 draft 까지 보고 판정해야 한다. */
+  settleAllPopovers();
+
+  /* ★시간 게이트 — 시작·종료 중 한쪽만 채워진 행, 형식(HH:MM) 오류, 순서(시작<종료) 역전이 남아
+   * 있으면 저장하지 않는다. popover 바깥 클릭도 같은 3단을 보지만 [X] 로 건너뛸 수 있으므로,
+   * 반드시 막는 곳은 여기다. 그대로 보내면 짝이 안 맞는 행이 휴무(null)으로 저장돼 시간을 입력해 둔
+   * 요일이 쉬는 날로 뒤집히고, "2590" 같은 값은 콜론만 떼여 서버로 나간다. */
+  const violation = findTimeGateViolation();
+  if (violation) {
+    /* 안내만으로는 어느 칸인지 알 수 없다 — 패널을 펼치고 그 요일/날짜 popover 를 다시 열어
+     * 빈 칸을 가리킨다(접힌 패널·닫힌 popover 에 빨간 테두리를 그려 봐야 화면에 없다). */
     saveTried.value = true;
-    expandIncompleteOwner(incompleteOwner);
-    await alertIncompleteTime();
+    await revealTimeGateViolation(violation);
+    await alertTimeError(violation.message);
+    focusFirstInvalidInput(); // 모달이 가져간 포커스를 그 칸으로 되돌린다
     return;
   }
   saveTried.value = false;
@@ -2360,7 +3276,11 @@ async function onSave() {
   /* 실제로 전송되는가(고쳤고 + 게이트 통과) */
   const teamDirty = canSaveTeams.value && teamEdited;
   const workingHoursDirty = canSaveWorkingHours.value && workingHoursEdited;
-  const siteDirty = canSaveSite.value && siteEdited;
+  /* ★고친 것이 없어도 **자동 보정할 요일이 있으면** site 파트를 보낸다(missingTimeWeekdays).
+   * 그 보정은 사용자가 고친 값이 아니라 화면이 만드는 값이라 isDirtyIn 이 잡지 못한다 — 여기서
+   * 세지 않으면 "보낼 게 없다"로 빠져 저장 API 자체가 나가지 않고, 배너가 예고한 '매주 휴무'이
+   * 아무 일도 없이 사라진다(안내가 거짓이 된다). 저장을 눌렀다는 것이 그 안내에 대한 의사표시다. */
+  const siteDirty = canSaveSite.value && (siteEdited || missingTimeWeekdays.value.length > 0);
 
   /* ★저장할 수 없는 파트의 편집은 baseline 으로 되돌린다.
    * 입력칸을 잠그지 않는 대신(편집은 계속 가능) 저장 시점에 버리고 한 번 알린다.
@@ -2382,6 +3302,21 @@ async function onSave() {
     if (droppedDirty) await alertServiceUnavailable();
     emit('cancel');
     return;
+  }
+
+  /* ★이름만 있고 구성원이 없는 팀은 저장하지 않는다.
+   * 팀을 이번에 실제로 보낼 때만 본다 — 이미 저장돼 있던 빈 팀 때문에 무관한 저장까지 막으면
+   * 덫이 된다(아래 공휴일 가드와 같은 규약). 서버는 이 상태를 거부하지 않으므로 여기서 막지 않으면
+   * 구성원 없는 팀이 그대로 저장된다. */
+  if (teamDirty) {
+    /* 시간 미완성 칸과 같은 규약 — 넘어가려 시도한 뒤에만 그린다. 빈 팀이 여럿이면 전부 표시된다.
+     * 시도할 때마다 다시 계산해, 그 사이 채운 팀은 빠지고 새로 만든 팀은 아직 들어오지 않는다. */
+    const emptyTeamIds = teams.value.filter(t => !t.doctorIds?.length).map(t => t.id);
+    emptyTeamsAtSave.value = new Set(emptyTeamIds);
+    if (emptyTeamIds.length) {
+      await alertTeamMembersRequired();
+      return;
+    }
   }
 
   /* ★공휴일 진료(체크 해제)로 저장하려면 공휴일 운영시간이 있어야 한다.
@@ -2428,6 +3363,11 @@ async function onSave() {
 defineExpose({
   isDirty,
   attemptClose: onCancel,
+  /* 설정 팝업이 닫히기 직전에 부모가 부른다. 두 가지를 한꺼번에 해결한다 —
+   * ① body 로 teleport 된 popover 가 팝업만 사라진 화면에 남는 것을 막고,
+   * ② 아직 draft 로만 있던 입력을 상태로 옮겨 isDirty() 가 그것까지 보게 한다.
+   * 순서가 뜻이 있다: 부모는 이걸 부른 **뒤에** isDirty() 를 물어야 한다. */
+  settlePopovers: settleAllPopovers,
   /* 다이얼로그가 떠 있는 동안 부모가 팝업을 닫지 않게 한다 — 안내 [확인] 클릭이
    * 곧바로 "저장하지 않고 닫으시겠습니까?"로 이어지던 문제를 막는다.
    * 인라인 확인창(confirmDialog)도 같은 이유로 포함한다. */
@@ -2436,7 +3376,10 @@ defineExpose({
 </script>
 
 <template>
-  <div class="schedulerTreatmentSetting">
+  <div
+      ref="rootEl"
+      class="schedulerTreatmentSetting"
+  >
     <!-- ===== Left Sidebar ===== -->
     <aside
         class="schedulerTreatmentSetting__sidebar"
@@ -2452,163 +3395,48 @@ defineExpose({
             v-if="unassignedAssignable"
             class="schedulerTreatmentSetting__unassignedBtn"
             type="button"
-            @click="openUnassignedDataSetting"
+            @click="unassignedDataModalOpen = true"
         >미지정 데이터 설정</button>
       </div>
 
       <section
           v-if="activeLeftTab === 'OFF'"
-          class="schedulerTreatmentSetting__section"
+          class="schedulerTreatmentSetting__section institution-section"
       >
-        <header class="schedulerTreatmentSetting__sectionHeader">
+        <!-- 사업장도 선택 단위다 — 우측 12개월 캘린더가 무엇을 그릴지 이 선택이 정한다.
+             선택 표시는 운영시간 탭(__institutionRow.is-expanded)과 같은 색을 쓴다. -->
+        <header
+            :class="{ 'is-selected': selectedOffOwner === OFF_OWNER_INSTITUTION }"
+            class="schedulerTreatmentSetting__sectionHeader schedulerTreatmentSetting__sectionHeader--selectable"
+            @click="selectOffOwner(OFF_OWNER_INSTITUTION)"
+        >
           사업장
         </header>
-
-        <div class="schedulerTreatmentSetting__field">
-          <span class="schedulerTreatmentSetting__fieldLabel">요일별</span>
-
-          <div class="schedulerTreatmentSetting__weekdayList">
-            <div
-                v-for="(label, idx) in WEEKDAY_LABELS"
-                :key="label"
-                class="schedulerTreatmentSetting__weekdayItem"
-            >
-              <button
-                  :ref="(el) => setWeekdayBtnRef(idx, el)"
-                  :class="{
-                    'is-active': hasAnyOption(idx),
-                    'is-open'  : openWeekday === idx,
-                  }"
-                  class="schedulerTreatmentSetting__weekdayBtn"
-                  type="button"
-                  @click.stop="toggleWeekdayDropdown(idx)"
-              >
-                {{ label }}
-              </button>
-
-              <Teleport to="body">
-                <div
-                    v-if="openWeekday === idx"
-                    :style="{
-                      top : `${dropdownPosition.top}px`,
-                      left: `${dropdownPosition.left}px`,
-                    }"
-                    class="schedulerTreatmentSetting__weekdayDropdown"
-                    @click.stop
-                    @mousedown.stop
-                    @pointerdown.stop
-                >
-                  <!-- 모두 체크박스지만 매주와 매월은 배타다(toggleOption 이 강제).
-                       매주를 켜면 매월 n번째는 선택할 수 없다. -->
-                  <label
-                      v-for="opt in RECURRING_OPTIONS"
-                      :key="opt.value"
-                      :class="{ 'is-disabled': opt.value !== 'WEEKLY' && hasOption(idx, 'WEEKLY') }"
-                      class="schedulerTreatmentSetting__weekdayDropdownItem"
-                  >
-                    <input
-                        :checked="hasOption(idx, opt.value)"
-                        :disabled="opt.value !== 'WEEKLY' && hasOption(idx, 'WEEKLY')"
-                        type="checkbox"
-                        @change="toggleOption(idx, opt.value)"
-                    />
-                    <span>{{ opt.label }}</span>
-                  </label>
-                </div>
-              </Teleport>
-            </div>
-          </div>
-        </div>
-
-        <ul class="schedulerTreatmentSetting__chipList">
-          <li
-              v-for="chip in recurringChips"
-              :key="`recurring-${chip.weekday}-${chip.option}`"
-              class="schedulerTreatmentSetting__chip"
-          >
-            <span>{{ chip.label }}</span>
-            <button
-                aria-label="삭제"
-                class="schedulerTreatmentSetting__chipRemove"
-                type="button"
-                @click="toggleOption(chip.weekday, chip.option)"
-            >×</button>
-          </li>
-        </ul>
-
-        <div class="schedulerTreatmentSetting__field">
-          <span class="schedulerTreatmentSetting__fieldLabel">특정일자</span>
-
-          <!-- 지정은 오른쪽 달력에서 한다 — 지정된 일자가 없을 때만 조작법을 안내하고, 있으면 칩으로 대체한다 -->
-          <div class="schedulerTreatmentSetting__fieldBody">
-            <p v-if="!specificDates.length" class="schedulerTreatmentSetting__fieldHint">
-              * 달력의 일자 선택 및 드래그 시 휴무일로 설정 가능
-            </p>
-
-            <template v-else>
-              <!-- 목록이 길어질 수 있어 전부 노출하되(숨기면 저장에서도 빠져 사업장 설정 행이 지워진다)
-                   진료/휴무 구분선 + 스크롤로 정리한다.
-                   ※ "* 공휴일 및 휴무일" 안내를 두었었는데, 목록에 **진료 지정도** 들어가 사실과 달랐고
-                      그룹 머리글(휴무/진료)이 같은 역할을 하므로 뺐다. -->
-              <div class="schedulerTreatmentSetting__specificDates">
-                <template v-for="group in specificDatesByType" :key="`override-type-${group.type}`">
-                  <p
-                      :class="[
-                        'schedulerTreatmentSetting__specificDatesGroup',
-                        group.type === 'OFF' ? 'is-off' : 'is-work',
-                      ]"
-                  >{{ group.label }}</p>
-
-                  <ul class="schedulerTreatmentSetting__chipList schedulerTreatmentSetting__chipList--inline">
-                    <li
-                        v-for="range in group.ranges"
-                        :key="`override-${range.startKey}-${range.endKey}-${range.type}`"
-                        class="schedulerTreatmentSetting__chip"
-                    >
-                      <span>{{ range.label }}</span>
-                      <button
-                          aria-label="삭제"
-                          class="schedulerTreatmentSetting__chipRemove"
-                          type="button"
-                          @click="removeSpecificRange(range)"
-                      >×</button>
-                    </li>
-                  </ul>
-                </template>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <div class="schedulerTreatmentSetting__field">
-          <span class="schedulerTreatmentSetting__fieldLabel">공휴일</span>
-
-          <!-- 커버리지 안내는 hover tooltip 으로 — 공휴일 원천(사업장 설정)이 보유한 범위 밖은 표기되지 않는다.
-               인라인 문구는 패널 폭에서 2줄로 깨지고, 아래 줄에 두면 필드 간격이 벌어진다. -->
-          <label
-              v-if="settingsLoaded"
-              class="schedulerTreatmentSetting__check schedulerTreatmentSetting__check--tip"
-              data-tip="공휴일은 현재 연도부터 최대 3년까지 표기됩니다."
-          >
-            <input
-                :checked="includePublicHolidays"
-                type="checkbox"
-                @change="setIncludePublicHolidays($event.target.checked)"
-            />
-          </label>
-        </div>
+        <!-- 요일별·특정일자·공휴일 컨트롤은 사업장과 담당자가 같은 컴포넌트를 쓴다(§4-5-3).
+             선택된 대상 아래에만 펼쳐진다 — 두 패널이 함께 떠 있으면 우측 캘린더가 어느 쪽을
+             그리는지 알 수 없다. -->
+        <SchedulerSettingsOffDayControls
+            v-if="selectedOffOwner === OFF_OWNER_INSTITUTION"
+            v-bind="offControlsProps"
+            @toggle-option="onOffOptionToggle"
+            @remove-range="removeSpecificRange"
+            @set-holiday="onOffHolidayChange"
+        />
       </section>
 
       <template v-if="activeLeftTab === 'OFF'">
       <section
           v-for="team in teams"
           :key="team.id"
-          class="schedulerTreatmentSetting__section"
+          class="schedulerTreatmentSetting__section team-section"
       >
+        <!-- 팀은 선택 단위가 아니다(휴무는 사업장·담당자에만 붙는다) — 이름 변경과 ⋯ 메뉴만 갖는다.
+             ★단 drop 은 받는다 — 구성원이 0명인 팀은 아래 칩 리스트가 빈 상태라, 사람이 겨냥하는
+             곳은 사실상 팀명 줄이다. 여기서 받지 않으면 "끌어다 놓아도 아무 일이 없는" 상태가 된다. -->
         <header
-            :class="{ 'is-active': selectedTeamIds.has(team.id) }"
             class="schedulerTreatmentSetting__teamHeader"
-            @click="toggleTeam(team.id)"
+            @dragover="onChipListDragOver($event, team.id)"
+            @drop="onChipListDrop($event, team.id)"
         >
           <input
               v-if="renamingTeam?.id === team.id"
@@ -2631,10 +3459,11 @@ defineExpose({
               class="schedulerTreatmentSetting__teamMenu"
               type="button"
               @click.stop="openTeamMenu($event, team.id, false)"
-          >⋯</button>
+          >⋮</button>
         </header>
 
         <ul
+            v-if="team.doctorIds.length"
             class="schedulerTreatmentSetting__chipList schedulerTreatmentSetting__chipList--member"
             @dragover="onChipListDragOver($event, team.id)"
             @drop="onChipListDrop($event, team.id)"
@@ -2644,15 +3473,27 @@ defineExpose({
               :key="docId"
               :class="{
                 'is-dragging'   : chipDrag.active && chipDrag.sourceTeamId === team.id && chipDrag.sourceIndex === idx,
-                'is-drop-target': chipDrag.active && chipDrag.targetTeamId === team.id && chipDrag.targetIndex === idx,
+                'is-drop-target': chipDrag.active && chipDrag.targetTeamId === team.id && chipDrag.targetIndex === idx
+                    && !(chipDrag.sourceTeamId === team.id && chipDrag.sourceIndex === idx),
+                'is-selected'   : selectedOffOwner === staffOffOwnerKey(docId),
               }"
-              class="schedulerTreatmentSetting__chip schedulerTreatmentSetting__chip--draggable"
-              @dragstart="onChipDragStart($event, team.id, docId, idx)"
+              class="schedulerTreatmentSetting__chip schedulerTreatmentSetting__chip--selectable"
+              @click="selectOffOwner(staffOffOwnerKey(docId))"
               @dragover="onChipDragOver($event, team.id, idx)"
               @drop="onChipDrop($event, team.id, idx)"
               @dragend="onChipDragEnd"
           >
-            <span>{{ getDoctor(docId)?.text }}</span>
+            <!-- ★드래그는 ≡ 그립에서만 시작한다 — 이름까지 draggable 이면 row 내부가 전부 드래그 존이 돼
+                 선택 클릭이 (몇 px 움직임에도 drag 로 해석되어) 가장자리 여백에서만 먹는다. drop 대상은 칩(li) 그대로다. -->
+            <span class="schedulerTreatmentSetting__chipHandle">
+              <span
+                  aria-hidden="true"
+                  class="schedulerTreatmentSetting__chipHandleGrip"
+                  draggable="true"
+                  @dragstart="onChipDragStart($event, team.id, docId, idx)"
+              >≡</span>
+              <span>{{ getDoctor(docId)?.text }}</span>
+            </span>
             <button
                 aria-label="삭제"
                 class="schedulerTreatmentSetting__chipRemove"
@@ -2663,6 +3504,38 @@ defineExpose({
             >×</button>
           </li>
         </ul>
+
+        <!-- ★구성원이 0명이면 위 칩 리스트는 높이가 0 이라 드롭 대상이 되지 못한다(핸들러는 있어도
+             dragover 가 일어나지 않는다). 신규 팀 폼과 **같은 안내 영역**을 세워 클릭으로 배정하고
+             드래그로 놓을 자리도 함께 만든다 — 마크업을 새로 발명하지 않는다. -->
+        <div
+            v-else
+            :class="{'is-drop-target': chipDrag.active && chipDrag.targetTeamId === team.id}"
+            :data-invalid="emptyTeamsAtSave.has(team.id)"
+            class="schedulerTreatmentSetting__memberArea"
+            @click.stop="onEmptyMemberAreaClick($event, team.id)"
+            @dragover="onChipListDragOver($event, team.id)"
+            @drop="onChipListDrop($event, team.id)"
+        >
+          <!-- 안내 마크업은 신규 팀 폼과 동일하게 둔다 — 한 탭 안에서 같은 상태가 다르게 보이면 안 된다. -->
+          <div class="team-member-empty">
+            <p class="schedulerTreatmentSetting__memberPlaceholder">클릭하여 직원을 추가해주세요.</p>
+            <span class="team-member-add">
+              <span aria-hidden="true" class="team-member-add-icon">+</span>
+              <span>직원 추가</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- 선택된 담당자의 컨트롤은 그 담당자가 속한 팀의 칩 리스트 아래에 붙인다(§4-5-3).
+             사업장 것과 **같은 컴포넌트**다 — 마크업을 복제하지 않는다. -->
+        <SchedulerSettingsOffDayControls
+            v-if="isOffOwnerInTeam(team)"
+            v-bind="offControlsProps"
+            @toggle-option="onOffOptionToggle"
+            @remove-range="removeSpecificRange"
+            @set-holiday="onOffHolidayChange"
+        />
       </section>
 
       <!-- 신규 팀 생성 폼 -->
@@ -2682,7 +3555,7 @@ defineExpose({
               class="schedulerTreatmentSetting__teamMenu"
               type="button"
               @click.stop="openTeamMenu($event, null, true)"
-          >⋯</button>
+          >⋮</button>
         </header>
 
         <div
@@ -2707,31 +3580,48 @@ defineExpose({
               >×</button>
             </li>
           </ul>
-          <p
-              v-else
-              class="schedulerTreatmentSetting__memberPlaceholder"
-          >클릭하여 직원을 추가해주세요</p>
+          <div v-else class="team-member-empty">
+            <p class="schedulerTreatmentSetting__memberPlaceholder">클릭하여 직원을 추가해주세요.</p>
+            <span class="team-member-add">
+              <span aria-hidden="true" class="team-member-add-icon">+</span>
+              <span>직원 추가</span>
+            </span>
+          </div>
         </div>
       </section>
 
       <!-- 신규 팀 추가 트리거 -->
-      <button
-          v-else
-          class="schedulerTreatmentSetting__addBtn schedulerTreatmentSetting__addBtn--newTeam"
-          type="button"
-          @click="startCreateTeam"
-      >+</button>
+      <div v-else class="team-add-area">
+        <button
+            class="schedulerTreatmentSetting__addBtn"
+            type="button"
+            @click="startCreateTeam"
+        >
+          <span aria-hidden="true" class="team-add-icon">+</span>
+          <span>팀 추가</span>
+        </button>
+      </div>
       </template>
 
-      <!-- ===== 운영시간 탭: 팀 → 멤버(클릭 확장) + 사업장 ===== -->
+      <!-- ===== 운영시간 탭: 팀(클릭=조회 단위) → 멤버(클릭 확장) + 사업장 ===== -->
       <template v-else-if="activeLeftTab === 'WORKING_HOURS'">
         <section
             v-for="team in teams"
             :key="`hours-${team.id}`"
-            class="schedulerTreatmentSetting__section"
+            class="schedulerTreatmentSetting__section team-section hours-team-section"
         >
-          <header class="schedulerTreatmentSetting__teamHeader schedulerTreatmentSetting__teamHeader--readonly">
-            <span class="schedulerTreatmentSetting__teamLabel">- {{ team.name }}</span>
+          <!-- 팀 헤더 = 조회 단위 선택(팀). 고르면 오른쪽 캘린더가 그 팀 소속으로 좁혀지고,
+               좌측에는 아무 패널도 펼치지 않는다 — 운영시간 편집은 직원·사업장 단위라서다.
+               휴무일 탭의 팀 헤더(이름변경·구성원설정·삭제 메뉴)와 달리 여기에는 메뉴를 두지 않는다. -->
+          <header
+              :class="{ 'is-selected': expandedTreatmentKey === `team:${team.id}` }"
+              class="schedulerTreatmentSetting__teamHeader schedulerTreatmentSetting__teamHeader--selectable"
+          >
+            <button
+                class="schedulerTreatmentSetting__teamLabel schedulerTreatmentSetting__teamSelect"
+                type="button"
+                @click="toggleTreatmentExpansion(`team:${team.id}`)"
+            >- {{ team.name }}</button>
           </header>
 
           <ul class="schedulerTreatmentSetting__memberList">
@@ -2754,13 +3644,9 @@ defineExpose({
                   v-if="expandedTreatmentKey === `staff:${docId}`"
                   class="schedulerTreatmentSetting__hoursPanel"
               >
+                <!-- 열 머리글은 두지 않는다 — 각 칸이 스스로를 밝히고(입력칸 placeholder·'휴게시간1/2' 라벨)
+                     사업장 패널 표(__hoursTable)와도 같은 모양이 된다. -->
                 <table class="schedulerTreatmentSetting__staffHoursTable">
-                  <thead>
-                    <tr>
-                      <th class="schedulerTreatmentSetting__staffHoursHead">요일</th>
-                      <th class="schedulerTreatmentSetting__staffHoursHead">운영시간</th>
-                    </tr>
-                  </thead>
                   <tbody>
                     <tr
                         v-for="(label, w) in WEEKDAY_LABELS"
@@ -2774,43 +3660,53 @@ defineExpose({
                           class="schedulerTreatmentSetting__hoursTableLabel"
                       >{{ label }}</th>
                       <!-- 매주 휴무인 요일은 담당자 운영시간을 정할 수 없다(휴무일 탭에서 해제해야 한다) -->
-                      <td v-if="isWeekdayClosed(w)" class="schedulerTreatmentSetting__hoursOff">휴무</td>
+                      <td v-if="isWeekdayClosed(w, `STAFF:${docId}`)" class="schedulerTreatmentSetting__hoursOff" colspan="2">휴무</td>
                       <td v-else>
                         <input
                             :value="fetchStaffWorkHours(docId, w, 'start')"
                             :data-invalid="staffTimeInvalid(docId, w, 'start')"
+                            :aria-invalid="staffTimeInvalid(docId, w, 'start')"
+                            :data-inherited="showsInheritedStaffTime(docId, w)"
+                            :title="showsInheritedStaffTime(docId, w) ? INHERITED_TIME_HINT : null"
+                            autocomplete="off"
                             class="schedulerTreatmentSetting__timeInput"
-                            type="time"
-                            @change="setStaffWorkHours(docId, w, 'start', $event.target.value)"
+                            inputmode="numeric"
+                            maxlength="5"
+                            placeholder="HH:MM"
+                            type="text"
+                            @input="maskTimeInput"
+                            @change="onStaffTimeInput($event, docId, w, 'start')"
                         />
                         <span class="schedulerTreatmentSetting__timeDash">~</span>
                         <input
                             :value="fetchStaffWorkHours(docId, w, 'end')"
                             :data-invalid="staffTimeInvalid(docId, w, 'end')"
+                            :aria-invalid="staffTimeInvalid(docId, w, 'end')"
+                            :data-inherited="showsInheritedStaffTime(docId, w)"
+                            :title="showsInheritedStaffTime(docId, w) ? INHERITED_TIME_HINT : null"
+                            autocomplete="off"
                             class="schedulerTreatmentSetting__timeInput"
-                            type="time"
-                            @change="setStaffWorkHours(docId, w, 'end', $event.target.value)"
+                            inputmode="numeric"
+                            maxlength="5"
+                            placeholder="HH:MM"
+                            type="text"
+                            @input="maskTimeInput"
+                            @change="onStaffTimeInput($event, docId, w, 'end')"
                         />
-                        <!-- 운영시간 비우기(= 그 요일 휴무). 시작/종료 중 값이 있을 때만 노출. -->
-                        <button
-                            v-if="fetchStaffWorkHours(docId, w, 'start') || fetchStaffWorkHours(docId, w, 'end')"
-                            type="button"
-                            class="schedulerTreatmentSetting__timeClear"
-                            title="운영시간 지우기"
-                            aria-label="운영시간 지우기"
-                            @click="clearStaffWorkHours(docId, w)"
-                        >×</button>
+                      </td>
+                      <!-- 사업장의 그 요일 휴게시간(읽기 전용). 사업장 패널과 같은 배치로 둬 대조가 쉽다. -->
+                      <td v-if="!isWeekdayClosed(w, `STAFF:${docId}`)" class="schedulerTreatmentSetting__staffBreakCell">
+                        <div
+                            v-for="kind in BREAK_BLOCK_KINDS"
+                            :key="`brk-${docId}-${w}-${kind}`"
+                        >
+                          {{ BLOCK_KIND_LABEL[kind] }}
+                          <span class="schedulerTreatmentSetting__hoursValue break-time">{{ staffBreakText(docId, w, kind) }}</span>
+                        </div>
                       </td>
                     </tr>
                   </tbody>
                 </table>
-
-                <!-- 휴게시간은 사업장 값을 그대로 따른다 — 담당자가 편집하는 값이 아니라
-                     요일 아래에 안내로 둔다 -->
-                <div class="schedulerTreatmentSetting__staffBreakRow">
-                  <span>{{ BLOCK_KIND_LABEL.LUNCH }} {{ institutionBreakSummary('LUNCH') }}</span>
-                  <span>{{ BLOCK_KIND_LABEL.DINNER }} {{ institutionBreakSummary('DINNER') }}</span>
-                </div>
               </div>
             </li>
           </ul>
@@ -2846,6 +3742,8 @@ defineExpose({
                     'is-sunday'  : idx === 0,
                     'is-saturday': idx === 6,
                   }"
+                  :ref="el => setWeekdayBtnEl('INSTITUTION', idx, el)"
+                  :data-invalid="ownerWeekdayInvalid('INSTITUTION', idx)"
                   :disabled="isWeekdayClosed(idx) || siteLocked"
                   class="schedulerTreatmentSetting__hoursWeekdayBtn"
                   type="button"
@@ -2859,6 +3757,8 @@ defineExpose({
                     'is-active'  : hasInstitutionHolidayBlocks() && !holidayTimeLocked,
                     'is-editing' : weekdayEditor.open && weekdayEditor.ownerKey === HOLIDAY_OWNER,
                   }"
+                  :ref="el => setWeekdayBtnEl(HOLIDAY_OWNER, HOLIDAY_SLOT, el)"
+                  :data-invalid="ownerWeekdayInvalid(HOLIDAY_OWNER, HOLIDAY_SLOT)"
                   :disabled="holidayTimeLocked"
                   class="schedulerTreatmentSetting__hoursWeekdayBtn schedulerTreatmentSetting__hoursWeekdayBtn--holiday"
                   type="button"
@@ -2881,7 +3781,7 @@ defineExpose({
                   >{{ label }}</th>
                   <!-- 매주 휴무인 요일은 운영시간이 있어도 휴무로 보여준다(휴무 규칙이 우선) -->
                   <!-- 운영시간은 왼쪽 한 줄, 휴게시간1·2 는 오른쪽에 세로로 둔다 -->
-                  <template v-if="!isWeekdayClosed(w) && hasInstitutionDisplayBlocks(w)">
+                  <template v-if="!isWeekdayClosed(w) && !siteLoadFailed">
                     <td class="schedulerTreatmentSetting__siteHoursCell">
                       {{ BLOCK_KIND_LABEL.WORK }}
                       <span class="schedulerTreatmentSetting__hoursValue">{{ formatSiteHours(w) }}</span>
@@ -2896,16 +3796,13 @@ defineExpose({
                       </div>
                     </td>
                   </template>
-                  <!-- ★사업장 운영시간은 원천(사업장 설정)이 2상태다 — 행이 없거나 값이 없으면 '휴무'.
-                       그래서 표기도 원천을 따라간다. 단 조회에 실패했을 때는 원천이 뭘 갖고 있는지
-                       모르는 것이므로 '휴무'이라 단정하지 않는다(장애를 휴무로 오표기하면
-                       전 요일이 쉬는 것처럼 보인다 — 배너·저장차단과 함께 '운영시간 없음'으로 둔다).
-                       ※표기만 따라갈 뿐 저장은 하지 않는다 — 미설정 요일을 휴무로 만들어 보내지 않는다.
-                       요일버튼은 계속 열려 있어 지금 바로 운영시간을 정할 수 있다. -->
+                  <!-- ★'휴무'이라 적는 것은 **휴무일 탭이 그렇게 정한 요일**뿐이다. 진료 요일인데
+                       운영시간이 비어 있는 것은 아직 정하지 않은 상태이므로 휴게시간과 같은 '-' 로
+                       두고(formatSiteHours), 저장하면 휴무가 된다는 사실은 배너가 알린다.
+                       조회에 실패했을 때는 원천이 뭘 갖고 있는지 모르는 것이라 '-' 로도 적지 않는다 —
+                       비어 있다고 단정하면 화면이 없는 사실을 지어낸다(배너·저장차단이 따로 알린다). -->
                   <td v-else-if="isWeekdayClosed(w)" class="schedulerTreatmentSetting__hoursOff" colspan="2">휴무</td>
-                  <td v-else class="schedulerTreatmentSetting__hoursOff" colspan="2">
-                    {{ siteLoadFailed ? '운영시간 없음' : '휴무' }}
-                  </td>
+                  <td v-else class="schedulerTreatmentSetting__hoursOff" colspan="2">운영시간 없음</td>
                 </tr>
 
                 <!-- 공휴일 — 요일 아래 한 행. 모든 공휴일에 공통 적용되는 한 세트다.
@@ -2956,7 +3853,7 @@ defineExpose({
         >
           <div class="schedulerTreatmentSetting__staffPickerList">
             <button
-                v-for="doc in doctors"
+                v-for="doc in staffPickerDoctors"
                 :key="doc.staffId"
                 :class="{
                   'is-selected': staffPicker.staged.has(doc.staffId),
@@ -2971,12 +3868,12 @@ defineExpose({
 
           <div class="schedulerTreatmentSetting__staffPickerActions">
             <button
-                class="schedulerTreatmentSetting__staffPickerCancel"
+                class="schedulerTreatmentSetting__staffPickerCancel popup-action-button popup-action-button--compact"
                 type="button"
                 @click="closeStaffPicker"
             >취소</button>
             <button
-                class="schedulerTreatmentSetting__staffPickerConfirm"
+                class="schedulerTreatmentSetting__staffPickerConfirm popup-action-button popup-action-button--compact popup-action-button--primary"
                 type="button"
                 @click="confirmStaffPicker"
             >완료</button>
@@ -3021,6 +3918,7 @@ defineExpose({
       <Teleport to="body">
         <div
             v-if="weekdayEditor.open"
+            ref="weekdayEditorEl"
             :style="{
               top : `${weekdayEditor.top}px`,
               left: `${weekdayEditor.left}px`,
@@ -3030,6 +3928,17 @@ defineExpose({
             @mousedown.stop
             @pointerdown.stop
         >
+          <!-- [X] — 검증 없이 닫는 유일한 출구. 바깥 클릭은 시간 오류가 남아 있는 한 매번 막히므로,
+               이 버튼을 떼면 고치기 전에는 나갈 길이 없어진다(캡처 가드 주석과 한 쌍). -->
+          <header class="schedulerTreatmentSetting__weekdayEditorHeader">
+            <button
+                aria-label="닫기"
+                class="schedulerTreatmentSetting__weekdayEditorClose schedule-popup__close-button schedule-popup__close-button--small"
+                type="button"
+                @click="commitWeekdayEditor"
+            >×</button>
+          </header>
+
           <!-- 운영시간 — 사용여부 토글 없이 시간 입력 여부로 판단한다(비우면 그 요일 휴무) -->
           <div
               v-for="kind in WORK_BLOCK_KINDS"
@@ -3043,17 +3952,29 @@ defineExpose({
             <input
                 :value="weekdayEditor.draft[kind].start"
                 :data-invalid="editorSlotInvalid(weekdayEditor, kind, 'start')"
+                :aria-invalid="editorSlotInvalid(weekdayEditor, kind, 'start')"
+                autocomplete="off"
                 class="schedulerTreatmentSetting__timeInput"
-                type="time"
-                @change="setEditorBlockTime(kind, 'start', $event.target.value)"
+                inputmode="numeric"
+                maxlength="5"
+                placeholder="HH:MM"
+                type="text"
+                @input="maskTimeInput"
+                @change="onEditorTimeInput($event, kind, 'start')"
             />
             <span class="schedulerTreatmentSetting__timeDash">~</span>
             <input
                 :value="weekdayEditor.draft[kind].end"
                 :data-invalid="editorSlotInvalid(weekdayEditor, kind, 'end')"
+                :aria-invalid="editorSlotInvalid(weekdayEditor, kind, 'end')"
+                autocomplete="off"
                 class="schedulerTreatmentSetting__timeInput"
-                type="time"
-                @change="setEditorBlockTime(kind, 'end', $event.target.value)"
+                inputmode="numeric"
+                maxlength="5"
+                placeholder="HH:MM"
+                type="text"
+                @input="maskTimeInput"
+                @change="onEditorTimeInput($event, kind, 'end')"
             />
           </div>
 
@@ -3072,86 +3993,41 @@ defineExpose({
               <input
                   :value="weekdayEditor.draft[kind].start"
                   :data-invalid="editorSlotInvalid(weekdayEditor, kind, 'start')"
+                  :aria-invalid="editorSlotInvalid(weekdayEditor, kind, 'start')"
+                  autocomplete="off"
                   class="schedulerTreatmentSetting__timeInput"
-                  type="time"
-                  @change="setEditorBlockTime(kind, 'start', $event.target.value)"
+                  inputmode="numeric"
+                  maxlength="5"
+                  placeholder="HH:MM"
+                  type="text"
+                  @input="maskTimeInput"
+                  @change="onEditorTimeInput($event, kind, 'start')"
               />
               <span class="schedulerTreatmentSetting__timeDash">~</span>
               <input
                   :value="weekdayEditor.draft[kind].end"
                   :data-invalid="editorSlotInvalid(weekdayEditor, kind, 'end')"
+                  :aria-invalid="editorSlotInvalid(weekdayEditor, kind, 'end')"
+                  autocomplete="off"
                   class="schedulerTreatmentSetting__timeInput"
-                  type="time"
-                  @change="setEditorBlockTime(kind, 'end', $event.target.value)"
+                  inputmode="numeric"
+                  maxlength="5"
+                  placeholder="HH:MM"
+                  type="text"
+                  @input="maskTimeInput"
+                  @change="onEditorTimeInput($event, kind, 'end')"
               />
             </div>
           </template>
         </div>
       </Teleport>
 
-      <!-- 미지정 데이터 적용 modal -->
-      <Teleport to="body">
-        <div
-            v-if="unassignedDataModal.open"
-            class="schedulerTreatmentSetting__deleteOverlay"
-            @click.stop="closeUnassignedDataModal"
-            @mousedown.stop
-        >
-          <div
-              class="schedulerTreatmentSetting__unassignedPanel"
-              @click.stop
-          >
-            <header class="schedulerTreatmentSetting__unassignedHeader">
-              <span class="schedulerTreatmentSetting__unassignedTitle">미지정 데이터 적용</span>
-              <button
-                  aria-label="닫기"
-                  class="schedulerTreatmentSetting__unassignedClose"
-                  type="button"
-                  @click="closeUnassignedDataModal"
-              >×</button>
-            </header>
-
-            <p class="schedulerTreatmentSetting__unassignedDesc">
-              담당자가 미지정된 예약/진료건에 대해 일괄 적용할 대상을 선택해주세요.
-            </p>
-
-            <div class="schedulerTreatmentSetting__unassignedOptions">
-              <label
-                  v-for="doc in teamDoctors"
-                  :key="`unassigned-${doc.staffId}`"
-                  class="schedulerTreatmentSetting__unassignedOption"
-              >
-                <input
-                    :checked="unassignedDataModal.selectedStaffId === doc.staffId"
-                    type="radio"
-                    name="unassignedDoctor"
-                    @change="selectUnassignedDoctor(doc.staffId)"
-                />
-                <span>{{ doc.name }}</span>
-              </label>
-              <p
-                  v-if="teamDoctors.length === 0"
-                  class="schedulerTreatmentSetting__unassignedEmpty"
-              >팀에 등록된 담당자가 없습니다.</p>
-            </div>
-
-            <div class="schedulerTreatmentSetting__deleteActions">
-              <button
-                  :disabled="applyingUnassigned"
-                  class="schedulerTreatmentSetting__unassignedLaterBtn"
-                  type="button"
-                  @click="closeUnassignedDataModal"
-              >나중에 설정</button>
-              <button
-                  :disabled="unassignedDataModal.selectedStaffId == null || applyingUnassigned"
-                  class="schedulerTreatmentSetting__deleteConfirmBtn"
-                  type="button"
-                  @click="applyUnassignedData"
-              >{{ applyingUnassigned ? '적용 중...' : '적용' }}</button>
-            </div>
-          </div>
-        </div>
-      </Teleport>
+      <!-- 미지정 데이터 적용 modal (공용 컴포넌트) -->
+      <UnassignedDataModal
+          :doctors="teamDoctors"
+          :visible="unassignedDataModalOpen"
+          @close="unassignedDataModalOpen = false"
+      />
 
       <!-- 확인 다이얼로그 (팀 삭제 / 멤버 삭제 / 멤버 이동 공용) -->
       <Teleport to="body">
@@ -3161,20 +4037,28 @@ defineExpose({
             @click.stop
             @mousedown.stop
         >
-          <div class="schedulerTreatmentSetting__deletePanel">
-            <p class="schedulerTreatmentSetting__deleteMessage">{{ confirmDialog.title }}</p>
-            <p
-                v-if="confirmDialog.sub"
-                class="schedulerTreatmentSetting__deleteSubMessage"
-            >{{ confirmDialog.sub }}</p>
-            <div class="schedulerTreatmentSetting__deleteActions">
+          <div class="schedulerTreatmentSetting__deletePanel schedule-popup">
+            <button
+                aria-label="닫기"
+                class="schedule-popup__close-button"
+                type="button"
+                @click="closeConfirmDialog"
+            ></button>
+            <div class="schedule-popup__body">
+              <p class="schedulerTreatmentSetting__deleteMessage">{{ confirmDialog.title }}</p>
+              <p
+                  v-if="confirmDialog.sub"
+                  class="schedulerTreatmentSetting__deleteSubMessage"
+              >{{ confirmDialog.sub }}</p>
+            </div>
+            <div class="schedulerTreatmentSetting__deleteActions schedule-popup__footer">
               <button
-                  class="schedulerTreatmentSetting__deleteCancelBtn"
+                  class="schedulerTreatmentSetting__deleteCancelBtn popup-action-button"
                   type="button"
                   @click="closeConfirmDialog"
               >취소</button>
               <button
-                  class="schedulerTreatmentSetting__deleteConfirmBtn"
+                  class="schedulerTreatmentSetting__deleteConfirmBtn popup-action-button popup-action-button--primary"
                   type="button"
                   @click="executeConfirm"
               >{{ confirmDialog.confirmLabel }}</button>
@@ -3187,6 +4071,21 @@ defineExpose({
     <!-- ===== Right Main ===== -->
     <div class="schedulerTreatmentSetting__main">
       <header class="schedulerTreatmentSetting__yearNav">
+        <!-- 범례 — 셀 안의 색·굵기가 무엇을 뜻하는지 화면이 스스로 밝힌다.
+             월 달력에만 붙인다(휴무일 탭의 12개월 미니 캘린더에는 이 표기가 없다).
+             월 라벨은 헤더 중앙에 그대로 둬야 하므로 범례는 absolute 로 왼쪽에 띄운다. -->
+        <ul
+            v-if="activeLeftTab !== 'OFF'"
+            class="schedulerTreatmentSetting__legend"
+        >
+          <li class="schedulerTreatmentSetting__legendItem is-designated">
+            <span class="schedulerTreatmentSetting__legendDot" />특정일자 진료
+          </li>
+          <li class="schedulerTreatmentSetting__legendItem is-own">
+            <span class="schedulerTreatmentSetting__legendDot" />요일별 운영시간
+          </li>
+        </ul>
+
         <button
             :aria-label="activeLeftTab === 'OFF' ? '이전 년' : '이전 월'"
             class="schedulerTreatmentSetting__arrow"
@@ -3283,7 +4182,9 @@ defineExpose({
               >휴무</span>
             </div>
 
-            <!-- INSTITUTION 모드: 직원별 리스트 (최대 5, 초과 시 더보기) -->
+            <!-- 직원별 리스트 (최대 CELL_ENTRY_VISIBLE_MAX, 초과 시 더보기).
+                 조회 단위 셋 모두 이 경로다 — 직원 모드는 대상이 1명일 뿐이라,
+                 그 줄을 클릭하는 일자 지정(§6-2)이 세 단위에서 똑같이 열린다. -->
             <div
                 v-if="cell.isCurrentMonth && cell.entries && cell.entries.length"
                 class="schedulerTreatmentSetting__monthCellEntries"
@@ -3292,15 +4193,22 @@ defineExpose({
                   v-for="(entry, i) in cell.entries.slice(0, CELL_ENTRY_VISIBLE_MAX)"
                   :key="i"
                   :class="{
-                    'is-off'    : entry.isOff,
-                    'is-editing': cellStaffEditor.open
+                    'is-off'       : entry.isOff,
+                    'is-own'       : entry.isOwn === true,
+                    'is-designated': entry.isDesignated,
+                    'is-inherited' : entry.isInherited === true,
+                    'is-editing'   : cellStaffEditor.open
                         && cellStaffEditor.ownerKey === `STAFF:${entry.staffId}`
                         && cellStaffEditor.dateKey === cell.key,
                   }"
+                  :ref="el => setCellEntryEl(`STAFF:${entry.staffId}`, cell.key, el)"
+                  :data-invalid="entry.isInvalid === true"
+                  :title="entry.isInherited === true ? INHERITED_TIME_HINT : null"
                   class="schedulerTreatmentSetting__monthCellEntry"
                   type="button"
                   @click.stop="openCellStaffEditor($event, `STAFF:${entry.staffId}`, cell.key, cell.weekday)"
-              >{{ entry.label }}</button>
+              ><span class="schedulerTreatmentSetting__monthCellEntryName">{{ entry.name }}</span>
+                <span class="schedulerTreatmentSetting__monthCellEntryTime">{{ entry.time }}</span></button>
               <button
                   v-if="cell.entries.length > CELL_ENTRY_VISIBLE_MAX"
                   class="schedulerTreatmentSetting__monthCellMore"
@@ -3309,18 +4217,11 @@ defineExpose({
               >+{{ cell.entries.length - CELL_ENTRY_VISIBLE_MAX }} 더보기</button>
             </div>
 
-            <!-- STAFF 모드: 단일 라벨 -->
-            <div
-                v-else-if="cell.isCurrentMonth && cell.appointmentLabel"
-                class="schedulerTreatmentSetting__monthCellBody"
-            >
-              {{ cell.appointmentLabel }}
-            </div>
           </div>
         </div>
       </div>
 
-      <!-- 셀 더보기 popover (INSTITUTION 모드, entries>5) -->
+      <!-- 셀 더보기 popover (entries 가 임계를 넘을 때) -->
       <CellMorePopover
           :open="cellMorePopover.open"
           :top="cellMorePopover.top"
@@ -3332,17 +4233,21 @@ defineExpose({
         <button
             v-for="(entry, i) in cellMorePopover.entries"
             :key="i"
-            :class="{'is-off': entry.isOff}"
-            class="schedulerTreatmentSetting__monthCellEntry"
+            :class="{'is-off': entry.isOff, 'is-own': entry.isOwn === true, 'is-designated': entry.isDesignated, 'is-inherited': entry.isInherited === true}"
+            :data-invalid="entry.isInvalid === true"
+            :title="entry.isInherited === true ? INHERITED_TIME_HINT : null"
+            class="schedulerTreatmentSetting__monthCellEntry schedulerTreatmentSetting__monthCellEntry--more"
             type="button"
             @click.stop="openCellStaffEditor($event, `STAFF:${entry.staffId}`, cellMorePopover.dateKey, cellMorePopover.weekday)"
-        >{{ entry.label }}</button>
+        ><span class="schedulerTreatmentSetting__monthCellEntryName">{{ entry.name }}</span>
+          <span class="schedulerTreatmentSetting__monthCellEntryTime">{{ entry.time }}</span></button>
       </CellMorePopover>
 
       <!-- 셀 × 직원 popover editor (날짜별 override 편집) -->
       <Teleport to="body">
         <div
             v-if="cellStaffEditor.open"
+            ref="cellStaffEditorEl"
             :style="{
               top : `${cellStaffEditor.top}px`,
               left: `${cellStaffEditor.left}px`,
@@ -3352,7 +4257,17 @@ defineExpose({
             @mousedown.stop
             @pointerdown.stop
         >
-          <!-- 시간을 비우면 "그 날짜만 휴무" 지정이 된다 -->
+          <!-- [X] — 요일 편집기와 같은 규약(검증 없이 닫는 유일한 출구) -->
+          <header class="schedulerTreatmentSetting__weekdayEditorHeader">
+            <button
+                aria-label="닫기"
+                class="schedulerTreatmentSetting__weekdayEditorClose schedule-popup__close-button schedule-popup__close-button--small"
+                type="button"
+                @click="commitCellStaffEditor"
+            >×</button>
+          </header>
+
+          <!-- 시간을 모두 비우면 그 날짜 지정이 해제된다(미설정) — 휴무가 아니다. 휴무는 휴무일 탭이 정한다(commitCellStaffEditor) -->
           <div
               v-for="kind in WORK_BLOCK_KINDS"
               :key="`cse-${kind}`"
@@ -3365,17 +4280,29 @@ defineExpose({
             <input
                 :value="cellStaffEditor.draft[kind].start"
                 :data-invalid="editorSlotInvalid(cellStaffEditor, kind, 'start')"
+                :aria-invalid="editorSlotInvalid(cellStaffEditor, kind, 'start')"
+                autocomplete="off"
                 class="schedulerTreatmentSetting__timeInput"
-                type="time"
-                @change="setCellStaffBlockTime(kind, 'start', $event.target.value)"
+                inputmode="numeric"
+                maxlength="5"
+                placeholder="HH:MM"
+                type="text"
+                @input="maskTimeInput"
+                @change="onCellStaffTimeInput($event, kind, 'start')"
             />
             <span class="schedulerTreatmentSetting__timeDash">~</span>
             <input
                 :value="cellStaffEditor.draft[kind].end"
                 :data-invalid="editorSlotInvalid(cellStaffEditor, kind, 'end')"
+                :aria-invalid="editorSlotInvalid(cellStaffEditor, kind, 'end')"
+                autocomplete="off"
                 class="schedulerTreatmentSetting__timeInput"
-                type="time"
-                @change="setCellStaffBlockTime(kind, 'end', $event.target.value)"
+                inputmode="numeric"
+                maxlength="5"
+                placeholder="HH:MM"
+                type="text"
+                @input="maskTimeInput"
+                @change="onCellStaffTimeInput($event, kind, 'end')"
             />
           </div>
         </div>
@@ -3389,7 +4316,7 @@ defineExpose({
           class="schedulerTreatmentSetting__loadError"
           role="alert"
       >
-        <span class="schedulerTreatmentSetting__loadErrorMsg">운영시간 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.</span>
+        <span class="schedulerTreatmentSetting__loadErrorMsg">운영시간 정보를 불러오지 못해 기본 운영시간으로 표시 중입니다. 잠시 후 다시 시도해 주세요.</span>
         <button
             class="schedulerTreatmentSetting__loadErrorRetry"
             type="button"
@@ -3397,9 +4324,31 @@ defineExpose({
         >재시도</button>
       </div>
 
+      <!-- 운영시간이 비어 있는 요일 안내 — buildPayload 가 '매주 휴무'으로 내보낼 요일과 같은
+           값을 본다(missingTimeWeekdays). 저장을 막지 않는 대신, 무엇이 그렇게 저장되는지
+           누르기 전에 알려야 한다. 운영시간을 채우면 스스로 사라지므로 해제 코드는 없다. -->
+      <div
+          v-if="missingTimeWeekdays.length || monthlyOnlyMissingTimeWeekdays.length"
+          class="schedulerTreatmentSetting__missingTimeNotice"
+          role="status"
+      >
+        <p
+            v-if="missingTimeWeekdays.length"
+            class="schedulerTreatmentSetting__missingTimeLine"
+        >운영시간이 없는 <strong>{{ missingTimeWeekdaysLabel }}요일</strong>은 저장하면 매주 휴무로 처리됩니다.<br>운영시간을 입력해 주세요.</p>
+        <!-- 매월 n번째만 쉬는 요일은 나머지 주에 진료한다 — 자동 휴무가 아니라 운영시간 필수(저장 게이트 4단) -->
+        <p
+            v-if="monthlyOnlyMissingTimeSegments.length"
+            class="schedulerTreatmentSetting__missingTimeLine"
+        ><template
+            v-for="(seg, i) in monthlyOnlyMissingTimeSegments"
+            :key="`monthly-missing-${seg.weekday}`"
+        ><template v-if="i > 0">, </template><strong>{{ seg.label }}요일</strong>은 매월 {{ seg.ordinals }}번째</template> 휴무가라 나머지 주에 진료합니다.<br>운영시간을 입력해 주세요.</p>
+      </div>
+
       <footer class="schedulerTreatmentSetting__footer">
         <button
-            class="schedulerTreatmentSetting__cancelBtn"
+            class="schedulerTreatmentSetting__cancelBtn popup-action-button"
             type="button"
             @click="onCancel"
         >취소</button>
@@ -3407,7 +4356,7 @@ defineExpose({
         <button
             :disabled="saving || saveBlocked"
             :title="saveBlocked ? '운영시간 정보를 불러오지 못해 저장할 수 없습니다.' : ''"
-            class="schedulerTreatmentSetting__saveBtn"
+            class="schedulerTreatmentSetting__saveBtn popup-action-button popup-action-button--primary"
             type="button"
             @click="onSave"
         >{{ saving ? '저장 중...' : '저장' }}</button>
@@ -3418,21 +4367,28 @@ defineExpose({
 
 <style lang="scss" scoped>
 @use '@/scss/variables' as *;
+@use '@/scss/schedule/setting-chip' as chip;
+@use '@/scss/schedule/invalid' as invalid;
 
 .schedulerTreatmentSetting {
+  /* 칩 기본형은 휴무 컨트롤(SchedulerSettingsOffDayControls)과 공유한다 — scoped 스타일이
+     서로 닿지 않아, 두 벌 적지 않으려면 mixin 이어야 한다. 모디파이어는 각자 갖는다. */
+  @include chip.scheduler-setting-chip-base;
+
   display: flex;
   height: 100%;
   min-height: 0;
 
   /* ---------- Sidebar ---------- */
   &__sidebar {
-    flex: 0 0 400px;
+    flex: 0 0 350px;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    padding: 10px;
+    padding: 8px 0;
     overflow-y: auto;
     background: #fff;
+    border-right: 1px solid #e9e9e9;
   }
 
   /* 휴무일/운영시간 세그먼트 + 미지정 데이터 설정 버튼 한 줄 배치 */
@@ -3441,22 +4397,24 @@ defineExpose({
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    padding: 0 16px;
+    margin-bottom: 8px;
   }
 
   &__unassignedBtn {
-    height: 26px;
+    height: 24px;
     padding: 0 12px;
-    border: 1px solid $color-border-light;
-    border-radius: $radius-2;
+    border: 1px solid #a5a5a5;
+    border-radius: $radius-4;
     background: #fff;
     cursor: pointer;
-    font-size: $font-size-12;
-    font-weight: $font-weight-medium;
+    font-size: 14px;
+    font-weight: 500;
     color: $color-text-default;
     white-space: nowrap;
 
     &:hover {
-      background: $color-surface-hover;
+      background: #f2f2f2;
     }
   }
 
@@ -3464,189 +4422,62 @@ defineExpose({
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px;
+    padding: 0 16px;
     background: #fff;
-
-    & + & {
-      margin-top: 10px;
-    }
 
     &--placeholder {
       color: $color-text-muted;
       font-size: $font-size-12;
     }
+
+    &.institution-section {
+      padding: 0 0 12px;
+      background: #fafafa;
+
+      > :not(.schedulerTreatmentSetting__sectionHeader) {
+        margin-right: 16px;
+        margin-left: 16px;
+      }
+    }
+
+    &.team-section {
+      margin-top: 0;
+      padding-top: 12px;
+      padding-bottom: 12px;
+      border-top: 1px solid #eee;
+    }
+  }
+
+  .hours-team-section {
+    padding-top: 0;
   }
 
   &__sectionHeader {
-    font-size: $font-size-13;
-    font-weight: $font-weight-bold;
-    color: $color-text-default;
-    padding: 4px 8px;
-    background: $color-bg-segment;
-  }
-
-  &__field {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  &__fieldLabel {
-    flex: 0 0 56px;
-    font-size: $font-size-12;
-    font-weight: $font-weight-medium;
-    color: $color-text-default;
-    padding-top: 4px;
-  }
-
-  &__fieldBody {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  /* 조작이 오른쪽 달력에서 이뤄지는 항목의 사용법 안내 */
-  &__fieldHint {
-    margin: 0;
-    padding-top: 4px;
-    font-size: $font-size-11;
-    line-height: 1.5;
-    color: $color-text-muted;
-  }
-
-  /* 특정일자 목록 — 사업장 설정가 공휴일을 여러 해 치 전개해 두므로 길어진다.
-     전부 노출하되 높이를 묶고 스크롤한다(숨기면 저장에서도 빠져 사업장 설정 행이 지워진다). */
-  &__specificDates {
-    max-height: 132px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  /* 진료/휴무 구분 머리글. 이 목록에서 가장 먼저 읽혀야 하는 정보라 색으로 갈라 준다
-     — 종전처럼 칩 뒤에 "(휴무)"으로 붙이면 눈에 들어오지 않는다. */
-  &__specificDatesGroup {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    margin: 0;
-    padding: 2px 0;
-    background: #fff;
-    font-size: $font-size-11;
-    font-weight: 700;
-
-    &.is-off {
-      color: #e54848;
-    }
-
-    &.is-work {
-      color: $color-text-muted;
-    }
-  }
-
-  &__weekdayList {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-
-  &__weekdayItem {
-    position: relative;
-    display: inline-flex;
-  }
-
-  &__weekdayBtn {
-    width: 26px;
-    height: 24px;
-    border: 1px solid $color-border-light;
-    border-radius: $radius-2;
-    background: #fff;
-    cursor: pointer;
-    font-size: $font-size-12;
-    color: $color-text-default;
-
-    &.is-active {
-      background: #E88B1D;
-      border-color: #E88B1D;
-      color: #fff;
-      font-weight: $font-weight-bold;
-    }
-
-    &.is-open {
-      box-shadow: 0 0 0 1px #E88B1D;
-    }
-  }
-
-  &__weekdayDropdown {
-    position: fixed;
-    z-index: 2000;
-    min-width: 120px;
-    padding: 6px 0;
-    background: #fff;
-    border: 1px solid $color-border-light;
-    border-radius: $radius-2;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    display: flex;
-    flex-direction: column;
-  }
-
-  &__weekdayDropdownItem {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    cursor: pointer;
-    font-size: $font-size-12;
-    color: $color-text-default;
-    user-select: none;
-    white-space: nowrap;
+    height: 40px;
+    padding: 0 16px;
+    border-right: 4px solid $color-primary;
+    background: #fff4ed;
+    font-size: $font-size-14;
+    font-weight: $font-weight-bold;
+    color: $color-primary;
 
-    /* 매주 휴무를 고르면 매월 n번째는 의미가 없어져 선택할 수 없다. */
-    &.is-disabled {
-      cursor: not-allowed;
-      color: $color-text-muted;
-    }
-
-    &:first-child {
-      border-bottom: 1px solid $color-border-light;
-    }
-
-    &:hover {
-      background: $color-surface-hover;
-    }
-
-    input[type="checkbox"] {
-      width: 14px;
-      height: 14px;
-      margin: 0;
+    /* 휴무일 탭 — 사업장도 선택 단위라 상태를 드러낸다(색 규약은 팀 헤더·담당자 칩과 동일). */
+    &--selectable {
       cursor: pointer;
+
+      &:hover { background: $color-surface-hover; }
+
+      &.is-selected {
+        background: #E88B1D;
+        color: #fff;
+      }
     }
   }
 
   /* 칩 형태 리스트 (반복 휴무, 특정일자, 의사) */
   &__chipList {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    align-content: flex-start;
-    gap: 4px;
-
-    &--inline {
-      flex: 1;
-
-      .schedulerTreatmentSetting__chip {
-        width: auto;
-        flex: 0 0 auto;
-      }
-    }
-
     /* 담당자 chip — 한 줄당 1개, 너비 가득 (휴무일 탭 팀/신규팀 폼 공용) */
     &--member {
       flex-direction: column;
@@ -3660,103 +4491,65 @@ defineExpose({
   }
 
   &__chip {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    flex: 0 0 auto;
-    padding: 4px 8px;
-    background: $color-surface-alt;
-    border-radius: $radius-2;
-    font-size: $font-size-12;
-    color: $color-text-default;
+    /* 칩 자체는 "고르는" 대상이다 — 끄는 곳은 ≡ 그립뿐이라 커서도 거기서만 grab 으로 바뀐다.
+     * 시각 규격(높이 32·테두리·흰 배경)은 퍼블리싱(version2)의 member 칩 값을 따른다. */
+    &--selectable {
+      justify-content: flex-start;
+      gap: 12px;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid #eee;
+      border-radius: $radius-4;
+      background: #fff;
+      line-height: normal;
+      color: #565656;
+      cursor: pointer;
 
-    &--draggable {
-      cursor: grab;
+      &:hover { background: $color-surface-hover; }
+    }
 
-      &:active {
-        cursor: grabbing;
-      }
+    /* 선택 표시는 사업장 행·팀 헤더와 같은 색을 쓴다 — 셋 다 "이 단위로 캘린더를 보고 있다"는 같은 뜻이다. */
+    &.is-selected {
+      background: #E88B1D;
+      color: #fff;
+
+      .schedulerTreatmentSetting__chipRemove::before,
+      .schedulerTreatmentSetting__chipHandleGrip { color: #fff; }
     }
 
     &.is-dragging {
       opacity: 0.4;
     }
 
-    &.is-drop-target::before {
-      content: '';
-      position: absolute;
-      left: -3px;
-      top: 0;
-      bottom: 0;
-      width: 2px;
-      background: #E88B1D;
-      border-radius: 1px;
+    /* 드롭될 자리 — 그 칩 배경을 통째로 강조한다(담당자 순서 변경 팝업과 같은 규약).
+     * 종전의 좌측 2px 세로 막대는 가로 리스트용 "이 앞에 삽입" 표시였는데,
+     * 이 리스트(--member)는 세로 1열이라 어디에 놓이는지 읽히지 않았다. */
+    &.is-drop-target {
+      background: #cfe2ff;
     }
   }
 
-  &__chipRemove {
-    width: 16px;
-    height: 16px;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    color: $color-text-muted;
-    font-size: $font-size-13;
-    padding: 0;
-    line-height: 1;
-
-    &:hover { color: $color-text-default; }
-  }
-
-  &__check {
+  /* 그립+이름 묶음 — 클릭(선택)은 칩(li) 전체, dragstart 는 안쪽 ≡ 그립에서만 난다. */
+  &__chipHandle {
     display: inline-flex;
     align-items: center;
-    padding-top: 4px;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
   }
 
-  /* 체크박스 오른쪽(right) 커스텀 tooltip. 예약설정(__numberInputWrap)과 같은 방식 —
-   * 네이티브 title 은 방향 고정이 안 돼 CSS tooltip 으로 대체한다.
-   * 위가 아니라 오른쪽에 띄우는 이유: 바로 위 필드와 겹치지 않고, 오른쪽은 빈 공간이라 잘리지 않는다. */
-  &__check--tip {
-    position: relative;
+  /* 드래그 손잡이. 글자 하나라 히트 영역만 패딩으로 키우고 음수 마진으로 시각 위치를 유지한다.
+   * 색·크기는 퍼블리싱(.chip-handle) 값을 따른다. */
+  &__chipHandleGrip {
+    color: #727272;
+    font-size: $font-size-14;
+    line-height: 1;
+    user-select: none;
+    cursor: grab;
+    padding: 4px 6px;
+    margin: -4px -6px;
 
-    &:hover::after {
-      content: attr(data-tip);
-      position: absolute;
-      left: calc(100% + 8px);
-      top: 50%;
-      transform: translateY(-50%);
-      padding: 5px 9px;
-      border-radius: $radius-2;
-      background: rgba(33, 33, 33, 0.92);
-      color: #fff;
-      font-size: $font-size-12;
-      font-weight: $font-weight-medium;
-      line-height: 1.4;
-      /* 사이드바가 400px 고정이라 nowrap 이면 말풍선이 잘린다. 말풍선 안에서는 줄바꿈이 자연스럽다.
-       * keep-all — 한글을 어절 중간에서 끊지 않는다. */
-      width: max-content;
-      max-width: 220px;
-      white-space: normal;
-      word-break: keep-all;
-      pointer-events: none;
-      z-index: 10;
-    }
-
-    /* 말풍선 왼쪽 화살표 */
-    &:hover::before {
-      content: '';
-      position: absolute;
-      left: calc(100% + 3px);
-      top: 50%;
-      transform: translateY(-50%);
-      border: 5px solid transparent;
-      border-right-color: rgba(33, 33, 33, 0.92);
-      pointer-events: none;
-      z-index: 10;
-    }
+    &:active { cursor: grabbing; }
   }
 
   &__teamHeader {
@@ -3764,13 +4557,39 @@ defineExpose({
     align-items: center;
     justify-content: space-between;
     cursor: pointer;
-    font-size: $font-size-13;
-    font-weight: $font-weight-bold;
+    font-size: $font-size-14;
+
     color: $color-text-default;
 
-    &--readonly {
-      cursor: default;
+    /* 운영시간 탭 — 팀이 조회 단위라 선택 상태를 드러낸다.
+       선택 상태는 휴무일 화면의 sectionHeader와 같은 규격을 쓴다. */
+    &--selectable {
+      &.is-selected {
+        margin: 0 -16px;
+      }
+
+      &.is-selected .schedulerTreatmentSetting__teamSelect {
+        height: 40px;
+        padding: 0 16px;
+        border-right: 4px solid $color-primary;
+        background: #fff4ed;
+        color: $color-primary;
+        font-size: $font-size-14;
+        font-weight: $font-weight-bold;
+      }
     }
+  }
+
+  /* 팀 헤더 안의 선택 버튼 */
+  &__teamSelect {
+    flex: 1;
+    padding: 4px 8px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
 
   /* ---------- 운영시간 탭 — 멤버 리스트 / 운영시간 패널 ---------- */
@@ -3789,34 +4608,35 @@ defineExpose({
   }
 
   &__memberRow {
-    display: block;
+    display: flex;
+    align-items: center;
     width: 100%;
-    padding: 6px 8px;
-    border: 0;
-    background: $color-surface-alt;
-    border-radius: $radius-2;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid #eee;
+    background: #fff;
+    border-radius: 4px;
     text-align: left;
     cursor: pointer;
-    font-size: $font-size-12;
-    color: $color-text-default;
-
-    &:hover { background: $color-surface-hover; }
+    font-size: $font-size-14;
+    line-height: normal;
+    color: #565656;   
 
     &.is-expanded {
-      background: #E88B1D;
-      color: #fff;
-      font-weight: $font-weight-bold;
+      // border-color: $color-primary;
+      // background: $color-primary;
+      color: $color-primary;
+      font-weight: 700;
     }
   }
 
   &__hoursPanel {
-    padding: 8px;
-    border: 1px solid $color-border-light;
-    border-radius: $radius-2;
-    background: #fff;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    padding: 8px;
+    border: 1px solid #eee;
+    border-top: 0;
   }
 
   &__hoursWeekdays {
@@ -3838,8 +4658,8 @@ defineExpose({
     &.is-saturday { color: $color-now; }
 
     &.is-active {
-      background: #E88B1D;
-      border-color: #E88B1D;
+      background: $color-primary;
+      border-color: $color-primary;
       color: #fff;
       font-weight: $font-weight-bold;
     }
@@ -3854,6 +4674,12 @@ defineExpose({
     /* popover 편집 중인 요일 — active 위에 ring 덧붙임 */
     &.is-editing {
       box-shadow: 0 0 0 2px rgba(232, 139, 29, 0.35);
+    }
+
+    /* 저장이 막힌 요일 — popover 를 닫은 뒤 그 요일을 가리키는 유일한 자리다.
+     * 시간 입력칸(data-invalid)과 같은 값을 쓴다. is-active·is-editing 보다 뒤에 둬 그 위에 그린다. */
+    &[data-invalid="true"] {
+      @include invalid.outline;
     }
 
     /* 공휴일 — 요일이 아니므로 요일 7칸과 구분되게 넓이를 더 준다(라벨이 세 글자다). */
@@ -3895,14 +4721,14 @@ defineExpose({
   }
 
   &__hoursValue {
-    font-weight: $font-weight-bold;
+    font-weight: $font-weight-regular;
   }
 
-  /* 담당자 운영시간 7행 인라인 표 — 요일 | 운영시간(입력). 휴게는 열이 아니라 위쪽 안내 줄이다. */
+  /* 담당자 운영시간 7행 인라인 표 — 요일 | 운영시간(입력) | 휴게시간(사업장 값, 읽기 전용) */
   &__staffHoursTable {
     width: 100%;
     border-collapse: collapse;
-    font-size: $font-size-11;
+    font-size: $font-size-12;
     color: $color-text-default;
 
     th, td {
@@ -3914,21 +4740,23 @@ defineExpose({
     }
 
     th:first-child, td:first-child { width: 22px; }
+
+    /* 운영시간 입력칸은 이 표에서만 좁힌다 — 좌측 패널 폭 안에 휴게시간 열까지 들어가야 한다.
+       공용 &__timeInput(103px)은 건드리지 않는다: 그 폭은 사업장 요일 편집 popover 가 쓴다.
+       "09:30"·placeholder "HH:MM" 5글자가 가운데 정렬로 들어가는 최소 폭이다. */
+    .schedulerTreatmentSetting__timeInput { width: 56px; }
   }
 
-  &__staffHoursHead {
-    color: $color-text-muted;
-    font-weight: $font-weight-medium;
-  }
-
-  /* 담당자 표 아래 — 사업장 휴게시간 안내. 담당자가 편집하는 값이 아니라 따르게 되는 값이다. */
-  &__staffBreakRow {
-    display: flex;
-    gap: 12px;
-    padding: 2px 4px 0;
-    font-size: $font-size-11;
-    color: $color-text-muted;
+  /* 담당자 표의 휴게시간 열 — 사업장 값을 그대로 따른다. 입력칸이 아니라는 것이 색으로 드러나야 한다.
+     운영시간 입력칸이 폭을 먼저 가져가도록 남는 폭만 쓴다(width:1% + nowrap). */
+  &__staffBreakCell {
+    width: 1%;
     white-space: nowrap;
+    color: $color-text-muted;
+  }
+
+  .break-time {
+    font-weight: 400;
   }
 
   /* 사업장 한 요일 — 운영시간(왼쪽 한 줄) | 휴게시간1·2(오른쪽 세로 두 줄) */
@@ -3949,28 +4777,47 @@ defineExpose({
   &__institutionRow {
     display: flex;
     align-items: center;
+    height: 40px;
+    margin: 0 -16px;
     padding: 0;
-    background: $color-bg-segment;
-    border-radius: $radius-2;
-    font-size: $font-size-13;
-    font-weight: $font-weight-bold;
-    color: $color-text-default;
+    border-top: 1px solid #eee;
+    border-bottom: 1px solid #eee;
+    background: #fff;
+    font-size: $font-size-14;
+    font-weight: $font-weight-medium;
+    color: #565656;
 
     &.is-expanded {
-      background: #E88B1D;
-      color: #fff;
+      background: #fff;
+      color: #565656;
     }
+  }
+
+  &__institutionRow + &__hoursPanel {
+    padding: 0;
+    border: 0;
   }
 
   &__institutionExpand {
     flex: 1;
-    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 16px;
     border: 0;
     background: transparent;
     cursor: pointer;
     text-align: left;
     font: inherit;
     color: inherit;
+
+    &::after {
+      content: '';
+      width: 16px;
+      height: 16px;
+      margin-left: auto;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23424242' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/%3E%3C/svg%3E") center / contain no-repeat;
+    }
   }
 
   /* ---------- 운영시간 — 요일 편집 popover ---------- */
@@ -3986,13 +4833,26 @@ defineExpose({
     display: flex;
     flex-direction: column;
     gap: 6px;
+    font-size: $font-size-14;
+
+    .schedulerTreatmentSetting__timeInput {
+      font-size: $font-size-14;
+    }
+  }
+
+  /* [X] 한 개만 담는 머리줄. 제목이 없으므로 padding 안쪽으로 당겨 높이를 거의 쓰지 않되,
+   * 첫 입력행과 붙지 않게 아래쪽은 조금 남긴다(부모 gap 6px − 2px = 4px). */
+  &__weekdayEditorHeader {
+    display: flex;
+    justify-content: flex-end;
+    margin: -4px -4px -2px 0;
   }
 
   &__weekdayEditorRow {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: $font-size-12;
+    font-size: $font-size-14;
     color: $color-text-default;
 
     &.is-inactive {
@@ -4015,6 +4875,8 @@ defineExpose({
   }
 
   &__timeInput {
+    /* popover(사업장 요일 편집) 기준 폭 — type="time" 시절 그대로다.
+     * 담당자 7행 표는 휴게시간 열이 함께 들어가야 해 &__staffHoursTable 에서 따로 좁힌다. */
     width: 103px;
     height: 24px;
     padding: 0 6px;
@@ -4023,6 +4885,12 @@ defineExpose({
     font-size: $font-size-12;
     color: $color-text-default;
     background: #fff;
+    /* 네이티브 시계 아이콘이 사라진 자리 — 텍스트를 가운데로 둬야 "09:30"이 칸 중앙에 온다 */
+    text-align: center;
+
+    &::placeholder {
+      color: $color-text-muted;
+    }
 
     &:focus {
       outline: none;
@@ -4035,38 +4903,54 @@ defineExpose({
       cursor: not-allowed;
     }
 
+    /* 사업장에서 빌려온 시각 — 이 담당자에게 저장된 값이 아니다.
+     * placeholder 와 같은 농도로 낮춰 "입력된 값"이 아니라 "따라가는 값"으로 읽히게 한다.
+     * 사용자가 이 칸을 고치는 순간 setStaffWorkHours 이 그 요일을 확정해 표시도 기본 농도로 돌아온다. */
+    &[data-inherited="true"] {
+      color: #9e9e9e;   /* muted 는 기본색과 거의 같다 — __monthCellEntry.is-inherited 와 같은 값 */
+      font-style: italic;
+    }
+
     /* 시작·종료 중 한쪽만 채운 채 넘어가려 했을 때 채워야 할 칸.
-     * 예약등록 팝업(.scheduleField[data-invalid])과 같은 값을 쓴다 — 두 화면의 오류 표시가 갈리면 안 된다. */
+     * 예약등록 팝업(.scheduleField[data-invalid])과 같은 값을 쓴다 — 두 화면의 오류 표시가 갈리면 안 된다.
+     * data-inherited 뒤에 둬 오류 표시가 이긴다. */
     &[data-invalid="true"] {
-      border-color: #e54848;
-      box-shadow: 0 0 0 2px rgba(229, 72, 72, 0.15);
+      @include invalid.outline;
     }
   }
 
   &__timeDash {
     color: $color-text-muted;
+    padding: 0 4px;
   }
 
   &__timeClear {
-    width: 20px;
-    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
     margin-left: 4px;
     border: 0;
     padding: 0;
     background: transparent;
-    color: $color-text-muted;
-    font-size: $font-size-14;
+    color: transparent;
+    font-size: 0;
     line-height: 1;
     cursor: pointer;
     vertical-align: middle;
 
-    &:hover {
-      color: $color-text-default;
+    &::before {
+      content: '\2715';
+      color: #000;
+      font-size: 14px;
+      line-height: 1;
     }
+
+    &:hover { color: transparent; }
 
     &:focus {
       outline: none;
-      color: #E88B1D;
     }
   }
 
@@ -4076,32 +4960,59 @@ defineExpose({
     border: 0;
     background: transparent;
     cursor: pointer;
-    color: $color-text-muted;
+    color: #565656;
     padding: 0;
     line-height: 1;
   }
 
   &__addBtn {
-    height: 28px;
-    border: 1px dashed $color-border-light;
-    background: #fff;
-    cursor: pointer;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 20px;
+    margin: 6px 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
     font-size: $font-size-14;
-    color: $color-text-muted;
-    border-radius: $radius-2;
+    font-weight: $font-weight-semibold;
+    color: $color-primary;
+    cursor: pointer;
+    transition: color 0.2s;
 
     &:hover {
-      color: $color-text-default;
-      border-color: $color-border-default;
+      color: $color-primary;
     }
 
-    &--newTeam {
-      margin: 10px 10px 0;
+    .team-add-icon {
+      display: inline-flex;
+      align-items: center;
+      height: 20px;
+      font-size: 22px;
+      font-weight: $font-weight-regular;
+      line-height: 1;
     }
+
+    > span:not(.team-add-icon) {
+      display: inline-flex;
+      align-items: center;
+      height: 20px;
+      line-height: 1;
+    }
+  }
+
+  .team-add-area {
+    display: flex;
+    justify-content: center;
+    margin-top: 12px;
+    border-top: 1px solid #eee;
   }
 
   /* ---------- 팀 편집 폼 ---------- */
   &__section--editing {
+    padding: 0 16px;
     background: #fff;
   }
 
@@ -4114,9 +5025,9 @@ defineExpose({
   &__teamNameInput {
     flex: 1;
     min-width: 0;
-    height: 28px;
+    height: 32px;
     padding: 0 8px;
-    border: 1px solid $color-border-light;
+    border: 1px solid #c4c4c4;
     border-radius: $radius-2;
     font-size: $font-size-13;
     color: $color-text-default;
@@ -4128,14 +5039,31 @@ defineExpose({
   }
 
   &__memberArea {
-    min-height: 36px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 80px;
     padding: 8px;
-    border: 1px solid $color-border-light;
+    border: 1px dashed #c4c4c4;
     border-radius: $radius-2;
+    background: #fafafa;
     cursor: pointer;
 
     &:hover {
+      background: #fafafa;
+    }
+
+    /* 휴무일 탭의 빈 팀에서는 이 영역이 드롭 대상도 겸한다 — 끌고 오면 놓을 자리를 표시한다. */
+    &.is-drop-target {
+      border-color: #E88B1D;
       background: $color-surface-hover;
+    }
+
+    /* 구성원 없이 저장을 시도했을 때 채워야 할 자리. 시간 입력칸과 같은 값을 쓴다 —
+     * 한 화면 안에서 오류 표시가 갈리면 안 된다. 사람을 넣으면 이 영역 자체가 사라져 스스로 풀린다. */
+    &[data-invalid="true"] {
+      @include invalid.outline;
     }
   }
 
@@ -4144,6 +5072,39 @@ defineExpose({
     text-align: center;
     font-size: $font-size-12;
     color: $color-text-muted;
+  }
+
+  .team-member-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .team-member-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: $color-primary;
+    font-size: $font-size-14;
+    font-weight: $font-weight-semibold;
+    line-height: 1;
+  }
+
+  .team-member-add-icon {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    font-size: 22px;
+    font-weight: $font-weight-regular;
+    line-height: 1;
+    transform: translateY(-2px);
+  }
+
+  .team-member-add > span:not(.team-member-add-icon) {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
   }
 
   /* ---------- 직원 선택 picker ---------- */
@@ -4164,27 +5125,31 @@ defineExpose({
     flex-wrap: wrap;
     gap: 6px;
     padding-bottom: 10px;
-    border-bottom: 1px solid $color-border-light;
   }
 
   &__staffOption {
-    padding: 4px 10px;
-    border: 1px solid $color-border-light;
-    border-radius: $radius-2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+    padding: 0 8px;
+    border: 1px solid #bcbcbc;
+    border-radius: $radius-4;
     background: #fff;
     cursor: pointer;
-    font-size: $font-size-12;
-    color: $color-text-default;
+    font-size: $font-size-14;
+    color: #565656;
+    transition: border-color 0.2s, color 0.2s, background-color 0.2s;
 
     &.is-selected {
-      background: #E88B1D;
-      border-color: #E88B1D;
-      color: #fff;
-      font-weight: $font-weight-bold;
+      border-color: $color-primary;
+      background: #fff;
+      color: $color-primary;
     }
 
-    &:hover:not(.is-selected):not(.is-disabled) {
-      background: $color-surface-hover;
+    &:hover:not(.is-disabled):not(:disabled) {
+      border-color: $color-primary;
+      color: $color-primary;
     }
 
     &.is-disabled,
@@ -4198,35 +5163,9 @@ defineExpose({
 
   &__staffPickerActions {
     display: flex;
-    justify-content: flex-end;
+    justify-content: center;
     gap: 6px;
     padding-top: 8px;
-  }
-
-  &__staffPickerCancel,
-  &__staffPickerConfirm {
-    height: 26px;
-    padding: 0 14px;
-    border-radius: $radius-2;
-    cursor: pointer;
-    font-size: $font-size-12;
-  }
-
-  &__staffPickerCancel {
-    border: 1px solid $color-border-light;
-    background: #fff;
-    color: $color-text-default;
-
-    &:hover { background: $color-surface-hover; }
-  }
-
-  &__staffPickerConfirm {
-    border: 1px solid #E88B1D;
-    background: #E88B1D;
-    color: #fff;
-    font-weight: $font-weight-bold;
-
-    &:hover { filter: brightness(0.95); }
   }
 
   /* ---------- 팀 인라인 이름 변경 ---------- */
@@ -4251,12 +5190,12 @@ defineExpose({
   &__teamMenuDropdown {
     position: fixed;
     z-index: 2000;
-    min-width: 110px;
-    padding: 4px 0;
+    min-width: 90px;
+    padding: 0;
     background: #fff;
-    border: 1px solid $color-border-light;
-    border-radius: $radius-2;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    border: 1px solid #ddd;
+    border-radius: $radius-4;
+    box-shadow: 0 4px 10px 0 rgba(0, 0, 0, 0.24);
     display: flex;
     flex-direction: column;
   }
@@ -4264,21 +5203,30 @@ defineExpose({
   &__teamMenuItem {
     display: block;
     width: 100%;
-    padding: 6px 12px;
-    border: 0;
+    padding: 6px 10px;
+    border: none;
     background: transparent;
     cursor: pointer;
     font-size: $font-size-12;
-    color: $color-text-default;
+    font-weight: $font-weight-semibold;
+    color: #333;
     text-align: left;
     white-space: nowrap;
 
     & + & {
-      border-top: 1px solid $color-border-light;
+      border-top: 1px solid #e9e9e9;
     }
 
     &:hover {
-      background: $color-surface-hover;
+      color: #000;
+    }
+
+    &:last-child {
+      color: #e53935;
+
+      &:hover {
+        color: #c62828;
+      }
     }
   }
 
@@ -4294,162 +5242,35 @@ defineExpose({
   }
 
   &__deletePanel {
+    position: relative;
     min-width: 280px;
-    padding: 24px 20px 16px;
-    background: #fff;
-    border-radius: $radius-2;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-  }
 
-  /* ----- 미지정 데이터 적용 modal ----- */
-  &__unassignedPanel {
-    min-width: 360px;
-    max-width: 440px;
-    max-height: calc(100vh - 64px);
-    padding: 16px 18px 14px;
-    background: #fff;
-    border-radius: $radius-2;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
+    .schedule-popup__body {
+      padding-top: 56px;
+    }
 
-  &__unassignedHeader {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-
-  &__unassignedTitle {
-    font-size: $font-size-14;
-    font-weight: $font-weight-bold;
-    color: $color-text-default;
-  }
-
-  &__unassignedClose {
-    width: 22px;
-    height: 22px;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    font-size: 18px;
-    line-height: 1;
-    color: $color-text-muted;
-    padding: 0;
-
-    &:hover { color: $color-text-default; }
-  }
-
-  &__unassignedDesc {
-    margin: 0;
-    font-size: $font-size-12;
-    color: $color-text-muted;
-  }
-
-  &__unassignedOptions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    padding: 4px 0;
-    /* 담당자 多(예: 100명) 시 모달 무한 확장 방지 — 리스트만 스크롤 */
-    max-height: 260px;
-    overflow-y: auto;
-  }
-
-  &__unassignedOption {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    font-size: $font-size-13;
-    color: $color-text-default;
-
-    input[type="radio"] {
-      appearance: none;
-      -webkit-appearance: none;
-      width: 16px;
-      height: 16px;
-      margin: 0;
-      border: 1px solid $color-border-light;
-      border-radius: 50%;
-      background: #fff;
-      cursor: pointer;
-
-      /* 선택 시: 테두리 오렌지 + 중앙 흰색 */
-      &:checked {
-        border: 2px solid #E88B1D;
-        background: #fff;
-      }
+    .schedule-popup__close-button {
+      position: absolute;
+      top: 12px;
+      right: 12px;
     }
   }
 
-  &__unassignedEmpty {
-    margin: 0;
-    font-size: $font-size-12;
-    color: $color-text-muted;
-  }
-
-  &__unassignedLaterBtn {
-    height: 28px;
-    padding: 0 18px;
-    border-radius: $radius-2;
-    border: 1px solid #000;
-    background: #fff;
-    color: #000;
-    cursor: pointer;
-    font-size: $font-size-12;
-
-    &:hover { background: rgba(0, 0, 0, 0.05); }
+  &__deleteMessage,
+  &__deleteSubMessage {
+    text-align: center;
+    font-size: 18px;
+    font-weight: $font-weight-bold;
+    color: #333;
+    white-space: pre-wrap;
   }
 
   &__deleteMessage {
     margin: 0;
-    text-align: center;
-    font-size: $font-size-13;
-    font-weight: $font-weight-bold;
-    color: $color-text-default;
   }
 
   &__deleteSubMessage {
     margin: 4px 0 0;
-    text-align: center;
-    font-size: $font-size-12;
-    color: $color-text-muted;
-  }
-
-  &__deleteActions {
-    display: flex;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 16px;
-  }
-
-  &__deleteCancelBtn,
-  &__deleteConfirmBtn {
-    height: 28px;
-    padding: 0 18px;
-    border-radius: $radius-2;
-    cursor: pointer;
-    font-size: $font-size-12;
-  }
-
-  &__deleteCancelBtn {
-    border: 1px solid #E88B1D;
-    background: #fff;
-    color: #E88B1D;
-
-    &:hover { background: rgba(232, 139, 29, 0.08); }
-  }
-
-  &__deleteConfirmBtn {
-    border: 1px solid #E88B1D;
-    background: #E88B1D;
-    color: #fff;
-    font-weight: $font-weight-bold;
-
-    &:hover { filter: brightness(0.95); }
   }
 
   /* ---------- Main ---------- */
@@ -4459,14 +5280,59 @@ defineExpose({
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    background: #f7f7f7;
   }
 
   &__yearNav {
+    position: relative;   /* 범례를 왼쪽에 띄우되 월 라벨의 중앙 정렬은 건드리지 않는다 */
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 12px;
     padding: 12px 0;
+  }
+
+  /* 셀 표기 범례 — 색·굵기의 뜻을 화면에 적어 둔다. */
+  &__legend {
+    position: absolute;
+    /* 달력 좌측 테두리와 같은 선에서 시작한다 — __monthView 의 좌우 padding 과 같은 값이다. */
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__legendItem {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: $font-size-12;
+    color: $color-text-default;
+    white-space: nowrap;
+  }
+
+  &__legendDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    /* 점 색은 셀 줄의 글자색과 같아야 한다 — 다르면 범례가 다른 것을 가리키게 된다. */
+    background: currentColor;
+  }
+
+  /* 셀 줄과 같은 값이어야 한다 — 다르면 범례가 다른 것을 가리키게 된다(__monthCellEntry.is-designated). */
+  &__legendItem.is-designated {
+    color: #E88B1D;
+    font-weight: $font-weight-semibold;
+  }
+
+  &__legendItem.is-own {
+    color: $color-text-default;
+    font-weight: $font-weight-semibold;
   }
 
   &__arrow {
@@ -4505,9 +5371,8 @@ defineExpose({
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     grid-template-rows: repeat(3, 1fr);
-    gap: 16px;
+    gap: 8px;
     padding: 16px 20px;
-    background: $color-border-light;
     flex: 1;
     min-height: 0;
     overflow: hidden;
@@ -4519,7 +5384,7 @@ defineExpose({
     min-height: 0;
     padding: 8px 10px 10px;
     border: 1px solid $color-border-light;
-    border-radius: $radius-2;
+    border-radius: $radius-4;
     background: #fff;
   }
 
@@ -4539,15 +5404,18 @@ defineExpose({
     flex: 1;
     min-height: 0;
     padding: 0;
-    gap: 4px 2px;
+    /* 휴무일 네모 채움이 인접 셀끼리 이어지도록(주말 세로 띠·연휴 가로 띠) 셀 간격은 두지 않는다. */
+    gap: 0;
   }
 
+  /* 휴무일 표기 = 셀 전체 네모 채움(원형 아님). 숫자 span 이 아니라 셀에 칠해야 이웃 휴무일과 띠로 이어진다. */
   &__miniDay {
     display: flex;
     align-items: center;
     justify-content: center;
     min-width: 0;
     min-height: 0;
+    padding: 3px 0;
     font-size: $font-size-11;
     line-height: 1;
     color: $color-text-default;
@@ -4559,7 +5427,16 @@ defineExpose({
     &.is-holiday  { color: $color-danger; }
     &.is-other    { color: transparent; cursor: default; }
 
-    &.is-drag-selecting .schedulerTreatmentSetting__miniDayNum {
+    &.is-off {
+      background-color: #FEF7F2;
+    }
+
+    /* hover — 브랜드색 1px 네모 테두리. inset box-shadow 라 셀 크기·이웃 띠가 밀리지 않는다. 다른 달 빈 셀은 제외. */
+    &:not(.is-other):hover {
+      box-shadow: inset 0 0 0 1px $color-primary;
+    }
+
+    &.is-drag-selecting {
       background-color: rgba(232, 139, 29, 0.45);
       color: #fff;
     }
@@ -4569,15 +5446,8 @@ defineExpose({
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    aspect-ratio: 1 / 1;
-    height: 80%;
-    max-height: 20px;
     min-width: 1.8em;
-    border-radius: 50%;
-
-    .schedulerTreatmentSetting__miniDay.is-off & {
-      background-color: rgba(232, 139, 29, 0.18);
-    }
+    height: 20px;
   }
 
   /* ---------- Month View (운영시간) ---------- */
@@ -4592,7 +5462,7 @@ defineExpose({
   &__monthHeader {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    border-bottom: 1px solid $color-border-light;
+    border: 1px solid $color-border-light;
   }
 
   &__monthHeaderCell {
@@ -4604,6 +5474,10 @@ defineExpose({
 
     &.is-sunday   { color: $color-danger; }
     &.is-saturday { color: $color-now; }
+
+    & + & {
+      border-left: 1px solid $color-border-light;
+    }
   }
 
   &__monthGrid {
@@ -4613,7 +5487,6 @@ defineExpose({
     flex: 1;
     min-height: 0;
     border-left: 1px solid $color-border-light;
-    border-top: 1px solid $color-border-light;
   }
 
   &__monthCell {
@@ -4663,16 +5536,7 @@ defineExpose({
     color: $color-danger;
   }
 
-  &__monthCellBody {
-    font-size: $font-size-12;
-    color: $color-text-default;
-    line-height: 1.4;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* ---------- INSTITUTION 모드 셀 entries / 더보기 ---------- */
+  /* ---------- 셀 entries / 더보기 (직원·팀·사업장 공통) ---------- */
   &__monthCellEntries {
     display: flex;
     flex-direction: column;
@@ -4697,14 +5561,52 @@ defineExpose({
     overflow: hidden;
     text-overflow: ellipsis;
 
-    &:hover { color: #E88B1D; }
+    &:hover { color: $color-primary; }
 
     &.is-off {
       color: $color-text-muted;
     }
 
-    &.is-editing {
+    /* 그 담당자에게 실제로 저장된 운영시간 — 사업장에서 빌려 그린 줄(is-inherited)과 눈으로 갈린다.
+       기울기만으로는 티가 나지 않아 굵기를 얹었다. semibold(600) 인 이유: 700 은 일자 지정·편집 중·
+       오류가 이미 쓰고 있어, 같은 값을 주면 "저장된 값"과 그 세 상태가 구분되지 않는다. */
+    &.is-own {
+      font-weight: $font-weight-semibold;
+    }
+
+    /* 그 날짜를 따로 지정한 줄 — 요일 반복을 따르는 줄과 눈으로 갈린다(화면정의서 APB033 §6-2).
+       is-off 뒤에 둬야 "그 날짜만 휴무" 지정도 지정으로 보인다.
+       굵기는 요일별(is-own)과 같은 semibold 로 두고 색으로만 가른다 — 색은 좌측 범례(__legend)와
+       같은 값이어야 한다. 범례가 가리키는 대상이 이 줄이다.
+       $color-primary(#2F6FED)보다 옅은 이 파일의 기존 오렌지를 쓴다(입력칸 focus 테두리와 같은 값). */
+    &.is-designated {
       color: #E88B1D;
+      font-weight: $font-weight-semibold;
+    }
+
+    &.is-editing {
+      color: $color-primary;
+      font-weight: $font-weight-bold;
+    }
+
+    /* 사업장에서 빌려온 시각 — 그 담당자에게 저장된 값이 아니다(showsInheritedStaffTime 과 같은 규약).
+       is-designated 뒤에 둬도 지정 줄은 자기 값이라 여기 걸리지 않는다. */
+    &.is-inherited {
+      /* ★$color-text-muted(rgba(0,0,0,0.75))는 기본색 #333 과 거의 같아 구분되지 않는다.
+         이 파일의 화살표 아이콘과 같은 회색을 쓴다. */
+      color: #9e9e9e;
+      font-style: italic;
+    }
+
+    /* 더보기 popover 안에서는 기울이지 않는다 — 셀과 달리 한 줄에 여유가 있어 회색만으로 충분하고,
+       좁은 셀에서 자간을 벌지 않아도 되는 자리다. 색 규약은 그대로 공유한다. */
+    &--more.is-inherited {
+      font-style: normal;
+    }
+
+    /* 저장이 막힌 일자 지정 줄 — 시간 입력칸과 같은 빨간 값. 셀 안이라 테두리 대신 글자색으로 가리킨다. */
+    &[data-invalid="true"] {
+      @include invalid.text;
       font-weight: $font-weight-bold;
     }
   }
@@ -4736,6 +5638,22 @@ defineExpose({
     font-size: $font-size-13;
   }
 
+  /* 조회 장애(loadError)와 달리 사용자가 지금 고칠 수 있는 안내라 경고색으로 낮춘다. */
+  &__missingTimeNotice {
+    padding: 8px 12px;
+    background: #FFF4E5;
+    color: #8A5300;
+    font-size: $font-size-13;
+    line-height: 1.5;
+    text-align: center;
+
+    strong { font-weight: 700; }
+  }
+
+  &__missingTimeLine {
+    margin: 0;
+  }
+
   &__loadErrorRetry {
     height: 26px;
     padding: 0 12px;
@@ -4755,42 +5673,8 @@ defineExpose({
     justify-content: center;
     gap: 8px;
     padding: 12px;
-    border-top: 1px solid $color-border-light;
-    background: #fff;
+    background: #f7f7f7;
   }
 
-  &__cancelBtn,
-  &__saveBtn {
-    height: 32px;
-    padding: 0 24px;
-    border-radius: $radius-2;
-    cursor: pointer;
-    font-size: $font-size-13;
-    font-weight: $font-weight-medium;
-  }
-
-  &__cancelBtn {
-    border: 1px solid $color-border-light;
-    background: #fff;
-    color: $color-text-default;
-
-    &:hover { background: $color-surface-hover; }
-  }
-
-  &__saveBtn {
-    border: 1px solid #E88B1D;
-    background: #E88B1D;
-    color: #fff;
-    font-weight: $font-weight-bold;
-
-    &:hover { filter: brightness(0.95); }
-
-    &:disabled {
-      cursor: not-allowed;
-      opacity: 0.6;
-
-      &:hover { filter: none; }
-    }
-  }
 }
 </style>

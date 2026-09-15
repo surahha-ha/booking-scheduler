@@ -39,12 +39,6 @@
       >
         <span class="header-label">{{ node.label }}</span>
 
-        <!-- 비공개(openYn='N') 담당자 뱃지 — isPrivate 전달 시만 렌더. 휴무 뱃지와 공존. -->
-        <span
-          v-if="node.isPrivate"
-          class="header-badge header-badge--private"
-        >비공개</span>
-
         <!-- 공휴일 휴무 (날짜 행, 빨강) — holidayLabel 전달 시만 렌더 -->
         <span
           v-if="node.holidayLabel"
@@ -181,7 +175,9 @@ function getCellClass(node) {
   return {}
 }
 
-// 날짜(non-leaf) 노드의 사업장 전체 휴무 여부 — 그 날짜 첫 column의 hospitalClosed 검사
+// 날짜(non-leaf) 노드의 사업장 전체 휴무 여부 — 그 날짜 첫 column의 dateClosed(담당자 무관 순수 판정) 검사.
+// hospitalClosed 는 "그 담당자 칸에 적용되는 사업장 휴무"이라 첫 담당자가 진료로 정한 날엔 false 가 되므로
+// 날짜 행에는 쓰지 않는다(구 맵 호환으로 dateClosed 가 없으면 hospitalClosed 로 폴백).
 // 참고: schedulerHeaderBuilder의 date 노드는 key=d.date (YYYY-MM-DD)이고 date 필드는 없음
 //       따라서 node.key를 날짜로 사용
 function isDateHospitalClosed(node) {
@@ -189,7 +185,7 @@ function isDateHospitalClosed(node) {
   const dateColumn = props.columns.find(c => c.date === nodeDate)
   if (!dateColumn) return false
   const closed = props.closedDayMap[dateColumn.key]
-  return !!closed?.hospitalClosed
+  return !!(closed?.dateClosed ?? closed?.hospitalClosed)
 }
 
 // ── 뱃지 ──
@@ -363,13 +359,6 @@ function getBadgeText(node) {
   &--doctor {
     background: #fff3e0;
     color: #e65100;
-  }
-
-  /* 비공개(openYn='N') 담당자 — 중립 회색 */
-  &--private {
-    background: #eee;
-    color: #888;
-    font-weight: 600;
   }
 }
 </style>

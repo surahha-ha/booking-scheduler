@@ -39,6 +39,8 @@ export type BookItem = {
     serviceItemName?: string | null;
     /** 예약 등록일시 — '당일'(오늘 등록) 뱃지 판정 */
     createdAt?: string;
+    /** 등록 화면 구분 — 'WORK'=진료장부 등록, 'CMM'=예약장부 등록. 등록 시 확정되고 이후 갱신 안 됨 */
+    registeredFrom?: 'WORK' | 'CMM';
     updatedAt?: string;
     updatedBy?: number;
     /** 외부 시스템 연동 여부 — 'Y'이면 외부 매핑 존재 */
@@ -172,24 +174,6 @@ export function remove(id: string, type?: string) {
     const path = httpBuildPathUtils('/:id', {id});
     const url = `${baseUrl}${path}/delete`;
     return api.delete<ApiResponse<any>>(url, withCredentialsUtils(type ? {params: {type}} : undefined));
-}
-
-/**
- * 장부 > 회원 통계 조회
- */
-export function getMemberStatistics(params?: Record<string, any>) {
-    return api.get<ApiResponse<MemberStatisticsResponse>>(`${baseUrl}/statistics/member`, withCredentialsUtils({
-        params
-    }));
-}
-
-/**
- * 장부 > 상태 통계 조회
- */
-export function getStateStatistics(params?: Record<string, any>) {
-    return api.get<ApiResponse<StateStatisticsResponse>>(`${baseUrl}/statistics/state`, withCredentialsUtils({
-        params
-    }));
 }
 
 export type UnassignedReservationsResponse = {

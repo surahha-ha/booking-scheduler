@@ -144,3 +144,40 @@ describe('운영일정 보기 — 담당자 × 날짜 지정(override)', () => {
     expect(entriesOfDay(wrapper, D_OVERRIDE)).toEqual([])
   })
 })
+
+/**
+ * 설정 팝업이 닫힐 때 더보기 popover 도 함께 닫힌다 (2026-09-03).
+ *
+ * 더보기는 CellMorePopover 안에서 Teleport 로 body 에 그려져 설정 팝업 DOM 밖에 있다.
+ * 팝업만 사라지고 목록이 스케줄러 화면 위에 남던 사고를 부모(SchedulerSearchFilter)가
+ * getActivePanelRef()?.settlePopovers?.() 로 막는다.
+ *
+ * ★이름이 계약이다 — optional chaining 이라 defineExpose 의 키가 어긋나면 **에러 없이 조용히**
+ *  아무 일도 일어나지 않고 사고가 그대로 재발한다. 부모 테스트는 이 ref 에 가짜를 꽂으므로
+ *  실물 이름을 보지 못한다. 그래서 여기서 실물로 고정한다.
+ */
+describe('운영일정 보기 — 설정 팝업 닫힘 시 정리(settlePopovers)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mocks.getTeams.mockResolvedValue({
+      data: { payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: STAFF_ID, staffName: DOCTOR }] }] } },
+    })
+    mocks.getTreatmentSettings.mockResolvedValue({ data: { payload: {} } })
+    mocks.getStaffWorkHours.mockResolvedValue({ data: { payload: staffWorkHours } })
+  })
+
+  it('★부모가 부를 이름 그대로 노출한다', async () => {
+    const wrapper = await mountView()
+    expect(typeof (wrapper.vm as any).settlePopovers).toBe('function')
+  })
+
+  it('★부르면 더보기 popover 가 닫힌다', async () => {
+    const wrapper = await mountView()
+    const state = wrapper.vm.$.setupState
+    state.cellMorePopover.open = true
+
+    ;(wrapper.vm as any).settlePopovers()
+
+    expect(state.cellMorePopover.open).toBe(false)
+  })
+})

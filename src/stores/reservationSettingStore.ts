@@ -16,11 +16,13 @@ import {
     type TimeUnitMinute,
 } from '@/api/reservationSettingsApi';
 
-// 예약장부 설정 "전체 칸 개수" 허용 범위 (SchedulerSettingsReservationSetting 과 동일)
-const MIN_COLUMNS = 1;
-const MAX_COLUMNS = 20;
-const DEFAULT_TOTAL_COLUMNS = 8;
-// 카드 높이 단계 기본값 — 서버 기본값 3 과 일치. BE 조회 실패(에러) 시에만 fallback.
+// 예약장부 설정 "전체 칸 개수" 허용 범위 — 6~10칸.
+// 설정 화면(SchedulerSettingsReservationSetting)이 이 상수를 import 해 쓰는 단일 소스.
+// 서버 검증은 1~20 으로 더 느슨하므로, 범위 밖 영속값이 내려와도 여기서 보드용으로 clamp 한다.
+export const MIN_COLUMNS = 6;
+export const MAX_COLUMNS = 10;
+export const DEFAULT_TOTAL_COLUMNS = 8;
+// 카드 높이 단계 기본값 — 서버 기본값 3 과 일치. 조회 실패(에러) 시에만 fallback.
 const DEFAULT_ROW_HEIGHT_LEVEL: RowHeightLevel = 3;
 
 function clampColumns(n: number): number {

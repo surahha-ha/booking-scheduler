@@ -94,6 +94,11 @@ export interface BuildRunLayoutInputParams {
    * "담당자 우선 + 기관 fallback" 소스를 쓰게 한다. 미전달 시 {} — 현행(기관 단독) 그대로.
    */
   doctorWeeklyById?: Record<string, WeeklySource>
+  /**
+   * name 모드 담당자별 특정일자 운영시간(staffStore.doctorRules[key].dailyByDate — 기관 휴게 얹힘).
+   * key = unit.doctorId. 있으면 엔진 dateHoursByDoctor 를 채워 그 날짜 밴드가 저장된 시각으로 열린다.
+   */
+  doctorDailyByDateById?: Record<string, Record<string, DailyScheduleSource>>
   /** TO-BE 담당자별 운영시간. key = String(staffId) */
   workHoursByStaffId?: Record<string, WorkHoursRowSource[]>
   /** horizon 제어 (옵션) */
@@ -226,6 +231,7 @@ export function buildRunLayoutInput(params: BuildRunLayoutInputParams): RunLayou
   let doctors: DoctorInput[]
   let apptsByUnitKey: Record<string, CardInput[]>
   let hoursByDoctor: Record<string, Record<number, UnitHours>> = {}
+  let dateHoursByDoctor: Record<string, Record<string, UnitHours>> = {}
   const hoursByWeekday: Record<number, UnitHours> = weeklyToHours(params.weekly)
 
   if (mode.kind === 'name') {
@@ -236,6 +242,10 @@ export function buildRunLayoutInput(params: BuildRunLayoutInputParams): RunLayou
     // 이 켜지고, 미전달(undefined)이면 {} 로 현행(기관 단독 밴드) 바이트 동일.
     hoursByDoctor = params.doctorWeeklyById
       ? mapValues(params.doctorWeeklyById, weeklyToHours)
+      : {}
+    // 담당자별 특정일자 운영시간 — 요일 축과 별도(날짜 키). 예약검증의 doctorDateDaily 와 같은 원천.
+    dateHoursByDoctor = params.doctorDailyByDateById
+      ? mapValues(params.doctorDailyByDateById, byDate => mapValues(byDate, d => dailyScheduleToUnitHours(d)))
       : {}
   } else {
     // ── 특정 팀 = 이름 필터 + staffId 컬럼 식별자 ──
@@ -262,6 +272,7 @@ export function buildRunLayoutInput(params: BuildRunLayoutInputParams): RunLayou
     site: {
       hoursByDoctor,
       hoursByWeekday,
+      dateHoursByDoctor,
       // 공휴일은 요일 축이 없어 hoursByWeekday 에 섞을 수 없다 — 날짜 목록과 함께 별도로 넘긴다.
       dateHours: mapValues(params.dailyByDate ?? {}, d => dailyScheduleToUnitHours(d)),
       holidayHours: dailyScheduleToUnitHours(params.holiday ?? undefined),
@@ -277,11 +288,20 @@ export function buildRunLayoutInput(params: BuildRunLayoutInputParams): RunLayou
   }
 }
 
-/** 예약을 `${date}__${doctorKey}` 로 그룹핑. */
+/**
+ * 예약이 속하는 unit 키 `${date}__${doctorKey}` — 엔진이 카드를 어느 칸에 놓는지의 단일 규칙.
+ * 화면 통계(boardStatistics)도 이 키로 "지금 그려진 칸에 있는 예약"을 고른다 — 규칙이 둘이면
+ * 카드는 있는데 숫자에서 빠지는 예약이 생긴다.
+ */
+export function unitKeyOf(appt: ApptSource, doctorKey: string = resolveDoctorKey(appt)): string {
+  return `${dateToYmd(appt.startDateTime)}__${doctorKey}`
+}
+
+/** 예약을 unit 키로 그룹핑. */
 function groupAppts(appts: ApptSource[], keyOf: (_a: ApptSource) => string): Record<string, CardInput[]> {
   const out: Record<string, CardInput[]> = {}
   for (const a of appts) {
-    const unitKey = `${dateToYmd(a.startDateTime)}__${keyOf(a)}`
+    const unitKey = unitKeyOf(a, keyOf(a))
     if (!out[unitKey]) out[unitKey] = []
     out[unitKey].push(apptToCard(a))
   }

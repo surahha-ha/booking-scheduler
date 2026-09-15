@@ -37,6 +37,9 @@ export const MEMBER_TYPE = {
 } as const;
 export type MemberType = keyof typeof MEMBER_TYPE;
 
+/** 상태 필터의 '전체' 칩 라벨 — 통계 맵의 키이자 표시 문구(UiStatusFilter · boardStatistics 가 같은 값을 쓴다). */
+export const STATUS_TOTAL_LABEL = '전체';
+
 // 예약 보기 상태 필터
 export const APPOINTMENT_STATUS_TYPE = {
     APPOINTMENT: TERMS.status.booked, // 00

@@ -21,35 +21,16 @@
 </template>
 
 <script setup>
-import { computed, inject, ref } from 'vue'
-import dayjs from 'dayjs'
-import { minuteToBandTopPx } from '@/scheduler-engine/schedulerHitTest'
+import { toRef } from 'vue'
+import { useNowIndicator } from '../composables/useNowIndicator'
 
 const props = defineProps({
   bandInfos: { type: Array, default: () => [] },
   columns: { type: Array, default: () => [] },
 })
 
-const nowTick = inject('nowTick', ref(Date.now()))
-
-const todayStr = computed(() => dayjs(nowTick.value).format('YYYY-MM-DD'))
-
-const nowMinute = computed(() => {
-  const d = new Date(nowTick.value)
-  return d.getHours() * 60 + d.getMinutes()
-})
-
-const visible = computed(() => {
-  if (!props.bandInfos.length) return false
-  const first = props.bandInfos[0]
-  const last = props.bandInfos[props.bandInfos.length - 1]
-  return nowMinute.value >= first.startMinute && nowMinute.value < last.endMinute
-})
-
-const topPx = computed(() => {
-  if (!visible.value) return 0
-  return minuteToBandTopPx(nowMinute.value, props.bandInfos)
-})
+// 시간축 라벨(SchedulerTimeAxis)과 같은 계산 — 보이는 구간·높이가 갈리지 않게 한 벌을 쓴다.
+const { todayStr, visible, topPx } = useNowIndicator(toRef(props, 'bandInfos'))
 
 function isColumnToday(col) {
   return col.date === todayStr.value

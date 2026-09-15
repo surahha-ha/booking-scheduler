@@ -34,7 +34,7 @@ vi.mock('@/stores/holidayStore', () => ({
 }))
 
 const mocks = vi.hoisted(() => ({
-  getTreatmentSettings: vi.fn(),
+  getTeams: vi.fn(),
   getSiteWorkHours: vi.fn(),
   getStaffWorkHours: vi.fn(),
   saveTreatmentSettings: vi.fn(),
@@ -42,7 +42,7 @@ const mocks = vi.hoisted(() => ({
   assignUnassigned: vi.fn(),
 }))
 vi.mock('@/api/siteApi', () => ({
-  getTreatmentSettings: mocks.getTreatmentSettings,
+  getTeams: mocks.getTeams,
   getSiteWorkHours: mocks.getSiteWorkHours,
   getStaffWorkHours: mocks.getStaffWorkHours,
   saveTreatmentSettings: mocks.saveTreatmentSettings,
@@ -115,7 +115,7 @@ describe('사업장 공휴일 운영시간 — 표기', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     useStaffStore()
-    mocks.getTreatmentSettings.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [] } } })
+    mocks.getTeams.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [] } } })
     mocks.getStaffWorkHours.mockResolvedValue({
       data: { code: 'succeed', payload: { staff: [], overrides: [] } },
     })
@@ -170,7 +170,7 @@ describe('사업장 공휴일 운영시간 — 저장 payload', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     useStaffStore()
-    mocks.getTreatmentSettings.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [] } } })
+    mocks.getTeams.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [] } } })
     mocks.getStaffWorkHours.mockResolvedValue({
       data: { code: 'succeed', payload: { staff: [], overrides: [] } },
     })
@@ -277,7 +277,7 @@ describe('사업장 공휴일 운영시간 — 저장 가드', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     useStaffStore()
-    mocks.getTreatmentSettings.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [] } } })
+    mocks.getTeams.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [] } } })
     mocks.getStaffWorkHours.mockResolvedValue({
       data: { code: 'succeed', payload: { staff: [], overrides: [] } },
     })

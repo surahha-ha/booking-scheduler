@@ -3,8 +3,13 @@
  * 헤더(날짜 + 휴무 라벨 + 닫기)와 스크롤 컨테이너만 제공.
  * entry 렌더링은 호출처가 slot 으로 주입 (View: 읽기 전용 div, Setting: 편집 트리거 button).
  *
- * 외부 클릭/스크롤 close 는 호출처 책임 — 여러 popover 를 함께 닫는 호출처 통합 로직과 충돌 방지 */
-defineProps({
+ * 외부 클릭/스크롤 close 는 호출처 책임 — 여러 popover 를 함께 닫는 호출처 통합 로직과 충돌 방지
+ *
+ * 단 ESC 닫기는 여기서 처리한다. 닫기 버튼과 똑같이 close 를 emit 할 뿐이라 호출처 통합 로직과
+ * 충돌하지 않고, 마우스 없이 빠져나갈 수단이 이것뿐이다(카드 ⋮ 팝오버는 이미 ESC 로 닫힌다). */
+import {onBeforeUnmount, watch} from 'vue';
+
+const props = defineProps({
   open     : {type: Boolean, default: false},
   top      : {type: Number, default: 0},
   left     : {type: Number, default: 0},
@@ -13,6 +18,20 @@ defineProps({
 });
 
 const emit = defineEmits(['close']);
+
+function onKeyDown(e) {
+  if (e.key === 'Escape') emit('close');
+}
+
+// 열려 있는 동안만 구독한다 — 닫힌 popover 가 다른 화면의 ESC 를 가로채지 않게.
+// immediate 필수: 호출처가 이미 열린 상태로 마운트하면(v-if) 초기값에는 watch 가 돌지 않아
+// 리스너가 아예 안 붙는다.
+watch(() => props.open, (open) => {
+  if (open) document.addEventListener('keydown', onKeyDown);
+  else document.removeEventListener('keydown', onKeyDown);
+}, {immediate: true});
+
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeyDown));
 </script>
 
 <template>
@@ -36,7 +55,7 @@ const emit = defineEmits(['close']);
         >휴무</span>
         <button
             aria-label="닫기"
-            class="cellMorePopover__close"
+            class="cellMorePopover__close schedule-popup__close-button schedule-popup__close-button--small"
             type="button"
             @click="emit('close')"
         >×</button>
@@ -56,21 +75,19 @@ const emit = defineEmits(['close']);
   z-index: 2000;
   min-width: 180px;
   max-width: 280px;
-  padding: 8px 10px;
+  padding: 0;
   background: #fff;
-  border: 1px solid $color-border-light;
-  border-radius: $radius-2;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 4px 10px 0 rgba(0, 0, 0, 0.24);
   display: flex;
   flex-direction: column;
-  gap: 4px;
 
   &__header {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid $color-border-light;
+    padding: 6px 10px;
   }
 
   &__date {
@@ -91,25 +108,34 @@ const emit = defineEmits(['close']);
 
   &__close {
     margin-left: auto;
-    width: 18px;
-    height: 18px;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    color: $color-text-muted;
-    font-size: $font-size-14;
-    line-height: 1;
-    padding: 0;
-
-    &:hover { color: $color-text-default; }
   }
 
   &__list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
     max-height: 320px;
     overflow-y: auto;
+
+    :deep(.schedulerTreatmentView__appt),
+    :deep(.schedulerTreatmentSetting__monthCellEntry) {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      font-size: $font-size-14;
+    }
+
+    :deep(.schedulerTreatmentView__apptDoctor),
+    :deep(.schedulerTreatmentSetting__monthCellEntryName) {
+      color: #000;
+      font-weight: $font-weight-bold;
+    }
+
+    :deep(.schedulerTreatmentView__apptTime),
+    :deep(.schedulerTreatmentSetting__monthCellEntryTime) {
+      color: #727272;
+      font-weight: 400;
+    }
   }
 }
 </style>

@@ -61,11 +61,13 @@ export function normalizeId(v: IdLike | null | undefined): string {
     return v == null ? '' : String(v).trim();
 }
 
+/** 차단 사유 → 안내 문구에 넣을 라벨. `해당 시간에 OOO님은 {라벨}입니다` 꼴로 쓰인다. */
 export function labelBlockedReason(reason: string) {
     switch (reason) {
         case 'closedDate':
         case 'closedWeekday':
-            return '휴무일';
+            // '휴무일' 이 아니라 '휴무' — 등록 팝업의 휴무 안내와 같은 문장이 되어야 한다
+            return '휴무';
         case 'outsideHours':
             return '운영종료 시간';
         case 'lunch':

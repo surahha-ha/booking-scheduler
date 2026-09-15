@@ -2,6 +2,7 @@
 import {onBeforeUnmount, ref, watch} from 'vue';
 import dayjs from 'dayjs';
 import {useSchedulerFilterStore} from '@/stores/useSchedulerFilterStore';
+import {toDisplayStatus} from '@/utils/schedulerSearchFilterUtils';
 import {getRecent} from '@/api/bookApi';
 import {formatPhoneNumber} from '@/utils/formatStringUtils';
 import PatientAutocomplete from '@/components/popup/PatientAutocomplete.vue';
@@ -77,12 +78,29 @@ const STATUS_LABEL = {
   '05': '접수대기',
 };
 
-function formatRecentDateTime(dtm) {
-  const d = dayjs(dtm);
-  return d.isValid() ? d.format('YYYY-MM-DD HH:mm') : '';
+/* 뱃지는 색·글자 모두 예약 카드와 같은 규칙(toDisplayStatus)을 따른다 — 예약장부에서는 00·03 만
+ * 구분하고 01/02/05 는 00(예약)으로 접는다. 카드는 상태 글자가 없어 클래스만 접지만 뱃지는 글자가
+ * 있으므로 글자도 같은 표시 상태를 쓴다(2026-09-07 정책: 카드와 동일). */
+function displayStatusOf(item) {
+  return toDisplayStatus(item.statusCode, schedulerFilterStore.dataType);
+}
+function statusClassOf(item) {
+  return `recentRow__status--${displayStatusOf(item)}`;
+}
+function statusLabelOf(item) {
+  const code = displayStatusOf(item);
+  return STATUS_LABEL[code] ?? code;
 }
 
-/** 회원정보 보강 표기 — 통합회원만 birthDate/sexDivisionCode 존재. 없으면 빈 문자열. */
+/* 화면정의서 OSP_MD_APB01/APB02 §5-1 "최근 진료(예약)일시" 표기.
+ * 정의서 문구는 yy.dd.mm 이지만 같은 화면의 예시 데이터가 26.03.21 · 25.12.20 이라
+ * dd.mm 로는 성립하지 않는다(월이 21·20). 예시 기준인 yy.mm.dd 로 맞춘다. */
+function formatRecentDateTime(dtm) {
+  const d = dayjs(dtm);
+  return d.isValid() ? d.format('YY.MM.DD HH:mm') : '';
+}
+
+/** 회원정보 보강 표기 — 회원만 birthDate/sexDivisionCode 존재. 없으면 빈 문자열. */
 function formatAgeGender(item) {
   const parts = [];
   if (item.birthDate) {
@@ -153,11 +171,38 @@ watch(localKeyword, (v) => {
   onRecentSearch(String(v ?? '').trim());
 });
 
+/* 최근검색 pick 으로 보드 날짜가 옮겨졌는지 — x 버튼이 "오늘 복귀"까지 할지 가르는 유일한 근거.
+ * 검색 없이 줄달력으로만 날짜를 옮긴 사용자는 x 를 눌러도 날짜가 튕기면 안 된다. */
+const movedByRecentPick = ref(false);
+
 function onRecentPickInternal(item) {
   // pick 후 입력칸/드롭다운 정리. filterStore.keyword 는 애초에 안 건드렸으므로 보드 영향 없음.
   localKeyword.value = '';
+  movedByRecentPick.value = true;
   onRecentPick(item);
 }
+
+/* 입력칸·드롭다운·pick 흔적을 비운다. x 버튼과 장부 전환이 함께 쓴다. */
+function resetRecentSearch() {
+  localKeyword.value = '';
+  recentItems.value = [];
+  recentDropdownOpen.value = false;
+  movedByRecentPick.value = false;
+}
+
+/** 검색 해제(x) — x 버튼을 누르면 검색이 풀리며 오늘 날짜로 이동한다.
+ *  단 오늘 복귀는 검색 pick 으로 날짜가 옮겨졌을 때만 한다. */
+function onClearSearch() {
+  const moved = movedByRecentPick.value;
+  resetRecentSearch();
+  if (moved) schedulerFilterStore.setPeriodDate(new Date());
+}
+
+/* 장부 전환(예약 ↔ 방문)은 상태 필터처럼 고객명 검색도 비운다 — 전환 전 장부에서 찾던 고객의
+ * 드롭다운·x 버튼이 새 장부에 남으면 안 된다. 날짜는 setDataType 이 이미 옮기므로 여기서는 건드리지 않는다. */
+watch(() => schedulerFilterStore.dataType, () => {
+  if (props.recent) resetRecentSearch();
+});
 
 /**
  * recent 모드의 돋보기/Enter — 보드 재조회(triggerSearch)가 아니라 최근검색을 다시 띄운다.
@@ -229,8 +274,8 @@ onBeforeUnmount(() => {
           <div class="recentRow__line recentRow__line--secondary">
             <span class="recentRow__datetime">{{ formatRecentDateTime(item.startAt) }}</span>
             <span class="recentRow__doctor">{{ item.staffName }}</span>
-            <span :class="`recentRow__status--${item.statusCode}`" class="recentRow__status">
-              {{ STATUS_LABEL[item.statusCode] ?? item.statusCode }}
+            <span :class="statusClassOf(item)" class="recentRow__status">
+              {{ statusLabelOf(item) }}
             </span>
           </div>
         </div>
@@ -248,6 +293,16 @@ onBeforeUnmount(() => {
         @input="onInput"
         @keydown.enter.prevent="onKeywordSearch"
     >
+    <!-- 검색 해제(x) — recent 모드에서 입력이 있거나 검색으로 날짜를 옮긴 상태일 때만 노출 -->
+    <button
+        v-if="recent && (localKeyword || movedByRecentPick)"
+        aria-label="검색 해제"
+        class="scheduleSearchInput__clearBtn"
+        type="button"
+        @click="onClearSearch"
+    >
+      ×
+    </button>
     <button
         class="scheduleSearchInput__iconBtn"
         type="button"
@@ -305,6 +360,23 @@ onBeforeUnmount(() => {
     }
     // 드롭다운 폭/위치는 teleport(body)+fixed 라 PatientAutocomplete inline style 이 담당
     // (scoped :deep 은 body 로 빠진 노드에 닿지 않음).
+  }
+
+  &__clearBtn {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    font-size: 16px;
+    line-height: 1;
+    color: #8F94A3;
+
+    &:hover {
+      color: #333;
+    }
   }
 
   &__iconBtn {
@@ -394,19 +466,42 @@ onBeforeUnmount(() => {
     text-overflow: ellipsis;
   }
 
+  /* 상태 뱃지 = 보드 예약칸(AppointmentCard)과 같은 색.
+     색 SSOT 는 scss/schedule/v3/_tokens.scss 의 --scheduler-card-* 이며,
+     카드처럼 bg + border 를 함께 쓴다(00 예약의 bg 가 거의 흰색이라 border 없이는 안 보인다).
+     드롭다운은 body teleport 지만 토큰이 :root 정의라 그대로 닿는다. */
   &__status {
     flex: 0 0 auto;
     margin-left: auto;
     padding: 0 4px;
     border-radius: 2px;
     font-size: 11px;
-    background: #E3F2FD;
-    color: #1565C0;
+    /* 00 예약 — 카드에서 상태 클래스 없는 기본값에 해당 */
+    border: 1px solid var(--scheduler-card-waiting-border, #B8C3D7);
+    background: var(--scheduler-card-waiting-bg, #F5F9FF);
+    color: #000;
 
-    &--01 { background: rgba(46, 125, 50, 0.14); color: #2E7D32; }
-    &--02 { background: #fff0f0; color: #C62828; }
-    &--03 { background: #f0f0f0; color: #777; }
-    &--05 { background: #FFF3E0; color: #B45309; }
+    &--01 {
+      border-color: var(--scheduler-card-done-border, #A6A6A6);
+      background: var(--scheduler-card-done-bg, #DDD);
+    }
+
+    &--02 {
+      border-color: var(--scheduler-card-undone-border, rgba(229, 57, 53, 0.25));
+      background: var(--scheduler-card-undone-bg, #FFF6F5);
+    }
+
+    /* 취소만 카드와 같이 흐린 글자색(카드 .status-cancel 규칙과 동일 토큰) */
+    &--03 {
+      border-color: var(--scheduler-card-cancel-border, #d0d0d0);
+      background: var(--scheduler-card-cancel-bg, #f5f5f5);
+      color: var(--scheduler-status-cancel, #999);
+    }
+
+    &--05 {
+      border-color: var(--scheduler-card-receipt-border, #AFBDA6);
+      background: var(--scheduler-card-receipt-bg, #F6FBDE);
+    }
   }
 }
 </style>

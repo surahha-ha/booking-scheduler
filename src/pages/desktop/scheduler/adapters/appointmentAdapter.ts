@@ -40,6 +40,7 @@ export interface EngineAppointment {
   patientPhone: string
   isExternalSync: boolean             // 외부 시스템 연동 여부 — 'EXT' 뱃지 표시
   createdAt?: Date              // 예약 등록일시 — '당일'(오늘 등록) 뱃지 판정
+  isTreatmentRegistered: boolean // 진료장부(TREATMENT)에서 등록한 건 여부 — '당일' 뱃지는 이 건에만
   // 카드 표시정보(displayInfo) — 통합회원만 birth/age/gender, 비회원 빈값
   birth: string                   // 생년월일 표시(V1 uiBirth)
   age: string                     // 만나이(V1 uiAge)
@@ -94,6 +95,7 @@ export function toEngineAppointment(appt: SchedulerAppointment): EngineAppointme
     patientPhone: appt.patientPhone ?? '',
     isExternalSync: appt.isExternalSync ?? false,
     createdAt: appt.createdAt,
+    isTreatmentRegistered: appt.isTreatmentRegistered ?? false,
     birth: appt.uiBirth ?? '',
     age: appt.uiAge ?? '',
     gender: appt.uiGender ?? '',

@@ -39,7 +39,7 @@ const emit = defineEmits(['update:modelValue']);
   &__btn {
     // 공통 스타일
     height: 24px;
-    padding: 0 12px;
+    padding: 0 8px;
     border-radius: 0;
     border: 1px solid #a5a5a5;
     background: $color-surface;

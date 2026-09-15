@@ -1,6 +1,7 @@
 <script setup>
 import {useCheckBoxSelection} from '@/composables/useCheckBoxSelection';
 import {useSchedulerFilterStore} from '@/stores/useSchedulerFilterStore';
+import {STATUS_TOTAL_LABEL} from '@/constants/schedulerSearchFilter';
 import {storeToRefs} from "pinia";
 
 const props = defineProps({
@@ -20,7 +21,7 @@ const {
   status: selectedStatus,
 } = storeToRefs(schedulerFilterStore);
 
-// TODO 서버 호출이 아닌 예약목록에서 필터되도록 수정
+// 상태 필터는 서버 재조회가 아니라 받아 둔 목록을 화면에서 거른다(setStatusKeys 는 재조회를 걸지 않는다).
 const statusSelection = useCheckBoxSelection({
   items                 : () => props.buttonItems,
   selectedValues        : selectedStatus,
@@ -50,7 +51,7 @@ function getStatistic(key) {
         type="button"
         @click="selectAll"
     >
-      전체 <span class="scheduleStatusChecks__count">{{ getStatistic('전체') }}</span>
+      {{ STATUS_TOTAL_LABEL }} <span class="scheduleStatusChecks__count">{{ getStatistic(STATUS_TOTAL_LABEL) }}</span>
     </button>
 
     <button

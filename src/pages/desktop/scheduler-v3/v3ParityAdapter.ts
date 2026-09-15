@@ -71,6 +71,9 @@ export function toV2Columns(columns: ResolvedColumn[]): FlatColumn[] {
     index: col.columnIndex,
     leftPx: col.leftPx,
     widthPx: col.widthPx,
+    // 이 컬럼이 실제로 그리는 레인 수 = computeRects 의 subColWidth 분모와 동일해야
+    // hitTest/드롭 프리뷰가 카드와 같은 격자를 쓴다(모델 A: 컬럼마다 레인 수가 다름).
+    slots: col.subColCount,
   }))
 }
 
@@ -82,8 +85,6 @@ export function toV2Columns(columns: ResolvedColumn[]): FlatColumn[] {
 export function toV2HeaderTree(
   columns: ResolvedColumn[],
   holidayLabelFor?: (_ymd: string) => string | undefined,
-  // 비공개(openYn='N') 담당자 id(=이름) 집합(#1). 전달 시 의사 노드 isPrivate → 헤더 '비공개' 뱃지.
-  privateDoctorIds?: Set<string>,
 ): HeaderNode[] {
   const dateOrder: string[] = []
   const byDate = new Map<string, ResolvedColumn[]>()
@@ -104,7 +105,6 @@ export function toV2HeaderTree(
       colSpan: 1,
       depth: 1,
       type: 'doctor' as const,
-      isPrivate: !!privateDoctorIds?.has(col.unit.doctorId),
       leafMeta: {
         date: col.unit.date,
         resourceId: col.unit.doctorId,
@@ -140,6 +140,12 @@ export interface V2Rect {
   cardDisplayTier: string
   /** layering(긴 예약 위 얹힌 짧은 예약) — 카드 그림자 토글용. */
   isLayered: boolean
+  /** 레이어링 그룹의 밑바탕 카드 — 좌측 세로 마커 토글용. */
+  isLayerBase: boolean
+  /** 스택 안 길이 순위(0=가장 긴 카드) — 마커 농도 단계. */
+  layerDepth: number
+  /** 긴 예약(다른 예약의 행을 지나쳐 내려간 카드) — 좌측 세로 바 토글용. */
+  isLongCard: boolean
 }
 
 /**
@@ -157,5 +163,8 @@ export function toV2Rects(rects: Rect[], columns: ResolvedColumn[]): V2Rect[] {
     zIndex: r.z,
     cardDisplayTier: 'standard',
     isLayered: r.isLayered,
+    isLayerBase: r.isLayerBase,
+    layerDepth: r.layerDepth,
+    isLongCard: r.isLongCard,
   }))
 }

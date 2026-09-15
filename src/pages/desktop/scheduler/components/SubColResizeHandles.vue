@@ -124,11 +124,16 @@ function onMouseDown(e, h) {
   pointer-events: auto;
   cursor: col-resize;
   display: flex;
-  justify-content: center;
+  // 구분선은 경계 왼쪽 1px 을 덮는다 = 헤더 셀의 border-right 와 같은 자리.
+  // hit zone 한가운데(justify-content: center)에 두면 경계보다 0.5px 오른쪽이라,
+  // 화면 배율이 100% 가 아닐 때 헤더 세로선보다 1px 밀려 그려진다(제보 건).
+  // hit zone(8px)은 경계 좌우로 그대로 두고, 선만 오른쪽 절반을 비워 경계에 붙인다.
+  justify-content: flex-end;
+  padding-right: 4px; // = HALF_HIT (script 와 일치시킬 것)
 
   // 보드 오른쪽 끝이라 안쪽으로 당겨진 핸들 — hit zone 만 안쪽이고 구분선은 경계에 그대로 둔다.
   &.subcol-resize-handle--clamped {
-    justify-content: flex-end;
+    padding-right: 0;
   }
 
   // 평소: 옅은 회색 실선 (항상 노출)

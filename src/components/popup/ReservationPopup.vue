@@ -13,7 +13,7 @@ import {useCustomerStore} from '@/stores/customerStore';
 import {isPastSlot} from '@/utils/dateUtils';
 import {formatPhoneNumber, isValidPhoneNumber, labelBlockedReason, onlyNumber} from '@/utils/formatStringUtils';
 import UiTimeSelect from '@/components/ui/UiTimeSelect.vue';
-import {datePickerYearRange, toStatusClassName, toType} from '@/utils/schedulerSearchFilterUtils';
+import {datePickerYearRange, toDisplayStatus, toStatusClassName, toType} from '@/utils/schedulerSearchFilterUtils';
 import {useSchedulerFilterStore} from '@/stores/useSchedulerFilterStore';
 import {resolveVisibleDoctors} from '@/utils/schedulerSearchFilterUtils';
 import {
@@ -30,6 +30,18 @@ import {useDialog} from '@/lib/useDialog';
 import TreatmentContentSelector from '@/components/popup/TreatmentContentSelector.vue';
 import TreatmentItemSettingPopup from '@/components/popup/TreatmentItemSettingPopup.vue';
 import {useServiceItemStore} from '@/stores/serviceItemStore';
+import {hasSelectableItems, isTreatmentItemSelectionValid} from '@/components/popup/treatmentItemRules';
+import {
+  addMinutes,
+  buildTimeOptions,
+  clampToOptions,
+  filterOptionsFromMinute,
+  getEndOptionsByStart as getEndOptions,
+  normalizeTimeStrings,
+  parseTimeToMinutes,
+} from '@/components/popup/reservationTimeRules';
+import {floorToStep} from '@/scheduler-engine/schedulerSnapGrid';
+import {useDialogGuard} from '@/composables/useDialogGuard';
 
 dayjs.extend(isSameOrAfter);
 
@@ -51,13 +63,14 @@ const props = defineProps({
   maxTime         : {type: String, default: '23:30'},
   width           : {type: Number, default: 460},
   /**
-   * 호출처에서 height 미명시 시 모드별 기본값 사용.
-   * legacyMemoMode=true → 460 (textarea 기준)
-   * legacyMemoMode=false → 580 (TreatmentContentSelector 추가분 반영)
+   * 호출처에서 height 미명시 시 'auto' — 콘텐츠가 높이를 결정한다.
+   * (고정 px 추정은 입력 조합마다 어긋나 하단 버튼이 잘렸다 — effectiveHeight 참고)
    */
   height          : {type: Number, default: null},
   getBlockedReason: {type: Function, default: null},
   isDayOff        : {type: Boolean, default: false},
+  /** 호출처의 저장 요청이 진행 중인지. 진행 중에는 등록·수정 버튼을 잠가 연타로 두 번 나가는 것을 막는다. */
+  saving          : {type: Boolean, default: false},
   /**
    * V1 호환 모드. true 면 서비스 내용을 자유 텍스트 textarea 로 표시한다.
    * 기본값(false) 은 V2 의 서비스 항목 그룹+상세 선택 UI(TreatmentContentSelector) 사용.
@@ -70,36 +83,18 @@ const props = defineProps({
 const serviceItemStore = useServiceItemStore();
 const settingPopupVisible = ref(false);
 
-// V2 서비스 내용 영역의 항목 칩 행 수 (0/1/2)
-//  - 그룹 미선택 또는 항목 0개  → 0행 (칩 영역 없음)
-//  - 1~4개                     → 1행
-//  - 5~8개 (페이지당 max 8)     → 2행
-const v2ItemRows = computed(() => {
-  if (props.legacyMemoMode) return 0;
-  const grpId = form.value?.serviceGroupId;
-  if (!grpId) return 0;
-  const grp = serviceItemStore.groups.find((g) => g.serviceGroupId === grpId);
-  if (!grp) return 0;
-  const onPage = Math.min(grp.items?.length ?? 0, 8);
-  if (onPage === 0) return 0;
-  return onPage <= 4 ? 1 : 2;
-});
-
-// 호출처 명시값이 우선. 없으면 모드별 기본값.
-// V2: 서비스 내용 칩 행 수에 따라 가변 (1행/2행/없음).
-//   base 500 (그룹바 + memo + 푸터 등 — 의사 등록 row 제거 반영)
-//   + 칩 행 1당 약 40px
-const effectiveHeight = computed(() => {
-  if (props.height != null) return props.height;
-  if (props.legacyMemoMode) return 420;
-  const rows = v2ItemRows.value;
-  if (rows === 0) return 500;
-  if (rows === 1) return 540;
-  return 580;
-});
+// 호출처 명시값이 우선. 없으면 'auto' = 콘텐츠 주도.
+//
+// 과거에는 진료내용 칩 행 수로 420/500/540/580 을 추정해 내려줬는데, 높이를 바꾸는 요소가
+// 칩 행 말고도 여럿(폼 grid gap × 행수, 담당의사 뱃지 유무, 진료내용 형식오류 안내줄, 진료항목 선택 영역)이라
+// 조합에 따라 콘텐츠가 고정 높이를 넘겼고, 문서 순서상 마지막인 .schedulePopupActions(취소/등록)가 잘렸다.
+// 상수를 키우는 방식은 다른 조합에서 재발하므로 높이 산정 자체를 콘텐츠에 맡긴다.
+const effectiveHeight = computed(() => props.height ?? 'auto');
 
 const emit = defineEmits(['close', 'save', 'modify']);
 const MEMO_MAX_LENGTH = 1000;
+// 항목이 있는 그룹을 고르고 항목을 비워 둔 경우의 안내.
+const TREATMENT_ITEM_REQUIRED_MSG = '선택한 그룹의 진료항목을 선택해주세요.';
 
 // ============================================================================
 // mode / title
@@ -108,7 +103,6 @@ const mode = computed(() => (props.payload?.mode === 'EDIT' ? 'EDIT' : 'ADD'));
 const isEditMode = computed(() => mode.value === 'EDIT');
 const computedDateType = computed(() => dataType.value);
 const isDayViewMode = computed(() => viewMode.value === 'DAY');
-// 일시(날짜, 시작시간, 종료시간)만 readOnly 적용
 const isTreatmentMode = computed(() => computedDateType.value === 'TREATMENT');
 
 const readOnlyMode = computed(() => {
@@ -138,20 +132,30 @@ const popupTitle = computed(() => {
 
   return isTreatment ? '진료 등록' : '예약 등록';
 });
+// 일시(날짜·시작·종료)는 readOnlyMode 와 별개로 판정한다.
+// EDIT 이면 대상 예약이 과거·현재이든 상태가 무엇이든 시간 재지정을 허용 — 지난 예약의
+// 실제 진료 시각 보정이 필요하다. BE(BookLockService.modifyWithLock)에 과거시간 금지 검증 없음.
+const dateTimeReadOnly = computed(() => !isEditMode.value && readOnlyMode.value);
 const uiModeClassName = computed(() => ({
   'ui--readonly': readOnlyMode.value,
   'ui--disabled': false
 }));
+const dateTimeUiClassName = computed(() => ({
+  'ui--readonly': dateTimeReadOnly.value,
+  'ui--disabled': false
+}));
+// 예약 화면에서는 예약(00)·취소(03)만 상태 뱃지로 구분한다(진료완료·미이행은 예약처럼 표기). 규칙 SSOT = toDisplayStatus.
+const displayStatus = computed(() => toDisplayStatus(props?.payload?.status, dataType.value));
 const headerBadgeText = computed(() => {
-  if (props?.payload?.status === '01') return '완료';
-  if (props?.payload?.status === '02') return '예약미이행';
-  if (props?.payload?.status === '03') return '예약취소';
+  if (displayStatus.value === '01') return '완료';
+  if (displayStatus.value === '02') return '예약미이행';
+  if (displayStatus.value === '03') return '예약취소';
+  if (displayStatus.value === '05') return '대기';
   return '';
 });
 /* 외부 시스템 연동 예약 — 'EXT' 뱃지 표시 여부 */
 const isExternalSyncBadge = computed(() => props?.payload?.isExternalSync === true);
 const datePickerRef = ref(null);
-const isShowDoctorAddInput = ref(false);
 const innerVisible = ref(false);
 // ============================================================================
 // state
@@ -177,14 +181,10 @@ const createInitialForm = () => ({
 });
 
 const createInitialTried = () => ({
-  doctorAdd : false,
   formSubmit: false,
 });
 
 const createInitialValidationState = () => ({
-  doctorAdd : {
-    addDoctorName: {ok: true, message: '', placeholder: '담당의사명을 입력해주세요.'},
-  },
   formSubmit: {
     doctorName  : {ok: true, message: '', placeholder: '담당의사명을 입력해주세요.'},
     patientName : {ok: true, message: '', placeholder: '고객명을 입력해주세요.'},
@@ -207,10 +207,21 @@ const validationState = ref(createInitialValidationState());
 const baseDateStr = ref('');
 const baseTimeStr = ref('');
 
+/* 팝업을 연 순간의 슬롯(일자·시작시각·의사) — 저장 시 운영시간 재검사의 기준점. */
+const openedSlot = ref(null);
+
+/* 이 팝업이 띄운 다이얼로그(alert/confirm)가 떠 있는 동안 true — 호출은 전부 withDialog 를 지난다.
+ * ★이 팝업은 hide-on-outside-click 이라, 확인 대화상자의 버튼 클릭이 "바깥 클릭"으로 잡혀
+ *   @hiding → handleClose → resetFormState 가 돌아버린다. 그러면 [확인]을 눌러도 form 이
+ *   비워진 뒤 payload 가 만들어져 저장이 실패하고, [취소]를 눌러도 수정 화면이 사라진다.
+ *   다이얼로그가 떠 있는 동안에는 바깥 클릭 닫힘을 끈다(진료항목 설정 팝업과 같은 useDialogGuard). */
+const {dialogOpen, withDialog} = useDialogGuard();
+
 const startDate = computed(() => mergeDateTime(form.value.dateStr, form.value.startTimeStr));
 const endDate = computed(() => mergeDateTime(form.value.dateStr, form.value.endTimeStr));
 
-const minSelectableDate = computed(() => dayjs().startOf('day').toDate());
+// EDIT 은 과거 날짜도 선택 가능(지난 예약의 일자 보정). ADD 만 오늘 이후로 제한.
+const minSelectableDate = computed(() => isEditMode.value ? null : dayjs().startOf('day').toDate());
 // 진료 화면: 오늘까지만 선택 가능
 const maxSelectableDate = computed(() => isTreatmentMode.value ? dayjs().endOf('day').toDate() : null);
 const yearRange = computed(() => {
@@ -223,24 +234,7 @@ function nowFloorMinutes() {
   return Math.floor(m / STEP_MIN) * STEP_MIN;
 }
 
-function parseTimeToMinutes(t) {
-  const [hh, mm] = String(t).split(':').map(Number);
-  return hh * 60 + mm;
-}
-
-function minutesToTime(min) {
-  const hh = String(Math.floor(min / 60)).padStart(2, '0');
-  const mm = String(min % 60).padStart(2, '0');
-  return `${hh}:${mm}`;
-}
-
-function addMinutes(timeStr, delta) {
-  return minutesToTime(parseTimeToMinutes(timeStr) + delta);
-}
-
-function filterOptionsFromMinute(options, minMinute) {
-  return options.filter(t => parseTimeToMinutes(t) >= minMinute);
-}
+// 시간 문자열 연산·옵션 규칙은 reservationTimeRules(순수함수) — 보드 저장 경로와 계약 테스트로 묶인다.
 
 function isTodayDate(dateStr) {
   return dateStr && dayjs(dateStr, DEFAULT_DATE_FORMAT).isSame(dayjs(), 'day');
@@ -254,25 +248,6 @@ function toEndMinutes(value) {
   return value === '23:59' ? 24 * 60 - 1 : parseTimeToMinutes(value);
 }
 
-function clampToOptions(timeStr, options) {
-  if (!options?.length) return '00:00';
-  if (!timeStr) return options[0];
-
-  // 30분 단위 내림(floor): target 이하에서 가장 가까운 옵션 선택
-  const target = parseTimeToMinutes(timeStr);
-  let best = options[0];
-
-  for (const t of options) {
-    const tMin = parseTimeToMinutes(t);
-    if (tMin <= target) {
-      best = t;
-    } else {
-      break; // options가 오름차순이므로 초과하면 중단
-    }
-  }
-  return best;
-}
-
 function applyBaseTimeLimit(minMinute) {
   if (baseDateStr.value && baseTimeStr.value) {
     if (form.value.dateStr === baseDateStr.value) {
@@ -282,16 +257,7 @@ function applyBaseTimeLimit(minMinute) {
   return minMinute;
 }
 
-const allTimeOptions = computed(() => {
-  const min = parseTimeToMinutes(props.minTime);
-  const max = parseTimeToMinutes(props.maxTime);
-  if (Number.isNaN(min) || Number.isNaN(max)) return [];
-  if (min > max) return [];
-
-  const out = [];
-  for (let m = min; m <= max; m += STEP_MIN) out.push(minutesToTime(m));
-  return out;
-});
+const allTimeOptions = computed(() => buildTimeOptions(props.minTime, props.maxTime, STEP_MIN));
 
 const startOptions = computed(() => {
   const opts = allTimeOptions.value;
@@ -304,19 +270,10 @@ const startOptions = computed(() => {
   let minMinute = parseTimeToMinutes(props.minTime);
 
   // =========================
-  // EDIT: 오늘이면 현재시각 슬롯(nowFloor)부터만
+  // EDIT: 현재시각 제한 없음 — 지난 예약을 과거 시각으로 재지정하는 보정을 허용한다.
+  //       기존 예약 start(baseTimeStr) 제한도 적용하지 않음.
   // =========================
-  if (isEditMode.value) {
-    const isToday = isTodayDate(form.value.dateStr);
-
-    if (isToday) {
-      // 16:09 -> nowFloorMinutes() = 16:00
-      minMinute = Math.max(minMinute, nowFloorMinutes());
-    }
-
-    // 기존 예약 start(baseTimeStr) 제한은 적용하지 않음
-    return filterOptionsFromMinute(opts, minMinute);
-  }
+  if (isEditMode.value) return opts;
 
   // =========================
   // ADD: 오늘만 제한, 미래는 전체 노출
@@ -331,29 +288,9 @@ const startOptions = computed(() => {
   return filterOptionsFromMinute(opts, minMinute);
 });
 
+// 시작에 따른 종료 옵션 — 마지막 칸 예외(23:59)까지 reservationTimeRules 의 규칙 그대로.
 function getEndOptionsByStart(startStr) {
-  const opts = allTimeOptions.value;
-  if (!startStr) return opts;
-
-  const sMin = parseTimeToMinutes(startStr);
-
-  // 기본: end >= start + STEP_MIN
-  const base = filterOptionsFromMinute(opts, sMin + STEP_MIN);
-
-  if (!IS_END_TIME_FIX) return base;
-
-  // last slot 예외: (maxTime - STEP_MIN) 이상인 start면 23:59도 허용
-  // ex) maxTime=23:30, STEP=30 -> threshold=23:00
-  const maxMin = parseTimeToMinutes(props.maxTime);
-  const threshold = maxMin - STEP_MIN;
-
-  if (sMin >= threshold) {
-    // 23:59 추가 (중복 방지)
-    if (!base.includes('23:59')) base.push('23:59');
-  }
-
-  // 기존 정책 유지: 00:00 제거
-  return base.filter(t => t !== '00:00');
+  return getEndOptions(startStr, allTimeOptions.value, {maxTime: props.maxTime, step: STEP_MIN, isEndTimeFix: IS_END_TIME_FIX});
 }
 
 const endOptions = computed(() => {
@@ -408,31 +345,11 @@ function mergeDateTime(dateStr, timeStr) {
 
 function normalizeTimeRange() {
   if (!allTimeOptions.value.length) return;
-
-  const sOpts = startOptions.value;
-  if (!sOpts.length) {
-    form.value.startTimeStr = '';
-    form.value.endTimeStr = '';
-    return;
-  }
-
-  form.value.startTimeStr = clampToOptions(form.value.startTimeStr, sOpts);
-
-  const eOpts = getEndOptionsByStart(form.value.startTimeStr);
-  if (!eOpts.length) {
-    form.value.startTimeStr = sOpts[Math.max(0, sOpts.length - 2)];
-    const eOpts2 = getEndOptionsByStart(form.value.startTimeStr);
-    form.value.endTimeStr = eOpts2[0] ?? '';
-    return;
-  }
-
-  form.value.endTimeStr = clampToOptions(form.value.endTimeStr, eOpts);
-
-  const sMin = parseTimeToMinutes(form.value.startTimeStr);
-  const eMin = parseTimeToMinutes(form.value.endTimeStr);
-  if (eMin <= sMin) {
-    form.value.endTimeStr = eOpts[0];
-  }
+  const {start, end} = normalizeTimeStrings(
+      form.value.startTimeStr, form.value.endTimeStr, startOptions.value, getEndOptionsByStart,
+  );
+  form.value.startTimeStr = start;
+  form.value.endTimeStr = end;
 }
 
 // ============================================================================
@@ -635,26 +552,20 @@ const closedDoctorSet = computed(() => {
   return set;
 });
 
+// 현재 페이지에 뱃지(비공개/휴무)가 하나라도 있으면 모든 항목에 뱃지 줄을 확보한다.
+// 뱃지가 붙은 항목만 높아지면 나머지 이름칸이 세로 중앙 정렬에 밀려 한 줄로 안 맞는다.
+const hasDoctorBadgeRow = computed(() =>
+    visibleDoctors.value.some(
+        (d) => d.openYn === 'N' || closedDoctorSet.value.has(d.id ?? d.text),
+    ),
+);
+
 function prevDoctor() {
   if (doctorPage.value > 0) doctorPage.value--;
 }
 
 function nextDoctor() {
   if (doctorPage.value < maxDoctorPage.value) doctorPage.value++;
-}
-
-function toggleDoctorAdd() {
-  isShowDoctorAddInput.value = !isShowDoctorAddInput.value;
-}
-
-async function handleSaveDoctor() {
-  tried.value.doctorAdd = true;
-  if (!validateAddDoctorName()) return;
-  tried.value.doctorAdd = false;
-
-  await staffStore.addDoctorName(form.value.addDoctorName);
-  form.value.doctorName = form.value.addDoctorName;
-  form.value.addDoctorName = '';
 }
 
 // ============================================================================
@@ -676,13 +587,53 @@ function buildSubmitPayload() {
   const start = startDate.value;
   const end = endDate.value;
 
+  // 고를 항목이 하나도 없는 그룹(칩이 disabled)은 저장하지 않는다 — 화면에서 선택할 수 없는 값이
+  // DB 에 남는다. 설정에서 항목을 지운 직후처럼 form 에 남아 있을 수 있어 저장 직전에 한 번 더 막는다.
+  const grp = serviceItemStore.groups.find((g) => g.serviceGroupId === form.value.serviceGroupId);
+  const keepAtcl = form.value.serviceGroupId != null && hasSelectableItems(grp);
+
   return {
     ...form.value,
+    serviceGroupId: keepAtcl ? form.value.serviceGroupId : null,
+    serviceItemId   : keepAtcl ? form.value.serviceItemId : null,
     startDate   : start,
     endDate     : end,
     patientPhone: onlyNumber(form.value.patientPhone),
     type        : toType(dataType.value),
   };
+}
+
+/* 저장 직전 운영시간 재검사 — 휴무·휴게시간·운영종료면 확인을 받는다.
+ *
+ * 위 진입 확인(팝업 열 때)은 '클릭한 슬롯'만 본다. 그래서 팝업 안에서 시간을 옮기면
+ * 그 안내를 빠져나간다. 편집(EDIT)은 진입 확인 자체가 없어 어떤 시각으로 옮겨도 무안내였다.
+ * 드래그·⋮변경 모드는 이미 같은 확인을 하므로(SchedulerV3Page.confirmBlockedMove),
+ * 세 경로 중 이 경로만 조용히 나가는 상태였다.
+ *
+ * 연 시점과 (일자·시작시각·의사)가 같으면 묻지 않는다 — 진입 확인과 겹쳐 두 번 묻게 된다.
+ * @returns 저장을 진행해도 되면 true
+ */
+async function confirmBlockedIfChanged() {
+  const snap = openedSlot.value;
+  const doctorName = form.value.doctorName?.trim() ?? '';
+  const unchanged = snap
+      && snap.dateStr === form.value.dateStr
+      && snap.startTimeStr === form.value.startTimeStr
+      && snap.doctorName === doctorName;
+  if (unchanged) return true;
+
+  const start = startDate.value;
+  if (!start) return true;
+
+  const reason = props.getBlockedReason?.(dayjs(start), doctorName)?.reason;
+  if (!reason || reason === 'none') return true;
+
+  const label = labelBlockedReason(reason) || '운영종료 시간';
+  const text = isDayViewMode.value
+      ? `해당 시간에 ${doctorName}님은 ${label}입니다.\n예약을 등록하시겠습니까?`
+      : `해당 시간은 ${label}입니다.\n예약을 등록하시겠습니까?`;
+
+  return await withDialog(() => dialog.confirm(text, {title: '예약 확인'}));
 }
 
 function handleClose() {
@@ -708,25 +659,29 @@ async function onSettingPopupClosed() {
   if (grpId == null) return;
 
   const grp = serviceItemStore.groups.find((g) => g.serviceGroupId === grpId);
-  if (!grp) {
-    // 그룹 삭제됨 → 그룹·항목 모두 해제
+  // 그룹이 지워졌거나 고를 항목이 하나도 남지 않았으면 그룹까지 해제.
+  // 항목 삭제 시 BE 도 참조 예약의 그룹·항목을 함께 지운다(clearBookItemRef) — 화면도 같은 규칙을 따른다.
+  if (!grp || !hasSelectableItems(grp)) {
     form.value.serviceGroupId = null;
     form.value.serviceItemId = null;
     return;
   }
-  if (itemId != null && !grp.items?.some((i) => i.serviceItemId === itemId)) {
-    // 항목만 삭제됨 → 항목만 해제(그룹 유지)
-    form.value.serviceItemId = null;
+  // 고른 항목이 지워졌으면 남은 첫 항목으로 채운다(그룹 선택 시 첫 항목 기본 선택과 같은 규칙).
+  if (itemId == null || !grp.items.some((i) => i.serviceItemId === itemId)) {
+    form.value.serviceItemId = grp.items[0].serviceItemId;
   }
 }
 
 async function handleSave() {
   tried.value.formSubmit = true;
 
-  const ok = validateFormSubmit();
+  const ok = await validateFormSubmit();
   if (!ok) return;
 
+  // payload 는 확인을 받기 전에 확정한다 — await 사이에 form 이 초기화돼도 빈 값이 나가지 않게.
   let payload = buildSubmitPayload();
+
+  if (!await confirmBlockedIfChanged()) return;
 
   tried.value.formSubmit = false;
   emit('save', payload);
@@ -735,10 +690,13 @@ async function handleSave() {
 async function handleModify() {
   tried.value.formSubmit = true;
 
-  const ok = validateFormSubmit();
+  const ok = await validateFormSubmit();
   if (!ok) return;
 
+  // payload 는 확인을 받기 전에 확정한다 — await 사이에 form 이 초기화돼도 빈 값이 나가지 않게.
   let payload = buildSubmitPayload();
+
+  if (!await confirmBlockedIfChanged()) return;
 
   tried.value.formSubmit = false;
   emit('modify', payload);
@@ -749,7 +707,7 @@ function handleCloseDatePickerMenu() {
 }
 
 function handleOpenDatePickerMenu(e) {
-  if (readOnlyMode.value) return;
+  if (dateTimeReadOnly.value) return;
 
   clearFieldError('formSubmit', 'dateStr');
   queueMicrotask(() => e?.toggleMenu?.());
@@ -760,6 +718,15 @@ function handleOpenDatePickerMenu(e) {
 // ============================================================================
 const hasInValidHtmlTag = computed(() => hasBlockedHtmlTag(form.value.memo?.trim()));
 const memoLength = computed(() => String(form.value.memo ?? '').length);
+
+// height:'auto' 라 열려 있는 동안 콘텐츠가 늘거나 줄어도 UiModal 은 flex 중앙 정렬이라 다시 잡을 위치가 없다.
+// 버튼 색(canSubmit)과 저장 게이트(validateFormSubmit)가 같은 판정을 보게 한다 — 갈리면 회색인데 저장된다.
+const isTreatmentItemSelected = computed(() => isTreatmentItemSelectionValid(
+    serviceItemStore.groups,
+    form.value.serviceGroupId,
+    form.value.serviceItemId,
+));
+
 const canSubmit = computed(() => {
   if (readOnlyMode.value) return true;
   if (!form.value.dateStr) return false;
@@ -775,8 +742,7 @@ const canSubmit = computed(() => {
   if (!form.value.doctorName?.trim()) return false;
   if (form.value.memo?.trim() && hasInValidHtmlTag.value) return false;
 
-  // 서비스 항목: 그룹↔상세는 필수 쌍 (둘 다 set 또는 둘 다 null). 한쪽만 set 이면 저장 불가.
-  if ((form.value.serviceGroupId == null) !== (form.value.serviceItemId == null)) return false;
+  if (!isTreatmentItemSelected.value) return false;
 
   return true;
 });
@@ -816,17 +782,6 @@ function clearFieldError(scope, field) {
   st.message = '';
 
   delete invalidFields.value[`${scope}.${field}`];
-}
-
-function validateAddDoctorName() {
-  // 의사 추가
-  const v = form.value.addDoctorName?.trim();
-  if (!v) {
-    setFieldError('doctorAdd', 'addDoctorName', false, '의사명을 입력해주세요.');
-    return false;
-  }
-  setFieldError('doctorAdd', 'addDoctorName', true, '');
-  return true;
 }
 
 function validateDateStr() {
@@ -898,7 +853,7 @@ function validateDoctorName() {
   return true;
 }
 
-function validateFormSubmit() {
+async function validateFormSubmit() {
   let ok = true;
   ok = validateDateStr() && ok;
   ok = validateStartTimeStr() && ok;
@@ -906,6 +861,11 @@ function validateFormSubmit() {
   ok = validatePatientName() && ok;
   ok = validatePatientPhone() && ok;
   ok = validateDoctorName() && ok;
+  // 진료항목은 입력칸이 없어 다른 필드처럼 테두리로 알릴 수 없다 → alert 로 안내.
+  if (!isTreatmentItemSelected.value) {
+    await withDialog(() => dialog.alert(TREATMENT_ITEM_REQUIRED_MSG, {title: '진료항목 선택'}));
+    ok = false;
+  }
   return ok;
 }
 
@@ -917,18 +877,59 @@ watch(
 );
 
 // ReservationPopup 노출 시 메인 컨텐츠(스케줄러 그리드)의 스크롤 차단.
-// 오버레이만으로는 wheel / space-bar 등 키 스크롤이 차단되지 않아
-// 뒤쪽 컨텐츠가 움직이는 회귀(2026-05-26). body 와 html 모두 overflow:hidden.
-const __popupScrollLockSaved = {bodyOverflow: '', htmlOverflow: ''};
+// DxPopup shading 만으로는 wheel / space-bar 등 키 스크롤이 차단되지 않아
+// 뒤쪽 컨텐츠가 움직이는 회귀(2026-05-26).
+// ⚠️ html/body 에 overflow:hidden 을 걸지 않는다. body 가 스크롤 컨테이너가 되면
+//   스케줄러 sticky 헤더의 scrollport 가 바뀌어 헤더가 static 위치(화면 밖 보드 최상단)로
+//   돌아가 사라진다 — 팝업 여닫을 때 헤더가 깜빡이던 원인.
+//   문서는 스크롤 가능한 채로 두고, 스크롤을 유발하는 이벤트만 막는다.
+const SCROLL_KEYS = new Set([
+  ' ', 'Spacebar', 'PageUp', 'PageDown', 'Home', 'End',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+]);
+
+/** target 에서 위로 올라가며 실제 스크롤 가능한 조상을 찾는다(문서 자신은 제외). 없으면 null. */
+function findScrollableAncestor(start) {
+  let el = start instanceof Element ? start : null;
+
+  while (el && el !== document.body && el !== document.documentElement) {
+    const style = window.getComputedStyle(el);
+
+    if (['auto', 'scroll'].includes(style.overflowY) && el.scrollHeight > el.clientHeight) return el;
+    if (['auto', 'scroll'].includes(style.overflowX) && el.scrollWidth > el.clientWidth) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+function isEditableTarget(el) {
+  if (!(el instanceof Element)) return false;
+  if (el.isContentEditable) return true;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
+}
+
+// 팝업 내부의 자체 스크롤 영역(셀렉트 목록 등)은 그대로 두고, 문서로 흘러가는 것만 막는다.
+function onBlockScrollEvent(e) {
+  if (findScrollableAncestor(e.target)) return;
+  if (e.cancelable) e.preventDefault();
+}
+
+function onBlockScrollKey(e) {
+  if (!SCROLL_KEYS.has(e.key)) return;
+  if (isEditableTarget(e.target)) return;
+  if (findScrollableAncestor(e.target)) return;
+  if (e.cancelable) e.preventDefault();
+}
+
 function lockBodyScroll() {
-  __popupScrollLockSaved.bodyOverflow = document.body.style.overflow;
-  __popupScrollLockSaved.htmlOverflow = document.documentElement.style.overflow;
-  document.body.style.overflow = 'hidden';
-  document.documentElement.style.overflow = 'hidden';
+  window.addEventListener('wheel', onBlockScrollEvent, {capture: true, passive: false});
+  window.addEventListener('touchmove', onBlockScrollEvent, {capture: true, passive: false});
+  window.addEventListener('keydown', onBlockScrollKey, {capture: true});
 }
 function unlockBodyScroll() {
-  document.body.style.overflow = __popupScrollLockSaved.bodyOverflow;
-  document.documentElement.style.overflow = __popupScrollLockSaved.htmlOverflow;
+  window.removeEventListener('wheel', onBlockScrollEvent, {capture: true});
+  window.removeEventListener('touchmove', onBlockScrollEvent, {capture: true});
+  window.removeEventListener('keydown', onBlockScrollKey, {capture: true});
 }
 watch(
     () => props.visible,
@@ -960,7 +961,7 @@ watch(
               ? `해당 시간에 ${p?.doctorName}님은 휴무입니다.\n예약을 등록하시겠습니까?`
               : `해당 시간은 휴무입니다.\n예약을 등록하시겠습니까?`;
 
-          const ok = await dialog.confirm(text, {title: '예약 확인'});
+          const ok = await withDialog(() => dialog.confirm(text, {title: '예약 확인'}));
 
           if (!ok) {
             handleClose();
@@ -973,7 +974,7 @@ watch(
               ? `해당 시간에 ${p?.doctorName}님은 ${label}입니다.\n예약을 등록하시겠습니까?`
               : `해당 시간은 ${label || '운영종료 시간'}입니다.\n예약을 등록하시겠습니까?`;
 
-          const ok = await dialog.confirm(text, {title: '예약 확인'});
+          const ok = await withDialog(() => dialog.confirm(text, {title: '예약 확인'}));
 
           if (!ok) {
             handleClose();
@@ -992,13 +993,22 @@ watch(
       // base는 clickStart 우선, 없으면 now 스냅
       const base = clickStart ?? dayjs();
       const baseMin = base.minute();
-      const snapped = base.minute(baseMin < 30 ? 0 : 30).second(0).millisecond(0);
+      const snapped = base.minute(floorToStep(baseMin, STEP_MIN)).second(0).millisecond(0);
 
       baseDateStr.value = snapped.format(DEFAULT_DATE_FORMAT);
       baseTimeStr.value = snapped.format(DEFAULT_TIME_FORMAT);
 
       const s = clickStart ?? snapped;
       const e = clickEnd ?? s.add(STEP_MIN, 'minute');
+
+      /* 저장 시점 재검사의 기준점 — 팝업을 연 순간의 (일자, 시작시각, 의사).
+       * 위 진입 확인은 '연 시각'만 보므로, 팝업 안에서 시간을 휴게시간대로 바꿔 저장하면
+       * 아무 안내 없이 나간다. 저장 때 이 기준과 달라졌으면 다시 확인한다(confirmBlockedIfChanged). */
+      openedSlot.value = {
+        dateStr     : s.format(DEFAULT_DATE_FORMAT),
+        startTimeStr: s.format(DEFAULT_TIME_FORMAT),
+        doctorName  : p?.doctorName ?? '',
+      };
 
       if (!isEditMode.value) {
         // ADD / VIEW
@@ -1028,7 +1038,6 @@ watch(
         endTimeStr      : e.format(DEFAULT_TIME_FORMAT),
         memberYn: p?.memberYn ?? 'N',
         memberNo: p?.memberNo ?? null,
-        addDoctorName   : '',
         startDate       : null,
         endDate         : null,
       };
@@ -1049,7 +1058,6 @@ watch(
           doctors.value.find(x => x.text === selected)?.id ?? '';
       form.value.externalStaffNo = findDoctorId ? String(findDoctorId) : '';
 
-      isShowDoctorAddInput.value = false;
       // 페이지 계산은 실제 노출 목록(teamDoctors=팀 표시 필터)을 기준으로 (SF-3c 정합)
       const idx = teamDoctors.value.findIndex(d => d.text === selected);
       if (idx < 0) return;
@@ -1079,13 +1087,6 @@ watch(
     {immediate: true}
 );
 
-watch(() => isShowDoctorAddInput.value, (v) => {
-  if (v === false) {
-    form.value.addDoctorName = '';
-    setFieldError('doctorAdd', 'addDoctorName', true, '');
-  }
-});
-
 watch(
     () => [form.value.dateStr, isEditMode.value],
     () => {
@@ -1103,7 +1104,7 @@ watch(
 <template>
   <UiModal
       :height="effectiveHeight"
-      :hide-on-outside-click="!settingPopupVisible"
+      :hide-on-outside-click="!settingPopupVisible && !dialogOpen"
       :title="popupTitle"
       :visible="innerVisible"
       :width="width"
@@ -1112,7 +1113,7 @@ watch(
   >
     <template #titleExtra>
       <div class="popupTitleBadgeGroup">
-        <span v-show="headerBadgeText" :class="toStatusClassName(props?.payload?.status)"
+        <span v-show="headerBadgeText" :class="toStatusClassName(displayStatus)"
               class="popupTitleBadge">{{ headerBadgeText }}</span>
         <span v-show="isExternalSyncBadge"
               class="popupTitleBadge popupTitleBadge--external-sync">EXT</span>
@@ -1126,7 +1127,7 @@ watch(
               ref="datePickerRef"
               v-model="form.dateStr"
               :auto-apply="true"
-              :class="uiModeClassName"
+              :class="dateTimeUiClassName"
               :clearable="false"
               :enable-time-picker="false"
               :formats="{ input: 'yyyy-MM-dd' }"
@@ -1142,7 +1143,7 @@ watch(
             <template #dp-input="slotProps">
 
               <div
-                  :class="uiModeClassName"
+                  :class="dateTimeUiClassName"
                   :data-invalid="tried.formSubmit && !validationState?.formSubmit?.dateStr?.ok"
                   class="scheduleField scheduleField--date"
                   data-field="dateStr"
@@ -1158,7 +1159,7 @@ watch(
               :invalid="tried.formSubmit && !validationState?.formSubmit?.startTimeStr?.ok"
               :max-height="210"
               :options="startOptions"
-              :readonly="readOnlyMode"
+              :readonly="dateTimeReadOnly"
               data-field="startTimeStr"
               data-scope="formSubmit"
               @update:modelValue="(v) => { clearFieldError('formSubmit','startTimeStr'); onChangeStart(v); }"
@@ -1171,7 +1172,7 @@ watch(
               :invalid="tried.formSubmit && !validationState?.formSubmit?.endTimeStr?.ok"
               :max-height="210"
               :options="endOptions"
-              :readonly="readOnlyMode"
+              :readonly="dateTimeReadOnly"
               data-field="endTimeStr"
               data-scope="formSubmit"
               @update:modelValue="(v) => { clearFieldError('formSubmit','endTimeStr'); onChangeEnd(v); }"
@@ -1226,41 +1227,9 @@ watch(
         <!-- 의사 -->
         <div class="schedulePopupForm__label">
           담당의사<span class="is-required"> *</span>
-          <!-- 의사 추가 토글 버튼 — 사양 변경으로 UI 숨김. 로직(toggleDoctorAdd)은 추후
-               기능 복귀 가능성 대비해 보존. -->
-          <button
-              v-if="false"
-              class="btn-basic-micro"
-              style="margin-top: 2px;"
-              type="button"
-              @click.stop="toggleDoctorAdd"
-          >
-            {{ isShowDoctorAddInput ? '- 등록닫기' : '+ 의사추가' }}
-          </button>
+          <!-- 의사 추가 UI 는 제거했다 — 담당자 등록·수정은 사업장 설정가 소유한다. -->
         </div>
         <div class="doctorSection">
-
-          <!-- 의사 등록 폼 (Input + Button) — 사양 변경으로 UI 숨김. -->
-          <div v-if="false" class="doctorRegisterRow">
-            <input
-                v-model="form.addDoctorName"
-                :data-invalid="tried.doctorAdd && !validationState?.doctorAdd?.addDoctorName?.ok"
-                :disabled="!isShowDoctorAddInput"
-                :placeholder="validationState?.doctorAdd?.addDoctorName?.placeholder"
-                class="scheduleField"
-                data-field="addDoctorName"
-                data-scope="doctorAdd"
-                @keydown.enter.prevent="handleSaveDoctor"
-            >
-            <button
-                :disabled="!isShowDoctorAddInput"
-                class="btn-basic"
-                type="button"
-                @click.stop="handleSaveDoctor"
-            >
-              등록
-            </button>
-          </div>
 
           <!-- 의사 목록 라디오 버튼 -->
           <div class="doctorRadioList doctorRadioList--inline" data-field="doctor">
@@ -1279,15 +1248,16 @@ watch(
                 :key="item.id ?? item.text"
                 class="doctorRadioItem"
             >
-              <!-- 비공개/휴무 뱃지 — 가로 나열(1줄 고정). 2개여도 행 높이 불변 → 팝업 bottom margin 보존. -->
-              <span
-                  v-if="item.openYn === 'N' || closedDoctorSet.has(item.id ?? item.text)"
-                  class="doctorRadioItem__badges"
-              >
+              <!-- 비공개/휴무 뱃지 — 가로 나열(1줄 고정). 2개여도 행 높이 불변 → 팝업 bottom margin 보존.
+                   한 명이라도 뱃지가 있으면 모든 항목에 빈 뱃지 줄을 확보한다(이름칸 수평 유지). -->
+              <span v-if="hasDoctorBadgeRow" class="doctorRadioItem__badges">
                 <span v-if="item.openYn === 'N'" class="doctorRadioItem__private">비공개</span>
                 <span v-if="closedDoctorSet.has(item.id ?? item.text)" class="doctorRadioItem__dayoff">휴무</span>
               </span>
-              <span class="doctorRadioItem__main">
+              <span
+                  :class="{ 'is-selected': form.doctorName === item.text }"
+                  class="doctorRadioItem__main"
+              >
                 <input
                     v-model="form.doctorName"
                     :value="item.text"
@@ -1311,8 +1281,16 @@ watch(
         </div>
 
         <!-- 서비스 내용 (Memo) -->
-        <div class="schedulePopupForm__label">
-          서비스 내용
+        <div class="schedulePopupForm__label schedule-popup-form__label--treatment">
+          <span>서비스 내용</span>
+          <!-- 디자인상 설정 버튼은 서비스 내용 라벨 아래에 배치한다. -->
+          <button
+              v-if="!legacyMemoMode"
+              aria-label="서비스 항목 설정"
+              class="tcs-settingBtn"
+              type="button"
+              @click="settingPopupVisible = true"
+          >⚙</button>
           <div v-if="legacyMemoMode" class="schedulePopupForm__count">
             {{ memoLength }}/{{ MEMO_MAX_LENGTH }}
           </div>
@@ -1353,9 +1331,14 @@ watch(
       <div class="schedulePopupActions">
         <button class="btn-action" type="button" @click="handleClose">취소</button>
 
+        <!-- 필수값 미입력이어도 클릭은 받는다 — handleSave/handleModify 가 tried 를 켜고
+             validateFormSubmit 으로 "고객명을 입력해주세요" 등 안내를 띄운 뒤 저장을 중단한다.
+             비활성이면 안내를 볼 방법이 없어 사용자가 무엇이 빠졌는지 알 수 없다.
+             비활성은 저장 요청이 나가 있는 동안(saving)에만 건다 — 연타로 두 번 등록되는 것을 막는다. -->
         <button
             v-if="!isEditMode && !readOnlyMode"
-            :disabled="!canSubmit"
+            :class="{ 'is-incomplete': !canSubmit }"
+            :disabled="saving"
             class="btn-action btn-primary"
             type="button"
             @click="handleSave"
@@ -1365,7 +1348,8 @@ watch(
 
         <button
             v-else
-            :disabled="!canSubmit"
+            :class="{ 'is-incomplete': !canSubmit }"
+            :disabled="saving"
             class="btn-action btn-primary"
             type="button"
             @click="handleModify"
@@ -1390,19 +1374,27 @@ watch(
   position: relative;
   display: flex;
   flex-wrap: nowrap !important;
-  /* 바닥 정렬 — 뱃지(비공개/휴무) 유무·개수와 무관하게 담당자명(main row) line 을 맞춤 */
-  align-items: flex-end;
-  /* prev ‹ · items · next › 모두 flex 자식 → gap 12px 가 양 끝 화살표에 동일 적용(대칭). next 는 in-flow. */
-  gap: 12px;
+  /* 화살표와 담당의사 항목을 같은 세로 중앙에 정렬한다. */
+  align-items: center;
+  /* 의사 버튼 간격은 6px, 좌우 화살표와의 간격은 개별 margin으로 12px을 유지한다. */
+  gap: 6px;
 }
 
 .doctorRadioList--inline .doctorRadioList__arrow {
   flex: 0 0 auto;
   white-space: nowrap;
 }
-/* 의사 항목 — 남는 width 를 균등 분배해 채움(좌측 뭉침·우측 여백 방지) */
+
+.doctorRadioList--inline .doctorRadioList__arrow:not(.doctorRadioList__arrow--next) {
+  margin-right: 6px;
+}
+
+.doctorRadioList--inline .doctorRadioList__arrow--next {
+  margin-left: 6px;
+}
+/* 의사 항목 — 콘텐츠 너비를 유지하고 항목 사이 간격만 고정한다. */
 .doctorRadioList--inline .doctorRadioItem {
-  flex: 1 1 0;
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
@@ -1415,15 +1407,37 @@ watch(
   gap: 2px;
 }
 .doctorRadioItem__main {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid #BCBCBC;
+  border-radius: 4px;
+  background: #fff;
+  color: #565656;
+  cursor: pointer;
+
+  &.is-selected {
+    border-color: var(--scheduler-brand, #2F6FED);
+    color: var(--scheduler-brand, #2F6FED);
+  }
+
+  input[type="radio"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    opacity: 0;
+  }
 }
-/* 뱃지 묶음 — 비공개/휴무를 가로로 나란히(1줄 고정). 2개여도 세로로 안 쌓여 행 높이 불변. */
+/* 뱃지 묶음 — 비공개/휴무를 가로로 나란히(1줄 고정). 2개여도 세로로 안 쌓여 행 높이 불변.
+   min-height = 뱃지 높이(10px * 1.4). 뱃지 없는 항목도 같은 높이를 차지해 이름칸이 수평을 유지한다. */
 .doctorRadioItem__badges {
   display: flex;
   align-items: center;
   gap: 3px;
+  min-height: 14px;
 }
 /* 휴무 라벨 — 이름 위 표기 */
 .doctorRadioItem__dayoff {
@@ -1494,16 +1508,8 @@ watch(
 /* =========================
  * validation / label
  * ========================= */
-.scheduleField[data-invalid="true"] {
-  border-color: #e54848;
-  box-shadow: 0 0 0 2px rgba(229, 72, 72, 0.15);
-}
-
-.formFieldError {
-  font-size: 12px;
-  color: #e54848;
-  margin-top: 4px;
-}
+/* .scheduleField[data-invalid="true"] 빨간 테두리는 src/scss/schedule/_reservation-popup.scss 의
+   공통 필드 규약에 있다 (scoped 에 두면 자식 컴포넌트 내부 input 에 닿지 않는다). */
 
 .schedulePopupForm__count {
   margin-top: 4px;
@@ -1512,9 +1518,47 @@ watch(
   text-align: left
 }
 
+.schedule-popup-form__label--treatment {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.schedule-popup-form__label--treatment > span {
+  align-self: start;
+}
+
+.tcs-settingBtn {
+  align-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 16px;
+  padding: 0;
+  border: 0;
+  background-color: #fff;
+  cursor: pointer;
+  font-size: 0;
+  color: transparent;
+
+  --icon-size: 14px;
+  --icon-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23424242' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/%3E%3C/svg%3E");
+
+  background-image: var(--icon-url);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: var(--icon-size) var(--icon-size);
+}
+
+.tcs-settingBtn:active {
+  transform: translateY(0.5px);
+}
+
 .is-required {
-  color: #e53935;
-  margin-left: 2px;
+  color: #2F6FED;
   font-weight: 600;
 }
 
@@ -1544,6 +1588,13 @@ watch(
   pointer-events: none;
 }
 
+/* 예외0: 일시(날짜·시작·종료)는 readonly 상태에서도 편집 가능.
+ * 지난 예약·상태 확정 예약의 운영시간 보정을 허용한다(dateTimeReadOnly 참조). */
+.schedulePopupForm[data-readonly="true"] .schedulePopupForm__datetime {
+  pointer-events: auto;
+  cursor: default;
+}
+
 /* 예외1: memo textarea만 열기 (V1 legacy 모드) */
 .schedulePopupForm[data-readonly="true"] textarea[data-field="memo"] {
   pointer-events: auto;
@@ -1556,6 +1607,12 @@ watch(
 .schedulePopupForm[data-readonly="true"] .treatmentContentSelector {
   pointer-events: auto;
   cursor: default;
+}
+
+/* 진료보기에서도 진료항목 설정 팝업은 열 수 있도록 설정 아이콘만 허용한다. */
+.schedulePopupForm[data-readonly="true"] .tcs-settingBtn {
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 /* 예외2: 의사 영역(doctor)만 열기 */

@@ -115,7 +115,31 @@ interface ColSlot {
   startMin: number
 }
 
-export function arrangeCards(cards: CardInput[], subColumnCount: number): ArrangeResult {
+/**
+ * '더 긴 예약' 판정 — 열 선택(floatPlace)과 layering(computeRects pass 2)이 **함께 쓰는 단일 정의**.
+ * 두 곳이 어긋나면 "빈 칸으로 보낸 이유"와 "들여쓰기를 붙인 이유"가 달라진다.
+ * 기준을 길이에서 시작 순서로 바꾸는 정책 변경은 이 함수 하나만 고치면 된다.
+ */
+export function isLongerCard(
+  other: { startMin: number, endMin: number },
+  self: { startMin: number, endMin: number },
+): boolean {
+  return (other.endMin - other.startMin) > (self.endMin - self.startMin)
+}
+
+/**
+ * 빈 칸 스택 상한 — 긴 예약을 피해 빈 칸에 쌓을 때 허용할 최대 깊이 차.
+ * `Infinity` = 화면정의서 그대로(빈 칸이 있으면 절대 긴 예약 위에 얹지 않는다).
+ * 좁은 N칸 보기·페이지 경계 압축에서 밴드가 과하게 두꺼워지면 `2` 로 낮춘다 —
+ * 그 순간부터 상한을 넘는 칸은 열 선택 1순위에서 제외돼 기존 분산 배치로 돌아간다.
+ */
+export const EMPTY_LANE_STACK_CAP = Infinity
+
+export function arrangeCards(
+  cards: CardInput[],
+  subColumnCount: number,
+  emptyLaneStackCap: number = EMPTY_LANE_STACK_CAP,
+): ArrangeResult {
   const n = Math.max(1, subColumnCount)
   // startMin asc, dur DESC
   const sorted = cards.slice().sort((a, b) =>
@@ -170,16 +194,38 @@ export function arrangeCards(cards: CardInput[], subColumnCount: number): Arrang
     allCards.push({ startMin: card.startMin, endMin: card.endMin, level, column: col })
   }
 
-  // 넘치는 카드 = float. 칸별 "시각적 깊이(groupDepth + 이전 그룹 occupant)"가 가장 얕은 칸으로 분산
-  // → 같은 시각 카드가 N칸에 row-major 로 균형 분포(한 칸에 안 쌓임). 동률은 낮은 인덱스.
-  // 첫 float 은 보통 col0(가장 긴 base) 위 → "가장 긴 칸 위 layering" 유지하며 나머지 분산.
+  // 그 칸에서 이 카드와 시간이 겹치는 '더 긴' 카드 수. 이전 그룹에서 넘어온 관통 카드도 allCards 에 있어 함께 센다.
+  function longerOverlapCount(card: CardInput, col: number): number {
+    let cnt = 0
+    for (const c of allCards) {
+      if (c.column !== col) continue
+      if (c.startMin >= card.endMin || c.endMin <= card.startMin) continue
+      if (isLongerCard(c, card)) cnt++
+    }
+    return cnt
+  }
+
+  // 넘치는 카드 = float. 1순위 = "그 칸에서 겹치는 더 긴 카드 수"가 가장 적은 칸 → 긴 예약을 덜 가린다.
+  // 2순위 = 시각적 깊이(groupDepth + 이전 그룹 occupant), 동률은 낮은 인덱스.
+  // → 빈 칸이 있으면 긴 예약 위에 얹지 않고 그 칸에 쌓는다(화면정의서 2. 예약/진료 배치 ①~④).
+  // 단 EMPTY_LANE_STACK_CAP 이상 깊어진 칸은 1순위 후보에서 빼 밴드가 무한정 두꺼워지는 것을 막는다.
   function floatPlace(card: CardInput, groupDepth: number[], occupiedAtStart: number[]): void {
+    const densityOf = (k: number): number => groupDepth[k] + occupiedAtStart[k]
+    let minDensity = Infinity
+    for (let k = 0; k < n; k++) minDensity = Math.min(minDensity, densityOf(k))
+
     let targetCol = 0
-    let best = Infinity
+    let bestLonger = Infinity
+    let bestDensity = Infinity
     for (let k = 0; k < n; k++) {
-      const density = groupDepth[k] + occupiedAtStart[k]
-      if (density < best) {
-        best = density
+      const density = densityOf(k)
+      // 상한을 넘게 깊어진 칸은 "긴 예약을 피한다"는 이유로 더 쌓지 않는다(가장 얕은 칸은 항상 후보).
+      const longer = density - minDensity >= emptyLaneStackCap
+        ? Infinity
+        : longerOverlapCount(card, k)
+      if (longer < bestLonger || (longer === bestLonger && density < bestDensity)) {
+        bestLonger = longer
+        bestDensity = density
         targetCol = k
       }
     }
@@ -241,51 +287,70 @@ function unitSlotsOf(u: UnitLike): number {
 }
 
 // ════════════════════════════════════════════════════════════
-// 4. packPages — sub-column 단위 연속 페이지 분할 (압축 아님)
-//    모든 unit 의 sub-col 을 하나의 글로벌 시퀀스로 펼치고 budget 칸씩 자른다.
-//    한 unit 의 칸 수가 budget 을 넘으면 그 unit 이 여러 페이지에 걸친다(carry-over).
-//    REDESIGN §4 (재설계: 의사 단위 압축 → 칸 단위 분할).
+// 4. packPages — unit 경계 페이지 분할 (경계 unit 은 압축, 이월 없음)
+//    한 unit(날짜×의사)은 절대 두 페이지에 걸치지 않는다. budget 을 다 못 채우고 남은 칸보다
+//    큰 unit 이 오면 그 unit 을 **남은 칸수로 압축**해 이 페이지에 담고, 다음 페이지는 그 다음
+//    unit 부터 시작한다 → 같은 담당자가 좌우 페이지에 중복 노출되지 않는다.
+//    page.slotEnd - slotStart 는 budget 보다 클 수 있다(압축된 칸 수만큼). 전역 slot 시퀀스
+//    (unit 당 slots 칸)는 그대로라 slotOffset/totalSlots 좌표계는 유지된다.
 // ════════════════════════════════════════════════════════════
 
 export function packPages(units: UnitLike[], budget: number): Page[] {
   const b = Math.max(1, budget)
-  let total = 0
-  for (const u of units) total += unitSlotsOf(u)
   const pages: Page[] = []
-  for (let s = 0; s < total; s += b) {
-    pages.push({ slotStart: s, slotEnd: Math.min(s + b, total) })
+  let ui = 0
+  let slot = 0
+  while (ui < units.length) {
+    const start = slot
+    let remaining = b
+    // 남은 칸이 0 이 될 때까지 unit 을 통째로 담는다(마지막 unit 은 남은 칸수로 압축 표시).
+    while (ui < units.length && remaining > 0) {
+      const n = unitSlotsOf(units[ui])
+      remaining -= Math.min(n, remaining)
+      slot += n
+      ui++
+    }
+    pages.push({ slotStart: start, slotEnd: slot })
   }
   return pages
 }
 
 // ════════════════════════════════════════════════════════════
-// 5. buildPageColumns — 페이지(글로벌 slot 범위) → 컬럼
-//    페이지 범위와 겹치는 unit 들을 컬럼으로. 경계에 걸친 unit 은 부분 sub-col 만(carry-over).
-//    압축 없음 — 잔여 칸은 우측에 다음 unit(다음 의사/요일)이 이어진다.
+// 5. buildPageColumns — 시작 slot + budget → 컬럼 (unit 경계)
+//    startSlot 이 unit 중간을 가리키면 그 unit 의 처음으로 스냅한다(부분 노출 금지).
+//    각 컬럼은 unit 전체를 담고(subColStart 는 항상 0), 남은 칸보다 큰 unit 은
+//    subColCount 를 남은 칸수로 줄인다 — 카드는 그 칸수로 재배치되어 전량 표시된다.
 // ════════════════════════════════════════════════════════════
 
-export function buildPageColumns(units: UnitLike[], page: Page): PageColumn[] {
+export function buildPageColumns(units: UnitLike[], startSlot: number, budget: number): PageColumn[] {
   const cols: PageColumn[] = []
-  let globalSlot = 0
-  for (let ui = 0; ui < units.length; ui++) {
-    const u = units[ui]
-    const n = unitSlotsOf(u)
-    const uStart = globalSlot
-    const uEnd = globalSlot + n
-    globalSlot = uEnd
-    // 이 unit 의 글로벌 범위 [uStart,uEnd) 와 페이지 [slotStart,slotEnd) 의 겹침
-    const ovStart = Math.max(uStart, page.slotStart)
-    const ovEnd = Math.min(uEnd, page.slotEnd)
-    if (ovStart < ovEnd) {
-      cols.push({
-        unitIndex: ui,
-        subColStart: ovStart - uStart,
-        subColCount: ovEnd - ovStart,
-        slotsStartIdx: ovStart - page.slotStart,
-        unitSlots: n,
-      })
-    }
-    if (globalSlot >= page.slotEnd) break
+  const b = Math.max(1, budget)
+
+  // startSlot → 시작 unit index (unit 경계로 스냅). 범위를 넘으면 빈 컬럼.
+  let ui = 0
+  let acc = 0
+  while (ui < units.length && acc + unitSlotsOf(units[ui]) <= startSlot) {
+    acc += unitSlotsOf(units[ui])
+    ui++
+  }
+  if (ui >= units.length) return cols
+
+  let remaining = b
+  let slotsStartIdx = 0
+  while (ui < units.length && remaining > 0) {
+    const n = unitSlotsOf(units[ui])
+    const count = Math.min(n, remaining)
+    cols.push({ unitIndex: ui, subColStart: 0, subColCount: count, slotsStartIdx, unitSlots: n })
+    slotsStartIdx += count
+    remaining -= count
+    ui++
   }
   return cols
+}
+
+/** 전역 slot 시퀀스에서 unit index → 그 unit 의 시작 slot. */
+export function slotStartOfUnit(units: UnitLike[], unitIndex: number): number {
+  let acc = 0
+  for (let i = 0; i < unitIndex && i < units.length; i++) acc += unitSlotsOf(units[i])
+  return acc
 }

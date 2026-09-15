@@ -88,6 +88,7 @@ export const csvReservations: BookItem[] = (() => {
             birthDate: member ? '1988-05-20' : null,
             sexDivisionCode: member ? (no % 2 === 0 ? 'M' : 'F') : null,
             createdAt: `${day}T08:00:00`,
+            registeredFrom: 'CMM', // 시드는 전부 예약장부 등록건 — 진료장부에서 직접 등록해야 '당일' 뱃지 확인 가능
             externalYn: 'N',
         } as BookItem;
     });

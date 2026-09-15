@@ -17,13 +17,19 @@
  * 핵심 정책:
  *   - top handle: endMinute 고정(anchor), startMinute만 변경
  *   - bottom handle: startMinute 고정(anchor), endMinute만 변경
- *   - duration은 minDuration 이상, maxDuration 이하
+ *   - 움직이는 끝은 등록/수정과 같은 예약 단위(STEP_MIN=30분) 그리드에만 놓인다.
+ *     Shift 세밀 snap 은 resize 에 적용하지 않는다 — 등록/수정으로는 만들 수 없는 시각이 생긴다.
+ *   - duration은 minDuration(=예약 단위) 이상, maxDuration 이하.
+ *     최소 미만으로 끌면 그리드에 맞춘 최소 크기로 붙잡고 invalid(빨간 점선) 표시 → 확정하지 않는다.
  *   - preview는 항상 같은 column 내에서만 표시
  */
 
 import { ref, readonly, type Ref, type DeepReadonly } from 'vue'
 import { hitTest, minuteToBandTopPx, minuteRangeToBandHeight, isValidMinute } from '@/scheduler-engine/schedulerHitTest'
-import { snapMinute, DEFAULT_SNAP_CONFIG } from '@/scheduler-engine/schedulerSnapGrid'
+import {
+  snapMinute, DEFAULT_SNAP_CONFIG, clampEndToDay, floorToStep, ceilToStep, DAY_MINUTES, LAST_MINUTE_OF_DAY,
+} from '@/scheduler-engine/schedulerSnapGrid'
+import { STEP_MIN } from '@/constants/componentConstants'
 import type {
   FlatColumn,
   BandCompatible,
@@ -74,6 +80,64 @@ export type ResizeValidateFn = (
 ) => { isValid: boolean; reason?: string }
 
 // ═══════════════════════════════════════════════════════════
+// 시간 범위 계산 (순수 함수 — DOM/Vue 무관, 단위 테스트 대상)
+// ═══════════════════════════════════════════════════════════
+
+/** 최소 시간 미만으로 끌었을 때 preview 에 붙는 사유 */
+export const RESIZE_UNDER_MIN_REASON = `예약 시간은 ${STEP_MIN}분 미만으로 줄일 수 없습니다.`
+
+export interface ResizeRangeLimits {
+  /** 예약 단위(분) — 움직이는 끝이 놓일 그리드 */
+  step: number
+  minDuration: number
+  maxDuration: number
+}
+
+export interface ResizeRange {
+  startMinute: number
+  endMinute: number
+  /** 사용자가 최소 시간보다 짧게 끌었다 → 붙잡아 두되 invalid 로 표시 */
+  isUnderMin: boolean
+}
+
+/**
+ * anchor(고정 끝) + snap 된 마우스 minute → 확정할 시간 범위.
+ *
+ * 움직이는 끝은 항상 step 그리드 위에 놓는다. 최소/최대 제약으로 붙잡을 때도
+ * `anchor ± minDuration` 을 그대로 쓰지 않고 그리드에 맞춘다 —
+ * 그렇지 않으면 anchor 가 그리드 밖인 예약(외부 유입분)에서 등록/수정으로는
+ * 고를 수 없는 시각이 만들어진다.
+ */
+export function resolveResizeRange(
+  anchorMinute: number,
+  snappedMinute: number,
+  direction: ResizeDirection,
+  limits: ResizeRangeLimits,
+): ResizeRange {
+  const { step, minDuration, maxDuration } = limits
+
+  if (direction === 'top') {
+    // end 고정 → start 만 이동. 위로 갈수록 길어진다.
+    // 종료 23:59 는 자정(24:00)의 표기다 — 글자 그대로 세면 23:30~23:59 예약이 최소 시간 미달이 되어
+    // 핸들을 놓기만 해도 시작이 한 칸 당겨진다.
+    const endAsMinute = anchorMinute >= LAST_MINUTE_OF_DAY ? DAY_MINUTES : anchorMinute
+    const latestStart = floorToStep(endAsMinute - minDuration, step)   // 최소 시간을 지키는 가장 늦은 start
+    const earliestStart = ceilToStep(endAsMinute - maxDuration, step)  // 최대 시간을 지키는 가장 이른 start
+    const isUnderMin = snappedMinute > latestStart
+    const startMinute = Math.max(earliestStart, Math.min(snappedMinute, latestStart))
+    return { startMinute, endMinute: anchorMinute, isUnderMin }
+  }
+
+  // bottom: start 고정 → end 만 이동. 아래로 갈수록 길어진다.
+  const earliestEnd = ceilToStep(anchorMinute + minDuration, step)
+  const latestEnd = floorToStep(anchorMinute + maxDuration, step)
+  const isUnderMin = snappedMinute < earliestEnd
+  // 자정(1440)에 닿으면 드롭과 같은 하루 끝 규칙으로 23:59 또는 마지막 칸으로 닫는다.
+  const endMinute = clampEndToDay(anchorMinute, Math.min(latestEnd, Math.max(snappedMinute, earliestEnd)), step)
+  return { startMinute: anchorMinute, endMinute, isUnderMin }
+}
+
+// ═══════════════════════════════════════════════════════════
 // 입력 옵션
 // ═══════════════════════════════════════════════════════════
 
@@ -90,7 +154,7 @@ export interface UseSchedulerResizeOptions {
   autoScroll?: AutoScrollHandle
   /** snap 설정 (미제공 시 기본값) */
   snapConfig?: SnapConfig
-  /** 최소 예약 시간 (분, 기본 10) */
+  /** 최소 예약 시간 (분, 기본 = 등록/수정 예약 단위 STEP_MIN) */
   minDuration?: number
   /** 최대 예약 시간 (분, 기본 480 = 8시간) */
   maxDuration?: number
@@ -132,7 +196,7 @@ export function useSchedulerResize(
     interactionLock,
     autoScroll,
     snapConfig = DEFAULT_SNAP_CONFIG,
-    minDuration = 10,
+    minDuration = STEP_MIN,
     maxDuration = 480,
     validate,
     onResize,
@@ -146,7 +210,9 @@ export function useSchedulerResize(
   let _lockHandle: LockHandle | null = null
   let _anchorMinute = 0     // 고정 끝 minute
   let _columnKey = ''        // resize 대상 column (불변)
-  let _isFineSnap = false
+
+  // 움직이는 끝이 놓일 그리드 = 예약 단위. Shift 세밀 snap 은 쓰지 않는다(등록/수정과 단위 통일).
+  const gridStep = snapConfig.intervalMinutes > 0 ? snapConfig.intervalMinutes : STEP_MIN
 
   // ═══════════════════════════════════════════════════════════
   // 좌표 변환
@@ -172,7 +238,6 @@ export function useSchedulerResize(
 
     _lockHandle = handle
     _columnKey = info.columnKey
-    _isFineSnap = e.shiftKey
     document.body.classList.add('is-resizing-active')
 
     // anchor: 고정 끝
@@ -206,7 +271,6 @@ export function useSchedulerResize(
     document.addEventListener('mousemove', onResizeMove)
     document.addEventListener('mouseup', onResizeEnd)
     document.addEventListener('keydown', onKeyDown)
-    document.addEventListener('keyup', onKeyUp)
 
     // mousedown이 drag로 전파되지 않도록
     e.stopPropagation()
@@ -239,35 +303,14 @@ export function useSchedulerResize(
 
     if (!isValidMinute(hit.minute)) return
 
-    const snappedMinute = snapMinute(hit.minute, snapConfig, _isFineSnap)
-    const direction = _resizeState.value.direction
+    const snappedMinute = snapMinute(hit.minute, snapConfig)
 
-    let newStart: number
-    let newEnd: number
-
-    if (direction === 'top') {
-      newStart = Math.min(snappedMinute, _anchorMinute - minDuration)
-      newEnd = _anchorMinute
-    } else {
-      newStart = _anchorMinute
-      newEnd = Math.max(snappedMinute, _anchorMinute + minDuration)
-    }
-
-    const duration = newEnd - newStart
-    if (duration < minDuration) {
-      if (direction === 'top') {
-        newStart = newEnd - minDuration
-      } else {
-        newEnd = newStart + minDuration
-      }
-    }
-    if (duration > maxDuration) {
-      if (direction === 'top') {
-        newStart = newEnd - maxDuration
-      } else {
-        newEnd = newStart + maxDuration
-      }
-    }
+    const { startMinute: newStart, endMinute: newEnd, isUnderMin } = resolveResizeRange(
+      _anchorMinute,
+      snappedMinute,
+      _resizeState.value.direction,
+      { step: gridStep, minDuration, maxDuration },
+    )
 
     let isValid = true
     let invalidReason: string | undefined
@@ -283,6 +326,12 @@ export function useSchedulerResize(
       invalidReason = result.reason
     }
 
+    // 최소 시간 미만은 저장 불가 — 검증 결과보다 우선한다(빨간 점선 + 확정 차단).
+    if (isUnderMin) {
+      isValid = false
+      invalidReason = RESIZE_UNDER_MIN_REASON
+    }
+
     const topPx = minuteToBandTopPx(newStart, bandInfos.value)
     const heightPx = minuteRangeToBandHeight(newStart, newEnd, bandInfos.value)
 
@@ -296,7 +345,10 @@ export function useSchedulerResize(
     }
 
     // origin과 동일 시간 = 데이터 변경 없음 → preview 회색 표기 (drag와 동일 정책)
+    // 단 최소 시간 미만으로 끌어 붙잡힌 것이면 회색이 아니라 빨강이어야 한다
+    // (이미 최소 크기인 카드를 더 줄이면 붙잡힌 값이 origin 과 같아진다).
     const isNoChange =
+      !isUnderMin &&
       newStart === _resizeState.value.originStartMinute &&
       newEnd === _resizeState.value.originEndMinute
 
@@ -318,7 +370,6 @@ export function useSchedulerResize(
   function onResizeMove(e: MouseEvent): void {
     if (!_resizeState.value) return
 
-    _isFineSnap = e.shiftKey
     updatePreviewFromClientY(e.clientY)
 
     // auto scroll: edge zone 감지 (세로만)
@@ -361,13 +412,11 @@ export function useSchedulerResize(
     document.removeEventListener('mousemove', onResizeMove)
     document.removeEventListener('mouseup', onResizeEnd)
     document.removeEventListener('keydown', onKeyDown)
-    document.removeEventListener('keyup', onKeyUp)
 
     _resizeState.value = null
     _isResizing.value = false
     _anchorMinute = 0
     _columnKey = ''
-    _isFineSnap = false
 
     // auto scroll 중단 + 콜백 해제
     autoScroll?.stop()
@@ -383,11 +432,6 @@ export function useSchedulerResize(
 
   function onKeyDown(e: KeyboardEvent): void {
     if (e.key === 'Escape') cancelResize()
-    if (e.key === 'Shift') _isFineSnap = true
-  }
-
-  function onKeyUp(e: KeyboardEvent): void {
-    if (e.key === 'Shift') _isFineSnap = false
   }
 
   // ═══════════════════════════════════════════════════════════

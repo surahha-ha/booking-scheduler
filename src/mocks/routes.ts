@@ -49,7 +49,8 @@ function requestToItem(b: any, existing?: BookItem): BookItem {
         ...(existing ?? {} as BookItem),
         reservationId: existing?.reservationId ?? db.nextNo(),
         tenantId: 'TENANT_MOCK',
-        statusCode: b?.state ?? existing?.statusCode ?? '00',
+        // 신규 등록 초기 상태는 서버 규칙과 동일 — 방문 장부는 대기(05), 예약 장부는 00.
+        statusCode: b?.state ?? existing?.statusCode ?? (b?.type === 'treatment' ? '05' : '00'),
         startAt: b?.startDate ?? existing?.startAt,
         endAt: b?.endDate ?? existing?.endAt,
         externalStaffNo: 0, // name 모드 매칭용 — staffName 로만 컬럼 배정(위 seed 주석 참조). truthy 면 카드 전멸.
@@ -68,6 +69,8 @@ function requestToItem(b: any, existing?: BookItem): BookItem {
         birthDate: existing?.birthDate ?? null,
         sexDivisionCode: existing?.sexDivisionCode ?? null,
         createdAt: existing?.createdAt ?? new Date().toISOString().slice(0, 19),
+        // 등록 화면 구분은 BE(BookLockService)와 동일하게 등록 시에만 확정 — 수정 화면(type)으로 덮어쓰지 않는다.
+        registeredFrom: existing?.registeredFrom ?? (b?.type === 'treatment' ? 'WORK' : 'CMM'),
         externalYn: 'N',
     };
 }
@@ -86,32 +89,6 @@ export const routes: MockRoute[] = [
                 staffName: r.staffName, customerName: r.customerName, customerPhone: r.customerPhone, memberYn: r.memberYn,
                 birthDate: r.birthDate ?? null, sexDivisionCode: r.sexDivisionCode ?? null,
             }));
-    }},
-    // 통계는 "배열" 응답 (FE reduceStatisticsData 가 배열을 reduce). 단일 객체면 .reduce 폭발.
-    // 모수는 목록(selectBookGroups)과 동일해야 한다 — 전건 집계하면 화면 밖 예약까지 세어 카드 수와 어긋난다.
-    {method: 'GET', pattern: '/api/booking/statistics/member', handle: ({params}) => {
-        const live = db.selectBooks(params);
-        return [
-            {memberYn: 'Y', cnt: live.filter(r => r.memberYn === 'Y').length},
-            {memberYn: 'N', cnt: live.filter(r => r.memberYn !== 'Y').length},
-        ];
-    }},
-    {method: 'GET', pattern: '/api/booking/statistics/state', handle: ({params}) => {
-        const live = db.selectBooks(params);
-        // 상태코드 → FE 라벨(APPOINTMENT/TREATMENT_STATUS_TYPE 값)
-        const byLabel: Record<string, string> = {'00': '예약', '03': '취소', '05': '접수대기', '01': '완료', '02': '미이행'};
-        const acc = new Map<string, number>();
-        for (const label of Object.values(byLabel)) acc.set(label, 0);
-        for (const r of live) {
-            const label = byLabel[r.statusCode] ?? '예약';
-            acc.set(label, (acc.get(label) ?? 0) + 1);
-        }
-        // 서버 계약은 상태별 행 앞에 합계 행 '전체' 를 함께 내려준다.
-        // 상태 필터 배지가 '전체' 키를 직접 읽으므로 이 행이 빠지면 합계가 0 으로 보인다.
-        return [
-            {name: '전체', cnt: live.length},
-            ...[...acc.entries()].map(([name, cnt]) => ({name, cnt})),
-        ];
     }},
     {method: 'GET', pattern: '/api/booking/v2/schedule/unassigned-reservations', handle: () => ({assignable: false})},
     {method: 'POST', pattern: '/api/booking/v2/schedule/assign-unassigned', handle: () => ({updated: 0})},

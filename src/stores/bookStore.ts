@@ -1,5 +1,5 @@
 import {defineStore} from 'pinia';
-import {reactive, ref, watch} from 'vue';
+import {markRaw, ref, watch} from 'vue';
 import {
     add,
     type ApiResponse,
@@ -7,12 +7,8 @@ import {
     type BookItem,
     type BookItemRequest,
     get,
-    getMemberStatistics,
-    getStateStatistics,
-    type MemberStatisticsResponse,
     modify,
     remove,
-    type StateStatisticsResponse,
     updateStatus,
 } from '@/api/bookApi';
 import {toBookApiParams} from '@/mappers/schedulerSearchFilterToApiParams';
@@ -21,8 +17,9 @@ import {useStaffStore} from '@/stores/staffStore';
 import dayjs from 'dayjs';
 import {toErrorBody} from '@/utils/apiErrorUtils';
 import {extractFirstChars} from '@/utils/formatStringUtils';
-import {resolveStatisticsDoctorNames, toStatusClassName, toType} from '@/utils/schedulerSearchFilterUtils';
+import {toStatusClassName, toType} from '@/utils/schedulerSearchFilterUtils';
 import {sanitizePersonName} from '@/composables/useAppointmentFormatter';
+import {isIntegratedMember} from '@/utils/memberRules';
 
 const returnMessage = '서비스를 이용하기 위해서는\n[운영시간]과 [담당자] 등록이 필요합니다.\n사업장 설정의 등록 화면으로 이동하시겠습니까?';
 // 담당자 조회 자체가 실패(일시적 네트워크/서비스 장애)한 경우 — redirect(사업장 설정) 가 아니라 재시도 안내.
@@ -64,6 +61,7 @@ export type SchedulerAppointment = {
     uiStatusClass: string;    // status class
     isExternalSync: boolean;      // 외부 시스템 연동 여부 — 의사 뱃지 색상 분기에 사용
     createdAt?: Date;       // 예약 등록일시 — '당일'(오늘 등록) 뱃지 판정
+    isTreatmentRegistered: boolean; // 진료장부에서 등록된 건(RESERVATION_USE_TYPE='WORK') — '당일' 뱃지는 이 건에만
 
     // 카드 표시정보(displayInfo) — 통합회원만 birth/sex, 비회원 빈값
     birthDate?: string | null;       // 생년월일 원본 'yyyy-MM-dd'
@@ -85,8 +83,10 @@ function calcAgeFromBirth(birth?: string | null): string {
     return age >= 0 ? String(age) : '';
 }
 function sexCodeToLabel(code?: string | null): string {
-    if (code === 'M') return '남';
-    if (code === 'F') return '여';
+    // ITF 성별코드 표기 흔들림(M/MALE/1) 흡수 — UiSearchInput.formatAgeGender 와 인식 범위를 맞춘다.
+    const c = String(code ?? '').toUpperCase();
+    if (c === 'M' || c === 'MALE' || c === '1') return '남';
+    if (c === 'F' || c === 'FEMALE' || c === '2') return '여';
     return '';
 }
 function buildTreatmentLabel(groupName?: string | null, articleName?: string | null): string {
@@ -133,10 +133,11 @@ function applyBookItemToAppointment(
     const last4 = pDigits.length >= 4 ? pDigits.slice(-4) : '';
     target.uiPatient = last4 ? `${pName}(${last4})` : pName;
     // target.uiPhone = formatPhoneNumber(target.patientPhone ?? '');
-    target.uiJoin = !!target.memberNo || target.memberYn === 'Y';
+    target.uiJoin = isIntegratedMember(target);
     target.uiStatusClass = toStatusClassName(target.status);
     target.isExternalSync = it.externalYn === 'Y';
     target.createdAt = it.createdAt ? dayjs(it.createdAt).toDate() : undefined;
+    target.isTreatmentRegistered = it.registeredFrom === 'WORK';
     // 표시정보 파생(생년월일/만나이/성별/서비스 항목)
     target.uiBirth = it.birthDate ?? '';
     target.uiAge = calcAgeFromBirth(it.birthDate);
@@ -151,8 +152,6 @@ export const useBookStore = defineStore('bookStore', () => {
     const pending = ref(false);
 
     const responseData = ref<BookDayGroupResponse[]>([]);
-    const stateStatisticsData = ref<StateStatisticsResponse[]>([]);
-    const memberStatisticsData = ref<MemberStatisticsResponse[]>([]);
 
     const appointments = ref<SchedulerAppointment[]>([]);
     const apptById = new Map<string, SchedulerAppointment>();
@@ -162,7 +161,12 @@ export const useBookStore = defineStore('bookStore', () => {
     }
 
 
-    // 응답 payload를 appointments로 동기화 (객체 참조 최대한 재사용)
+    // 응답 payload를 appointments로 동기화 (객체 참조 최대한 재사용).
+    // ⚠️ 예약 객체는 markRaw(비반응형) — 반응형 객체에 필드를 하나씩 대입하면 대입마다 반응성
+    //    트리거가 발화한다. dev 에서 pinia devtools 가 스토어에 sync deep 구독을 걸므로
+    //    트리거 1회 = $state 전체 재귀순회(traverse)가 되어 N건 × 30필드 = O(N²) 폭발,
+    //    페이징 1회에 main 스레드가 90초+ 점유되는 실측 사고가 있었다. 전량 교체 + 전량
+    //    재계산(layout) 구조라 필드 단위 반응성은 필요 없다 — 커밋은 아래 배열 교체 1회가 담당.
     function upsertAppointments(payload: BookDayGroupResponse[]) {
         const nextList: SchedulerAppointment[] = [];
         const nextIds = new Set<string>();
@@ -177,7 +181,7 @@ export const useBookStore = defineStore('bookStore', () => {
                     applyBookItemToAppointment(prev, g, it);
                     nextList.push(prev);
                 } else {
-                    const created = reactive<SchedulerAppointment>({
+                    const created = markRaw({
                         id,
                         tenantId: '',
                         startDateTime: new Date(),
@@ -199,27 +203,51 @@ export const useBookStore = defineStore('bookStore', () => {
             if (!nextIds.has(key)) apptById.delete(key);
         }
 
-        // 배열 참조 유지 (스크롤 보호)
-        appointments.value.splice(0, appointments.value.length, ...nextList);
+        // 커밋 = 배열 교체 1회(유일한 반응성 트리거). 항목이 markRaw 라 재사용 경로의 필드
+        // 변경은 스스로 알리지 못한다 — splice 는 같은 참조·같은 순서면 no-op 이 되어 화면이
+        // 낡은 값으로 남으므로(SSE 재조회 등) 반드시 새 배열 대입이어야 한다.
+        appointments.value = nextList;
     }
 
+    // 응답 경합 가드 — 조회가 겹칠 때 늦게 도착한 옛 응답이 최신 화면을 덮어쓰지 않게 한다.
+    // upsertAppointments 는 누적이 아니라 전량 교체(stale 제거)라, 순서가 뒤바뀌면 그 응답이 그대로 화면이 된다.
+    let loadSeq = 0;
+
+    // 마지막으로 화면에 반영된 조회의 파라미터. 다른 파라미터의 조회가 떠 있는 동안 appointments 는
+    // 이전 조건의 데이터다(stale) — 상태 칩 숫자가 이전 조건의 값으로 잠시 보이던 원인. 같은 파라미터의
+    // 재조회(SSE 갱신)는 stale 이 아니라서 숫자가 깜빡이지 않는다.
+    let loadedParamsKey: string | null = null;
+    const appointmentsStale = ref(false);
+
     async function load() {
+        const seq = ++loadSeq;
         pending.value = true;
         try {
             const params = toBookApiParams(schedulerFilterStore.$state);
+            const paramsKey = JSON.stringify(params);
+            if (paramsKey !== loadedParamsKey) appointmentsStale.value = true;
             const res = await get(params);
+            // 더 최신 조회가 시작됐다면 이 응답은 버린다.
+            if (seq !== loadSeq) return;
             const body: ApiResponse<BookDayGroupResponse[]> = unwrapBody<BookDayGroupResponse[]>(res);
 
+            // markRaw — 원본 payload 는 읽기 전용 스냅샷. 반응형 변환·devtools deep 순회 대상에서 제외.
             const payload = body.payload ?? [];
-            responseData.value = payload;
+            responseData.value = markRaw(payload);
 
             upsertAppointments(payload);
+            loadedParamsKey = paramsKey;
+            appointmentsStale.value = false;
 
             return body;
         } catch (e) {
             console.error('[장부] 조회 실패', e);
+            // 최신 조회가 실패하면 화면에는 이전 목록의 카드가 그대로 남는다 — stale 을 켜 둔 채 두면
+            // 카드는 보이는데 숫자만 0 이 다음 성공 조회까지 고착된다. 카드와 숫자가 같은 것을 말하게 푼다.
+            if (seq === loadSeq) appointmentsStale.value = false;
         } finally {
-            pending.value = false;
+            // 최신 조회가 아직 떠 있으면 pending 을 내리지 않는다(스피너 조기 해제 방지).
+            if (seq === loadSeq) pending.value = false;
         }
     }
 
@@ -276,58 +304,6 @@ export const useBookStore = defineStore('bookStore', () => {
         }
     }
 
-    async function loadMemberStatistics() {
-        try {
-            const params = toBookApiParams(schedulerFilterStore.$state, true);
-            // 통계는 BE 집계라 FE 에서 못 거른다 → 화면 표시 의사(팀/미지정)와 정합되게 doctorName 보강.
-            params.doctorName = resolveStatisticsDoctorNames(
-                schedulerFilterStore.doctors,
-                schedulerFilterStore.selectedTeamName,
-                staffStore.doctors,
-                staffStore.teams,
-            );
-            // 화면 표시 의사 0명(빈 팀/전원 팀소속 미지정)이면 doctorName=[] → BE 가 '전체'로 오인해 전체집계 폴백.
-            // 보드는 컬럼 0(카드 0)이라 통계만 전체가 되어 불일치 → 표시 의사가 없으면 통계도 0.
-            if (params.doctorName.length === 0) {
-                memberStatisticsData.value = [];
-                return;
-            }
-            const res = await getMemberStatistics(params);
-            const body: ApiResponse<MemberStatisticsResponse[]> =
-                unwrapBody<MemberStatisticsResponse[]>(res);
-            memberStatisticsData.value = body.payload ?? [];
-            return body;
-        } catch (e) {
-            console.error('[장부 > 회원 통계 조회] 실패', e);
-        }
-    }
-
-    async function loadStateStatistics() {
-        try {
-            const params = toBookApiParams(schedulerFilterStore.$state, true);
-            // 통계는 BE 집계라 FE 에서 못 거른다 → 화면 표시 의사(팀/미지정)와 정합되게 doctorName 보강.
-            params.doctorName = resolveStatisticsDoctorNames(
-                schedulerFilterStore.doctors,
-                schedulerFilterStore.selectedTeamName,
-                staffStore.doctors,
-                staffStore.teams,
-            );
-            // 화면 표시 의사 0명(빈 팀/전원 팀소속 미지정)이면 doctorName=[] → BE 가 '전체'로 오인해 전체집계 폴백.
-            // 보드는 컬럼 0(카드 0)이라 통계만 전체가 되어 불일치 → 표시 의사가 없으면 통계도 0.
-            if (params.doctorName.length === 0) {
-                stateStatisticsData.value = [];
-                return;
-            }
-            const res = await getStateStatistics(params);
-            const body: ApiResponse<StateStatisticsResponse[]> =
-                unwrapBody<StateStatisticsResponse[]>(res);
-            stateStatisticsData.value = body.payload ?? [];
-            return body;
-        } catch (e) {
-            console.error('[장부 > 장부 통계 조회] 실패', e);
-        }
-    }
-
     // redirect 필요 시 사유를 저장 (컴포넌트에서 dialog + redirect 처리). = 하드 차단(담당자 미등록 등).
     const redirectReason = ref<string | null>(null);
 
@@ -368,32 +344,38 @@ export const useBookStore = defineStore('bookStore', () => {
                 return;
             }
 
-            if (!initialized.value) {
-                // 최초 성공 로딩 1회 셋업. 진입 즉시 마킹 — 기존 `v < 1` 게이트와 동일하게 "최초 1회만" 수행.
-                // (일시 실패로 loadDoctor 가 위에서 return 되면 여기 못 와 flag=false 유지 → 재시도 시 정상 수행.
-                //  redirect/설정저장 경로의 재게이트 여부 등 그 외 동작은 기존과 동일하게 보존.)
-                initialized.value = true;
-                await staffStore.loadSchedule();
+            // 최초 셋업(운영시간 게이트)은 장부 조회와 서로 필요로 하는 값이 없다.
+            // 순차로 기다리면 운영시간 원천이 느릴 때 그만큼 카드가 안 그려진다. 병렬로 돌린다.
+            const setup = initialized.value ? Promise.resolve() : runInitialSetup();
 
-                // 운영시간 게이트.
-                //  - 운영시간 있음 → 정상
-                //  - 없음 → 배너로 등록 권장(비블로킹). 보드는 그대로 쓰고 예약도 등록할 수 있다.
-                const weekly = staffStore.hospitalRules?.weekly;
-                const hasInstitutionHours = !!weekly && Object.keys(weekly).length > 0;
-                noTreatmentTime.value = !hasInstitutionHours;
-            }
-
-            // 장부 + 통계 (독립 API이므로 병렬 호출)
-            await Promise.all([load(), loadMemberStatistics(), loadStateStatistics()]);
+            // 상태·회원 카운트는 따로 조회하지 않는다 — 페이지가 화면에 그려진 카드에서 센다(boardStatistics).
+            // BE 집계와 화면 카드는 모수가 달라(창 > 표시 범위, 경계 칸 일부) 숫자만 남는 예약이 생겼다.
+            await Promise.all([setup, load()]);
         },
         {immediate: true},
     );
 
+    /**
+     * 최초 성공 로딩 1회 셋업 — 운영시간 게이트.
+     * 진입 즉시 initialized 를 마킹한다(기존 `v < 1` 게이트와 동일하게 "최초 1회만").
+     * 일시 실패로 loadDoctor 가 앞에서 return 되면 여기 못 오므로 flag=false 유지 → 재시도 시 정상 수행.
+     */
+    async function runInitialSetup() {
+        initialized.value = true;
+        await staffStore.loadSchedule();
+
+        // 운영시간 게이트 — hospitalRules.weekly 가 곧 사업장 운영시간이다.
+        //  - 운영시간 있음 → 정상
+        //  - 없음 → 배너로 등록 권장(비블로킹). 보드는 그대로 쓰고 예약도 등록할 수 있다.
+        const weekly = staffStore.hospitalRules?.weekly;
+        const hasInstitutionHours = !!weekly && Object.keys(weekly).length > 0;
+        noTreatmentTime.value = !hasInstitutionHours;
+    }
+
     return {
         responseData,
-        memberStatisticsData,
-        stateStatisticsData,
         appointments,
+        appointmentsStale,
         pending,
         redirectReason,
         serviceUnavailable,
@@ -404,7 +386,5 @@ export const useBookStore = defineStore('bookStore', () => {
         modifyAppointment,
         removeAppointment,
         modifyAppointmentState,
-        loadMemberStatistics,
-        loadStateStatistics,
     };
 });

@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import dayjs from 'dayjs'
+import { snapMinute, DEFAULT_SNAP_CONFIG } from '../schedulerSnapGrid'
+import { clampToOptions } from '@/components/popup/reservationTimeRules'
 
 // ═══════════════════════════════════════════════════════════
 // 24. 같은 위치 drag → isNoChange
@@ -31,37 +32,8 @@ describe('Drag isNoChange', () => {
   })
 })
 
-// ═══════════════════════════════════════════════════════════
-// 25. 과거 시간 판정 — isPastDateTime
-// ═══════════════════════════════════════════════════════════
-
-describe('isPastDateTime', () => {
-
-  function isPastDateTime(dateStr: string, startMinute: number, cellDuration: number): boolean {
-    const step = cellDuration || 30
-    const bandEndMinute = Math.ceil((startMinute + 1) / step) * step
-    const h = Math.floor(bandEndMinute / 60)
-    const m = bandEndMinute % 60
-    const bandEndDate = dayjs(dateStr).hour(h).minute(m).second(0)
-    return bandEndDate.isBefore(dayjs())
-  }
-
-  it('어제 09:00 → past', () => {
-    const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD')
-    expect(isPastDateTime(yesterday, 540, 30)).toBe(true)
-  })
-
-  it('내일 09:00 → not past', () => {
-    const tomorrow = dayjs().add(1, 'day').format('YYYY-MM-DD')
-    expect(isPastDateTime(tomorrow, 540, 30)).toBe(false)
-  })
-
-  it('오늘 현재 시각보다 미래 band → not past', () => {
-    const today = dayjs().format('YYYY-MM-DD')
-    // 23:30 band는 거의 항상 미래
-    expect(isPastDateTime(today, 1410, 30)).toBe(false)
-  })
-})
+// 25. 과거 시간 판정(isPastDateTime) 은 폐기됐다 — 지난 시간대로의 이동을 더는 막지 않는다
+//     (TC 003-03 v0.3, 지난 예약의 시각 보정 허용). 판정 함수 자체가 없어져 검증할 대상도 없다.
 
 // 34-35. dotMenuButtons 구성 → pages/desktop/scheduler/__tests__/appointmentCardMenu.test.ts
 // (엔진이 아니라 UI 메뉴 정의라 소유 모듈 옆에서 검증한다)
@@ -131,34 +103,33 @@ describe('toType 매핑', () => {
 // snap 30분 단위 검증
 // ═══════════════════════════════════════════════════════════
 
+// 드래그·resize 가 쓰는 실물 snapMinute(schedulerSnapGrid). 기본 설정 = 예약 단위 30분, 세밀 모드 없음.
 describe('snap 30분 단위', () => {
 
-  function snapMinute(rawMinute: number, interval: number): number {
-    return Math.round(rawMinute / interval) * interval
-  }
+  const snap = (rawMinute: number) => snapMinute(rawMinute, DEFAULT_SNAP_CONFIG)
 
   it('17:50 → 18:00 (반올림)', () => {
-    expect(snapMinute(1070, 30)).toBe(1080)
+    expect(snap(1070)).toBe(1080)
   })
 
   it('17:40 → 17:30 (반올림)', () => {
-    expect(snapMinute(1060, 30)).toBe(1050)
+    expect(snap(1060)).toBe(1050)
   })
 
   it('17:45 → 18:00 (반올림, 정확히 중간)', () => {
-    expect(snapMinute(1065, 30)).toBe(1080)
+    expect(snap(1065)).toBe(1080)
   })
 
   it('09:00 → 09:00 (정확히 경계)', () => {
-    expect(snapMinute(540, 30)).toBe(540)
+    expect(snap(540)).toBe(540)
   })
 
   it('09:14 → 09:00 (내림)', () => {
-    expect(snapMinute(554, 30)).toBe(540)
+    expect(snap(554)).toBe(540)
   })
 
   it('09:15 → 09:30 (정확히 중간 → 올림)', () => {
-    expect(snapMinute(555, 30)).toBe(570)
+    expect(snap(555)).toBe(570)
   })
 })
 
@@ -166,30 +137,10 @@ describe('snap 30분 단위', () => {
 // clampToOptions (30분 내림) 검증
 // ═══════════════════════════════════════════════════════════
 
+// 예약 팝업이 쓰는 실물 clampToOptions(reservationTimeRules).
 describe('clampToOptions (30분 내림)', () => {
 
-  function parseTimeToMinutes(t: string): number {
-    const [h, m] = t.split(':').map(Number)
-    return h * 60 + (m || 0)
-  }
-
-  function clampToOptions(timeStr: string, options: string[]): string {
-    if (!options?.length) return '00:00'
-    if (!timeStr) return options[0]
-    const target = parseTimeToMinutes(timeStr)
-    let best = options[0]
-    for (const t of options) {
-      const tMin = parseTimeToMinutes(t)
-      if (tMin <= target) {
-        best = t
-      } else {
-        break
-      }
-    }
-    return best
-  }
-
-  const options = ['09:00', '09:30', '10:00', '10:30', '11:00', '17:00', '17:30', '18:00']
+  const options =['09:00', '09:30', '10:00', '10:30', '11:00', '17:00', '17:30', '18:00']
 
   it('17:50 → 17:30 (내림)', () => {
     expect(clampToOptions('17:50', options)).toBe('17:30')
@@ -213,28 +164,5 @@ describe('clampToOptions (30분 내림)', () => {
   })
 })
 
-// ═══════════════════════════════════════════════════════════
-// NowIndicator: column별 오늘 판정
-// ═══════════════════════════════════════════════════════════
-
-describe('NowIndicator column별 오늘 판정', () => {
-
-  function isColumnToday(colDate: string): boolean {
-    return colDate === dayjs().format('YYYY-MM-DD')
-  }
-
-  it('오늘 날짜 column → true', () => {
-    const today = dayjs().format('YYYY-MM-DD')
-    expect(isColumnToday(today)).toBe(true)
-  })
-
-  it('어제 날짜 column → false', () => {
-    const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD')
-    expect(isColumnToday(yesterday)).toBe(false)
-  })
-
-  it('내일 날짜 column → false', () => {
-    const tomorrow = dayjs().add(1, 'day').format('YYYY-MM-DD')
-    expect(isColumnToday(tomorrow)).toBe(false)
-  })
-})
+// NowIndicator column별 오늘 판정 → pages/desktop/scheduler/components/__tests__/nowIndicatorToday.test.ts
+// (컴포넌트 내부 함수라 마운트로 실물을 실행한다 — 여기 있던 사본은 프로덕션 코드를 한 줄도 돌리지 않았다)

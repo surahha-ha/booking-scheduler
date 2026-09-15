@@ -10,13 +10,14 @@
 
     <template v-if="mode === 'rolling'">
       <!-- 왼쪽 바깥 월 버튼 -->
-      <button
-        v-for="m in leftMonthButtons"
-        :key="'lm-' + m.yearMonth"
-        class="scheduleDateStrip__monthCell"
-        type="button"
-        @click="emit('expand-month', m.yearMonth)"
-      >{{ m.label }}</button>
+      <template v-for="m in leftMonthButtons" :key="'lm-' + m.yearMonth">
+        <span v-if="m.yearLabel" class="scheduleDateStrip__yearLabel">{{ m.yearLabel }}</span>
+        <button
+          class="scheduleDateStrip__monthCell"
+          type="button"
+          @click="emit('expand-month', m.yearMonth)"
+        >{{ m.label }}</button>
+      </template>
 
       <!-- 연두 < -->
       <button aria-label="이전 날짜 보기" class="scheduleDateStrip__dayNav" type="button" @click="emit('shift-prev')">
@@ -25,6 +26,7 @@
 
       <!-- 30일 strip -->
       <template v-for="cell in stripDayCells" :key="cell.date">
+        <span v-if="cell.yearLabel" class="scheduleDateStrip__yearLabel">{{ cell.yearLabel }}</span>
         <span v-if="cell.monthSeparator" aria-hidden="true" class="scheduleDateStrip__monthSep">{{ cell.monthLabel }}</span>
         <button
           :aria-current="cell.isToday ? 'date' : undefined"
@@ -44,27 +46,30 @@
       </button>
 
       <!-- 오른쪽 바깥 월 버튼 -->
-      <button
-        v-for="m in rightMonthButtons"
-        :key="'rm-' + m.yearMonth"
-        class="scheduleDateStrip__monthCell"
-        type="button"
-        @click="emit('expand-month', m.yearMonth)"
-      >{{ m.label }}</button>
+      <template v-for="m in rightMonthButtons" :key="'rm-' + m.yearMonth">
+        <span v-if="m.yearLabel" class="scheduleDateStrip__yearLabel">{{ m.yearLabel }}</span>
+        <button
+          class="scheduleDateStrip__monthCell"
+          type="button"
+          @click="emit('expand-month', m.yearMonth)"
+        >{{ m.label }}</button>
+      </template>
     </template>
 
     <template v-else-if="mode === 'monthExpanded'">
       <!-- 확장 왼쪽 월 -->
-      <button
-        v-for="m in expandedLeftMonths"
-        :key="'elm-' + m.yearMonth"
-        class="scheduleDateStrip__monthCell"
-        type="button"
-        @click="emit('expand-month', m.yearMonth)"
-      >{{ m.label }}</button>
+      <template v-for="m in expandedLeftMonths" :key="'elm-' + m.yearMonth">
+        <span v-if="m.yearLabel" class="scheduleDateStrip__yearLabel">{{ m.yearLabel }}</span>
+        <button
+          class="scheduleDateStrip__monthCell"
+          type="button"
+          @click="emit('expand-month', m.yearMonth)"
+        >{{ m.label }}</button>
+      </template>
 
       <!-- 확장 월 전체 날짜 -->
       <template v-for="cell in expandedDayCells" :key="cell.date">
+        <span v-if="cell.yearLabel" class="scheduleDateStrip__yearLabel">{{ cell.yearLabel }}</span>
         <span v-if="cell.monthSeparator" aria-hidden="true" class="scheduleDateStrip__monthSep">{{ cell.monthLabel }}</span>
         <button
           :aria-current="cell.isToday ? 'date' : undefined"
@@ -78,13 +83,14 @@
       </template>
 
       <!-- 확장 오른쪽 월 -->
-      <button
-        v-for="m in expandedRightMonths"
-        :key="'erm-' + m.yearMonth"
-        class="scheduleDateStrip__monthCell"
-        type="button"
-        @click="emit('expand-month', m.yearMonth)"
-      >{{ m.label }}</button>
+      <template v-for="m in expandedRightMonths" :key="'erm-' + m.yearMonth">
+        <span v-if="m.yearLabel" class="scheduleDateStrip__yearLabel">{{ m.yearLabel }}</span>
+        <button
+          class="scheduleDateStrip__monthCell"
+          type="button"
+          @click="emit('expand-month', m.yearMonth)"
+        >{{ m.label }}</button>
+      </template>
     </template>
 
     <!-- 노란 > (진료 화면: 오늘 이후 이동 불가이면 숨김) -->
@@ -95,8 +101,10 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import dayjs from 'dayjs'
+import { useHolidayStore } from '@/stores/holidayStore'
+import { yearLabelFor } from '@/utils/dateUtils'
 
 const MONTH_LABELS = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월']
 const MONTH_RANGE = 12
@@ -119,6 +127,12 @@ const emit = defineEmits([
 ])
 
 const todayStr = dayjs().format('YYYY-MM-DD')
+const holidayStore = useHolidayStore()
+
+/* 연도 라벨 규칙(1월 앞에만)은 dateUtils.yearLabelFor — 운영일정 보기의 월 스트립과 같은 함수를 쓴다. */
+function withYearLabels(months) {
+  return months.map(m => ({ ...m, yearLabel: yearLabelFor(m.yearMonth) }))
+}
 
 // ═══════════════════════════════════════════════════════════
 // rolling 모드: 3개 영역 계산
@@ -140,12 +154,14 @@ const stripDayCells = computed(() => {
       isToday: d.format('YYYY-MM-DD') === todayStr,
       monthSeparator: false,
       monthLabel: null,
+      yearLabel: null,
     }
 
     // 월 경계에서 separator 삽입 (첫 셀이 아닌 경우만)
     if (month !== prevMonth && i > 0) {
       cell.monthSeparator = true
       cell.monthLabel = MONTH_LABELS[month]
+      cell.yearLabel = yearLabelFor(d.format('YYYY-MM'))
     }
     prevMonth = month
     cells.push(cell)
@@ -162,10 +178,10 @@ const leftMonthButtons = computed(() => {
   if (!props.maxDate) {
     // 예약 화면: 1개만
     const month = stripStart.startOf('month')
-    return [{
+    return withYearLabels([{
       yearMonth: month.format('YYYY-MM'),
       label: MONTH_LABELS[month.month()],
-    }]
+    }])
   }
 
   // 진료 화면: strip에 포함된 월을 제외하고, strip 직전부터 역순 수집
@@ -204,7 +220,7 @@ const leftMonthButtons = computed(() => {
     cursor = cursor.subtract(1, 'month')
   }
 
-  return collected.reverse()
+  return withYearLabels(collected.reverse())
 })
 
 // 오른쪽 바깥 월 버튼: strip이 걸치지 않는 다음 월들
@@ -239,7 +255,7 @@ const rightMonthButtons = computed(() => {
     cursor = cursor.add(1, 'month')
   }
 
-  return result
+  return withYearLabels(result)
 })
 
 // ═══════════════════════════════════════════════════════════
@@ -259,6 +275,7 @@ const expandedDayCells = computed(() => {
     isToday: monthStart.format('YYYY-MM-DD') === todayStr,
     monthSeparator: true,
     monthLabel: MONTH_LABELS[monthStart.month()],
+    yearLabel: yearLabelFor(props.expandedMonth),
   })
 
   for (let i = 1; i < daysInMonth; i++) {
@@ -270,6 +287,7 @@ const expandedDayCells = computed(() => {
       isToday: d.format('YYYY-MM-DD') === todayStr,
       monthSeparator: false,
       monthLabel: null,
+      yearLabel: null,
     })
   }
   return cells
@@ -288,7 +306,7 @@ const expandedLeftMonths = computed(() => {
     })
     cursor = cursor.subtract(1, 'month')
   }
-  return result
+  return withYearLabels(result)
 })
 
 const expandedRightMonths = computed(() => {
@@ -304,12 +322,23 @@ const expandedRightMonths = computed(() => {
     })
     cursor = cursor.add(1, 'month')
   }
-  return result
+  return withYearLabels(result)
 })
 
 // ═══════════════════════════════════════════════════════════
 // 공통
 // ═══════════════════════════════════════════════════════════
+
+/* 날짜 셀이 걸친 연도의 공휴일 보장 — 창을 앞으로 계속 밀거나 12개월 뒤 월을 펼치면 App.vue 프리로드(현재±1년)
+ * 밖으로 나간다. 페이지의 visibleDates watch 는 보드 컬럼 기준이라 줄달력 창은 덮지 않는다. 로드된 연도는 no-op. */
+watch(
+  () => {
+    const cells = props.mode === 'monthExpanded' ? expandedDayCells.value : stripDayCells.value
+    return [...new Set(cells.map(c => Number(c.date.slice(0, 4))))]
+  },
+  (years) => { if (years.length) holidayStore.ensureYears(years) },
+  { immediate: true },
+)
 
 function isDateDisabled(date) {
   if (!props.maxDate) return false
@@ -329,6 +358,7 @@ function dayCellClass(cell) {
     'is-today': cell.isToday,
     'is-weekend-sat': cell.dayOfWeek === 6,
     'is-weekend-sun': cell.dayOfWeek === 0,
+    'is-holiday': holidayStore.isHoliday(cell.date),
     'is-disabled': isDateDisabled(cell.date),
   }
 }
@@ -452,6 +482,15 @@ function dayCellClass(cell) {
   font-weight: $font-weight-bold;
 }
 
+/* 연도 라벨 — 월 라벨 앞. 운영일정 보기 월 스트립의 is-year 와 같은 톤(기본 텍스트색, 클릭 없음) */
+.scheduleDateStrip__yearLabel {
+  flex-shrink: 0;
+  padding: 0 2px;
+  color: $color-text-default;
+  font-size: $font-size-14;
+  font-weight: $font-weight-bold;
+}
+
 /* 날짜 셀 — 폭은 숫자 내용에 맞춰 좁게(1자리=타이트), 원형 하이라이트는 ::before 고정원 오버레이.
    강조 셀만 z 올려(이웃 위) 원이 잘리지 않게. → 숫자 간격 좁음 + 원은 항상 동그라미. */
 .scheduleDateStrip__dayCell {
@@ -519,6 +558,15 @@ function dayCellClass(cell) {
 
   &.is-weekend-sun {
     color: #F03823;
+
+    &.is-selected {
+      color: #fff;
+    }
+  }
+
+  /* 공휴일 — 운영일정 보기 달력의 is-holiday 와 같은 붉은색. 요일색 뒤에 두어 토요일 공휴일도 붉게. */
+  &.is-holiday {
+    color: $color-danger;
 
     &.is-selected {
       color: #fff;

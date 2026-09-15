@@ -88,8 +88,8 @@ describe('v3ParityAdapter — toV2HeaderTree', () => {
 describe('v3ParityAdapter — toV2Rects', () => {
   const cols = [col(0, '2026-06-05', '김원장', '김원장'), col(1, '2026-06-05', '이원장', '이원장')]
   const rects: Rect[] = [
-    { id: 'appt-1', columnIndex: 0, top: 0, left: 4, width: 96, height: 38, z: 0, isFloating: false, isLayered: false },
-    { id: 'appt-2', columnIndex: 1, top: 38, left: 124, width: 86, height: 38, z: 10, isFloating: true, isLayered: true },
+    { id: 'appt-1', columnIndex: 0, top: 0, left: 4, width: 96, height: 38, z: 0, isFloating: false, isLayered: false, isLayerBase: true, layerDepth: 0 },
+    { id: 'appt-2', columnIndex: 1, top: 38, left: 124, width: 86, height: 38, z: 10, isFloating: true, isLayered: true, isLayerBase: false, layerDepth: 1 },
   ]
   it('id→appointmentId, z→zIndex, columnIndex→columnKey(unit.key), cardDisplayTier=standard', () => {
     const out = toV2Rects(rects, cols)
@@ -105,12 +105,17 @@ describe('v3ParityAdapter — toV2Rects', () => {
     })
     expect(out[1]).toMatchObject({ appointmentId: 'appt-2', columnKey: '2026-06-05__이원장', zIndex: 10 })
   })
+  it('isLayered / isLayerBase / layerDepth 는 그대로 전달(카드 그림자·좌측 마커 토글·농도 소스)', () => {
+    const out = toV2Rects(rects, cols)
+    expect(out[0]).toMatchObject({ isLayered: false, isLayerBase: true, layerDepth: 0 })
+    expect(out[1]).toMatchObject({ isLayered: true, isLayerBase: false, layerDepth: 1 })
+  })
   it('columnKey 는 toV2Columns 의 key 와 동일(Layer↔Grid 매칭)', () => {
     const out = toV2Rects(rects, cols)
     expect(out[0].columnKey).toBe(toV2Columns(cols)[0].key)
   })
   it('범위 밖 columnIndex 는 columnKey 빈 문자열 fallback', () => {
-    const out = toV2Rects([{ id: 'x', columnIndex: 99, top: 0, left: 0, width: 10, height: 10, z: 0, isFloating: false, isLayered: false }], cols)
+    const out = toV2Rects([{ id: 'x', columnIndex: 99, top: 0, left: 0, width: 10, height: 10, z: 0, isFloating: false, isLayered: false, isLayerBase: false, layerDepth: 0 }], cols)
     expect(out[0].columnKey).toBe('')
   })
 })

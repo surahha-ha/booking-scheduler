@@ -1,0 +1,123 @@
+/*
+ * v2 자체 팝업 공통 스타일
+ *
+ * DxPopup(v1)는 라이브러리 생성 DOM과 결합되어 있으므로 이 파일의 대상이 아니다.
+ * 기존 개발 클래스는 유지하고, 자체 팝업에만 schedule-popup 역할 클래스를 병행한다.
+ */
+.schedule-popup {
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #cfcfcf;
+  border-radius: 0;
+  box-shadow: 0 4px 10px 0 rgba(0, 0, 0, 0.24);
+}
+
+.schedule-popup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px;
+}
+
+.schedule-popup__title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #000;
+}
+
+.schedule-popup__close-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0;
+  color: transparent;
+}
+
+.schedule-popup__close-button::before {
+  content: '\2715';
+  color: #000;
+  font-size: 21px;
+  line-height: 1;
+  transform: translateY(-3px);
+}
+
+.schedule-popup__close-button--small {
+  width: 18px;
+  height: 18px;
+}
+
+.schedule-popup__close-button--small::before {
+  font-size: 16px;
+  transform: none;
+}
+
+.schedule-popup__body {
+  min-width: 0;
+  min-height: 0;
+  padding: 0 20px 20px;
+}
+
+.schedule-popup__footer {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px 20px 20px;
+}
+
+.popup-action-button,
+.schedule-popup__button {
+  width: 130px;
+  min-width: 130px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #bcbcbc;
+  border-radius: 4px;
+  background: #fff;
+  color: #565656;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.popup-action-button:hover,
+.schedule-popup__button:hover {
+  background: #fff;
+  color: #565656;
+}
+
+.popup-action-button.popup-action-button--primary,
+.schedule-popup__button.schedule-popup__button--primary {
+  border-color: var(--scheduler-brand, #eb6100);
+  background: var(--scheduler-brand, #eb6100);
+  color: #fff;
+}
+
+.popup-action-button.popup-action-button--primary:hover,
+.schedule-popup__button.schedule-popup__button--primary:hover {
+  background: var(--scheduler-brand, #eb6100);
+  color: #fff;
+}
+
+.popup-action-button.popup-action-button--primary:disabled,
+.schedule-popup__button.schedule-popup__button--primary:disabled {
+  border-color: transparent;
+  background: #8f94a3;
+  color: #fff;
+  cursor: default;
+}
+
+.popup-action-button.popup-action-button--compact,
+.schedule-popup__button.schedule-popup__button--compact {
+  width: auto;
+  min-width: 108px;
+  height: 28px;
+  padding: 0 14px;
+  font-size: 14px;
+}

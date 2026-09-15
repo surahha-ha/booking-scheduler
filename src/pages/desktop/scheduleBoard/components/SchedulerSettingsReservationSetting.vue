@@ -1,11 +1,11 @@
 <script setup>
-import {computed, onMounted, ref} from 'vue';
+import {computed, onBeforeUnmount, onMounted, ref} from 'vue';
 import {cloneDeep, isEqual} from 'lodash-es';
 import {push} from 'notivue';
 import {getReservationSettings, saveReservationSettings} from '@/api/reservationSettingsApi';
-import {useReservationSettingStore} from '@/stores/reservationSettingStore';
+import {DEFAULT_TOTAL_COLUMNS, MAX_COLUMNS, MIN_COLUMNS, useReservationSettingStore} from '@/stores/reservationSettingStore';
 import {useListDragReorder, useRowHeightLevelDrag} from '@/composables';
-import {rowHeightPx} from '@/scheduler-engine/redesign/layoutPipeline';
+import {columnEdgePx, rowHeightPx} from '@/scheduler-engine/redesign/layoutPipeline';
 import UiSegmentedControl from '@/components/ui/UiSegmentedControl.vue';
 
 /* ===== 상수 ===== */
@@ -50,28 +50,36 @@ const DEFAULT_DISPLAY_ORDER = DISPLAY_INFO_ITEMS.map(i => i.value);
 const FIXED_DISPLAY_HEAD = ['NAME']; // 고정 선두 개수 = 1
 
 const OPERATING_START_MIN = 9 * 60;
-const OPERATING_END_MIN = 24 * 60;
 /* 카드 높이 단계(1~5) → 미리보기 슬롯 높이(px). level 2 = 65 = 기존 고정값(기본값 시각 회귀 0).
  * 드래그로 이 높이를 연속 조절 후 드롭 시 가장 가까운 단계로 스냅(useRowHeightLevelDrag). */
 // 미리보기 슬롯 높이 = 엔진 ROW_HEIGHT_BY_LEVEL 단일 소스(rowHeightPx). 실제 보드 카드와 픽셀 일치.
 const PREVIEW_SLOT_HEIGHTS = [1, 2, 3, 4, 5].map((lv) => rowHeightPx(lv));
-/* 화면정의서(OSP_MD_APB034 §3) 기준 = 6~10칸.
- * 하한 1 은 한 Row 에 예약 1건만 보여 장부 기능을 잃는다. 서버값 로드 시에도 같은 clamp 를 탄다. */
-const MIN_COLUMNS = 6;
-const MAX_COLUMNS = 10;
+/* 전체 칸 개수 범위(화면정의서 OSP_MD_APB034 §3 = 6~10칸)는 reservationSettingStore 가 단일 소스.
+ * 하한 6 미만은 한 Row 에 보이는 예약이 너무 적어 장부 기능을 잃는다. 서버값 로드 시에도 같은 clamp 를 탄다. */
 
-/* 샘플 예약 1건 (Backend 매핑 전 임시) */
+/* 샘플 예약 1건 (Backend 매핑 전 임시).
+ * 시작을 시각이 아니라 '몇 번째 칸' 으로 잡는다 — 시각을 고정하면 눈금마다 그 시각이 걸리는 칸이
+ * 달라져(60분 눈금 1번 칸 · 10분 눈금 6번 칸) 눈금을 바꿀 때마다 카드가 위아래로 널뛴다.
+ * 길이 1시간은 60분 눈금만 한 칸으로 갈리면서 가장 잘게 나눈 10분 눈금도 6칸에 머무는 값이다.
+ * (45×2 와 30×3 이 똑같이 90분이라, 2시간까지 늘리지 않는 한 45분과 30분 눈금은 같은 칸 수가 된다.) */
 const SAMPLE_APPOINTMENT = {
-  col      : 1,
-  startMin : 9 * 60 + 50,
-  endMin   : 10 * 60 + 20,
-  name     : '홍길동',
-  birth    : '1995-03-15',
-  age      : 30,
-  gender   : '남',
-  treatment: '정기 점검',
-  phone    : '5678',
+  col           : 1,
+  startSlotIndex: 2,
+  durationMin   : 60,
+  name          : '홍길동',
+  birth         : '1995-03-15',
+  age           : 30,
+  gender        : '남',
+  treatment     : '정기 점검',
+  phone         : '5678',
 };
+
+/** 눈금에 따라 달라지는 샘플 예약의 실제 시각 — 시작 칸은 늘 같다. */
+function sampleRangeOf(unit) {
+  const startMin = OPERATING_START_MIN + SAMPLE_APPOINTMENT.startSlotIndex * unit;
+
+  return {startMin, endMin: startMin + SAMPLE_APPOINTMENT.durationMin};
+}
 
 const emit = defineEmits(['cancel', 'save']);
 
@@ -79,7 +87,7 @@ const emit = defineEmits(['cancel', 'save']);
 const reservationSettingStore = useReservationSettingStore();
 
 const selectedTimeUnit = ref(30);
-const totalColumns = ref(8);
+const totalColumns = ref(DEFAULT_TOTAL_COLUMNS);
 const selectedDisplayInfo = ref(new Set(['NAME', 'AGE', 'GENDER', 'TREATMENT']));
 /* 표시 정보 칩 순서(전체 6개, 이름 선두 고정). 활성 여부는 selectedDisplayInfo 가 따로 보유. */
 const displayInfoOrder = ref([...DEFAULT_DISPLAY_ORDER]);
@@ -96,6 +104,18 @@ const {
   onDragEnd   : onDisplayInfoDragEnd,
 } = useListDragReorder(displayInfoOrder, {lockedHead: FIXED_DISPLAY_HEAD.length});
 
+/* 미리보기 격자가 채워야 할 세로 영역(px). 스크롤 영역 실측값으로, 창 크기·표시 정보 변화에 따라간다. */
+const scrollBodyRef = ref(null);
+const viewportHeightPx = ref(0);
+let viewportObserver = null;
+
+/* 헤더의 칸 영역이 가져야 할 폭(px) = 격자의 실측 폭. 헤더는 스크롤 영역 밖에 있어 세로 스크롤바만큼
+ * 더 넓고, 그 차이가 1fr 칸에 나뉘어 헤더 세로선이 격자 세로선보다 뒤 칸으로 갈수록 밀린다.
+ * 스크롤바 폭을 빼는 방식은 offsetWidth·clientWidth 가 정수라 소수점만큼(확대/축소 배율에서 발생)
+ * 어긋남이 남는다. 그래서 폭을 계산하지 않고 격자를 소수점까지 실측해 그대로 쓴다. */
+const gridRef = ref(null);
+const columnsWidthPx = ref(0);
+
 /* 행 경계 드래그 → 슬롯 높이 연속 조절 후 드롭 시 1~5 단계 스냅. 세그먼트 컨트롤과 동일 ref 구동. */
 const {dragging: rowHeightDragging, slotHeightPx, startDrag: startRowHeightDrag} = useRowHeightLevelDrag({
   levelHeights: PREVIEW_SLOT_HEIGHTS,
@@ -106,50 +126,59 @@ const {dragging: rowHeightDragging, slotHeightPx, startDrag: startRowHeightDrag}
 });
 
 /* ===== 계산 ===== */
-const pxPerMin = computed(() =>
-    slotHeightPx.value / selectedTimeUnit.value
-);
+/** 그 시각이 몇 번째 칸에 들어가는가 — 엔진의 band 판정과 같다. */
+function slotIndexOf(minute, unit) {
+  return Math.floor((minute - OPERATING_START_MIN) / unit);
+}
+
+/* 칸은 보이는 영역을 채우는 만큼만 그린다. 종료 시각을 고정하면 눈금이 커질수록 칸이 적어져
+ * 격자 아래에 빈 영역이 남고, 반대로 넉넉히 잡으면 10분 눈금에서 스크롤이 한없이 길어진다.
+ * 그래서 마지막 시각은 눈금과 카드 높이에 따라 달라진다(60분 눈금이 가장 늦은 시각까지 간다).
+ * 다만 샘플 예약이 끝나는 칸까지는 항상 그린다 — 카드 높이를 키우면 영역에 들어가는 칸이 줄어
+ * 카드 아랫부분이 격자 밖으로 잘린다(그만큼은 스크롤로 본다). */
+const slotCount = computed(() => {
+  const unit = selectedTimeUnit.value;
+  const fillViewport = Math.ceil(viewportHeightPx.value / slotHeightPx.value);
+  const appointmentEnd = slotIndexOf(sampleRangeOf(unit).endMin - 1, unit) + 1;
+
+  return Math.max(1, fillViewport, appointmentEnd);
+});
 
 const slots = computed(() => {
   const unit = selectedTimeUnit.value;
-  const list = [];
 
-  for (let m = OPERATING_START_MIN; m < OPERATING_END_MIN; m += unit) {
-    const h = Math.floor(m / 60);
+  return Array.from({length: slotCount.value}, (_, i) => {
+    const m = OPERATING_START_MIN + i * unit;
+    const h = Math.floor(m / 60) % 24; // 자정을 넘기면 다시 00 시로 — 25:00 같은 라벨 방지
     const min = m % 60;
-    list.push({
+
+    return {
       key   : m,
       minute: m,
       label : `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
-    });
-  }
-
-  return list;
+    };
+  });
 });
 
 const columns = computed(() =>
     Array.from({length: totalColumns.value}, (_, i) => i + 1)
 );
 
+/* 헤더와 격자가 쓰는 칸 폭 — 실측폭을 보드와 같은 규칙(columnEdgePx)으로 나눈다.
+ * 1fr 로 두면 칸 폭이 소수점이라 화면 배율이 100% 가 아닐 때 두 쪽이 서로 다른 픽셀로 반올림된다.
+ * 아직 재기 전(폭 0)에는 1fr 로 두어 헤더가 접히지 않게 한다. */
+const columnTracks = computed(() => {
+  const n = totalColumns.value;
+  const w = columnsWidthPx.value;
+  if (!w) return `repeat(${n}, 1fr)`;
+
+  return Array.from({length: n},
+      (_, i) => `${columnEdgePx(i + 1, n, w) - columnEdgePx(i, n, w)}px`).join(' ');
+});
+
 const gridHeightPx = computed(() =>
     slots.value.length * slotHeightPx.value
 );
-
-const appointmentStyle = computed(() => {
-  const a = SAMPLE_APPOINTMENT;
-  const n = totalColumns.value;
-  const top = (a.startMin - OPERATING_START_MIN) * pxPerMin.value;
-  const height = (a.endMin - a.startMin) * pxPerMin.value;
-  const left = ((a.col - 1) / n) * 100;
-  const width = (1 / n) * 100;
-
-  return {
-    top   : `${top}px`,
-    height: `${height}px`,
-    left  : `${left}%`,
-    width : `${width}%`,
-  };
-});
 
 /* 코드 → 카드에 찍을 값(이름 제외). 칩 순서대로 노출. */
 const SECONDARY_VALUE = {
@@ -166,6 +195,35 @@ const appointmentSecondaryParts = computed(() =>
         .map(code => SECONDARY_VALUE[code]),
 );
 
+/* 카드의 세로 배치 = 엔진 computeRects 와 같은 규칙 — 시작 칸에 스냅하고,
+ * 한 칸 안에서 끝나면 1칸 / 여러 칸을 관통하면 종료 칸까지 채운다.
+ * 분(分) 비례로 그리면 45·60분 눈금에서 카드가 칸보다 낮아져 표시 정보가 잘린다. */
+const appointmentStyle = computed(() => {
+  const a = SAMPLE_APPOINTMENT;
+  const n = totalColumns.value;
+  const unit = selectedTimeUnit.value;
+  const {startMin, endMin} = sampleRangeOf(unit);
+  const startIdx = slotIndexOf(startMin, unit);
+  const endIdx = slotIndexOf(Math.max(startMin, endMin - 1), unit);
+  /* 45분 눈금만 예외로 1.5칸. 1시간 예약은 45분 눈금에서도 2칸이라 30분 눈금과 똑같이 보이는데,
+   * 정수 칸으로는 1칸과 2칸 사이가 없어 눈금을 바꾼 티를 낼 방법이 없다. 카드 아래가 칸 경계에
+   * 걸치는 대신(실제 보드에는 없는 모습) 60→45→30 이 1 → 1.5 → 2칸으로 이어진다. */
+  const spans = unit === 45 ? 1.5 : endIdx - startIdx + 1;
+
+  /* 가로 배치도 칸 경계와 같은 규칙으로 — 칸을 정수 px 로 나눠 놓고 카드만 비율(%)로 두면
+     카드 옆면이 칸 선에서 1px 어긋난다. 아직 재기 전(폭 0)에는 비율로 둔다. */
+  const w = columnsWidthPx.value;
+  const left = w ? `${columnEdgePx(a.col - 1, n, w)}px` : `${((a.col - 1) / n) * 100}%`;
+  const width = w ? `${columnEdgePx(a.col, n, w) - columnEdgePx(a.col - 1, n, w)}px` : `${(1 / n) * 100}%`;
+
+  return {
+    top   : `${startIdx * slotHeightPx.value}px`,
+    height: `${spans * slotHeightPx.value}px`,
+    left,
+    width,
+  };
+});
+
 const showAppointmentName = computed(() =>
     selectedDisplayInfo.value.has('NAME')
 );
@@ -177,10 +235,13 @@ function toggleDisplayInfo(value) {
   selectedDisplayInfo.value = next;
 }
 
-function onColumnInput(e) {
-  const raw = Number(e.target.value);
-  if (Number.isNaN(raw)) return;
-  totalColumns.value = Math.max(MIN_COLUMNS, Math.min(MAX_COLUMNS, Math.trunc(raw)));
+/* 화면정의서 OSP_MD_APB034 §3 "우측 화살표로만 설정 가능" — 값 변경 경로는 −/+ 버튼뿐이다.
+ * 직접 입력을 받던 onColumnInput 은 제거했다(입력칸은 readonly 표시 전용). */
+function onColumnStep(delta) {
+  totalColumns.value = Math.max(
+      MIN_COLUMNS,
+      Math.min(MAX_COLUMNS, totalColumns.value + delta),
+  );
 }
 
 /* 범용 확인 다이얼로그 — 운영일정 설정과 동일 shape */
@@ -265,10 +326,29 @@ async function hydrateFromServer() {
 }
 
 onMounted(async () => {
+  observeViewportHeight();
   await hydrateFromServer();
   /* origin 은 hydrate 후 캡처 — 서버 데이터 기준으로 dirty 비교 */
   originState = captureState();
 });
+
+onBeforeUnmount(() => {
+  viewportObserver?.disconnect();
+  viewportObserver = null;
+});
+
+function observeViewportHeight() {
+  const el = scrollBodyRef.value;
+  if (!el) return;
+
+  viewportObserver = new ResizeObserver(([entry]) => {
+    viewportHeightPx.value = entry.contentRect.height;
+    /* 격자는 이 스크롤 영역의 폭을 나눠 갖는다. 스크롤바가 생기거나 사라지면 이 관측이 다시 돌므로
+       그때 격자를 다시 재면 헤더도 따라간다. */
+    columnsWidthPx.value = gridRef.value?.getBoundingClientRect().width ?? 0;
+  });
+  viewportObserver.observe(el);
+}
 
 function onCancel() {
   if (!isDirty()) {
@@ -346,14 +426,32 @@ defineExpose({
             :data-tip="`${MIN_COLUMNS}~${MAX_COLUMNS}칸까지 설정할 수 있습니다`"
             class="schedulerReservationSetting__numberInputWrap"
         >
+          <button
+              aria-label="전체 칸 개수 줄이기"
+              :disabled="totalColumns <= MIN_COLUMNS"
+              class="schedulerReservationSetting__number-input-button schedulerReservationSetting__number-input-button--decrease"
+              type="button"
+              @click="onColumnStep(-1)"
+          >
+            −
+          </button>
+          <!-- 표시 전용 — 화면정의서 §3 "우측 화살표로만 설정 가능". 값은 −/+ 버튼으로만 바뀐다. -->
           <input
-              :max="MAX_COLUMNS"
-              :min="MIN_COLUMNS"
+              aria-label="전체 칸 개수"
               :value="totalColumns"
               class="schedulerReservationSetting__numberInput"
-              type="number"
-              @input="onColumnInput"
+              readonly
+              type="text"
           />
+          <button
+              aria-label="전체 칸 개수 늘리기"
+              :disabled="totalColumns >= MAX_COLUMNS"
+              class="schedulerReservationSetting__number-input-button schedulerReservationSetting__number-input-button--increase"
+              type="button"
+              @click="onColumnStep(1)"
+          >
+            +
+          </button>
         </span>
       </div>
 
@@ -400,8 +498,12 @@ defineExpose({
           시간
         </div>
 
+        <!-- 칸을 나누는 폭이 아래 격자와 한 픽셀도 다르지 않아야 세로선이 맞는다 → 같은 칸 폭(columnTracks)을 쓴다. -->
         <div
-            :style="{ gridTemplateColumns: `repeat(${totalColumns}, 1fr)` }"
+            :style="{
+              gridTemplateColumns: columnTracks,
+              ...(columnsWidthPx ? { flex: `0 0 ${columnsWidthPx}px`, width: `${columnsWidthPx}px` } : {}),
+            }"
             class="schedulerReservationSetting__colHeader"
         >
           <div
@@ -415,6 +517,7 @@ defineExpose({
       </div>
 
       <div
+          ref="scrollBodyRef"
           class="schedulerReservationSetting__scrollBody"
           @wheel.stop
       >
@@ -430,8 +533,9 @@ defineExpose({
         </div>
 
         <div
+            ref="gridRef"
             :style="{
-              gridTemplateColumns: `repeat(${totalColumns}, 1fr)`,
+              gridTemplateColumns: columnTracks,
               gridTemplateRows: `repeat(${slots.length}, ${slotHeightPx}px)`,
               height: `${gridHeightPx}px`,
             }"
@@ -454,8 +558,13 @@ defineExpose({
               {{ SAMPLE_APPOINTMENT.name }}
             </div>
 
+            <!-- 정보 줄 수 = 카드 높이 단계(화면정의서 §6-1 ①~⑤). 넘치면 말줄임(§5 '.. 표시')
+                 — 실제 보드 카드(AppointmentCard .card-info-block)와 같은 line-clamp.
+                 단계는 CSS 변수로 넘긴다: -webkit-line-clamp 을 인라인으로 주면 테스트 DOM 이
+                 미지원 프로퍼티라 버려서 검증할 수 없다(브라우저 동작은 동일). -->
             <div
                 v-if="appointmentSecondaryParts.length"
+                :style="{ '--preview-info-lines': selectedRowHeightLevel }"
                 class="schedulerReservationSetting__appointmentMeta"
             >
               <template
@@ -494,20 +603,20 @@ defineExpose({
     <!-- ===== 푸터 ===== -->
     <footer class="schedulerReservationSetting__footer">
       <button
-          class="schedulerReservationSetting__cancelBtn"
+          class="schedulerReservationSetting__cancelBtn popup-action-button"
           type="button"
           @click="onCancel"
       >취소</button>
 
       <button
           :disabled="saving"
-          class="schedulerReservationSetting__saveBtn"
+          class="schedulerReservationSetting__saveBtn popup-action-button popup-action-button--primary"
           type="button"
           @click="onSave"
       >{{ saving ? '저장 중...' : '저장' }}</button>
     </footer>
 
-    <!-- 변경사항 확인 다이얼로그 (저장하지 않고 닫기) -->
+    <!-- 변경사항 확인 다이얼로그 (저장하지 않고 닫기) — 운영일정 설정의 확인 다이얼로그와 같은 공용 schedule-popup 마크업 -->
     <Teleport to="body">
       <div
           v-if="confirmDialog"
@@ -515,20 +624,28 @@ defineExpose({
           @click.stop
           @mousedown.stop
       >
-        <div class="schedulerReservationSetting__confirmPanel">
-          <p class="schedulerReservationSetting__confirmMessage">{{ confirmDialog.title }}</p>
-          <p
-              v-if="confirmDialog.sub"
-              class="schedulerReservationSetting__confirmSubMessage"
-          >{{ confirmDialog.sub }}</p>
-          <div class="schedulerReservationSetting__confirmActions">
+        <div class="schedulerReservationSetting__confirmPanel schedule-popup">
+          <button
+              aria-label="닫기"
+              class="schedule-popup__close-button"
+              type="button"
+              @click="closeConfirmDialog"
+          ></button>
+          <div class="schedule-popup__body">
+            <p class="schedulerReservationSetting__confirmMessage">{{ confirmDialog.title }}</p>
+            <p
+                v-if="confirmDialog.sub"
+                class="schedulerReservationSetting__confirmSubMessage"
+            >{{ confirmDialog.sub }}</p>
+          </div>
+          <div class="schedulerReservationSetting__confirmActions schedule-popup__footer">
             <button
-                class="schedulerReservationSetting__confirmCancelBtn"
+                class="schedulerReservationSetting__confirmCancelBtn popup-action-button"
                 type="button"
                 @click="closeConfirmDialog"
             >취소</button>
             <button
-                class="schedulerReservationSetting__confirmOkBtn"
+                class="schedulerReservationSetting__confirmOkBtn popup-action-button popup-action-button--primary"
                 type="button"
                 @click="executeConfirm"
             >{{ confirmDialog.confirmLabel }}</button>
@@ -555,8 +672,8 @@ $time-col-width: 60px;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 28px;
-    padding: 8px 14px 12px;
+    gap: 0;
+    padding: 8px 14px 7px;
     border-bottom: 1px solid $color-border-light;
     background: #fff;
   }
@@ -565,11 +682,28 @@ $time-col-width: 60px;
     display: inline-flex;
     align-items: center;
     gap: 10px;
+
+    + .schedulerReservationSetting__field {
+      position: relative;
+      margin-left: 18px;
+
+      &::before {
+        content: "|";
+        position: absolute;
+        top: 50%;
+        left: -9px;
+        transform: translate(-50%, -50%);
+        color: rgba(0, 0, 0, 0.3);
+        font-weight: 400;
+        line-height: 1;
+        pointer-events: none;
+      }
+    }
   }
 
   &__fieldLabel {
-    font-size: $font-size-13;
-    font-weight: $font-weight-medium;
+    font-size: $font-size-14;
+    font-weight: $font-weight-bold;
     color: $color-text-default;
     white-space: nowrap;
   }
@@ -578,6 +712,16 @@ $time-col-width: 60px;
   &__numberInputWrap {
     position: relative;
     display: inline-flex;
+    height: 24px;
+    overflow: visible;
+    border: 1px solid #bcbcbc;
+    border-radius: $radius-4;
+    background: #fff;
+
+    &:focus-within {
+      outline: 2px solid rgba(0, 0, 0, 0.2);
+      outline-offset: 1px;
+    }
 
     /* hover 시 input 위쪽에 말풍선(data-tip) 표시 */
     &:hover::after {
@@ -612,20 +756,52 @@ $time-col-width: 60px;
     }
   }
 
+  /* 표시 전용(readonly) — 텍스트 캐럿이 뜨면 입력할 수 있는 칸으로 읽힌다.
+     커서·선택을 죽여 −/+ 버튼이 유일한 변경 경로임을 손끝으로도 알린다. */
   &__numberInput {
-    width: 56px;
-    height: 24px;
-    padding: 0 6px;
-    border: 1px solid $color-border-light;
-    border-radius: $radius-2;
-    background: #fff;
+    width: 24px;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
     font-size: $font-size-13;
     color: $color-text-default;
-    text-align: right;
+    text-align: center;
+    cursor: default;
+    user-select: none;
+  }
 
-    &:focus-visible {
-      outline: 2px solid rgba(0, 0, 0, 0.2);
-      outline-offset: 1px;
+  &__number-input-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    padding: 0;
+    border: 0;
+    background: #fff;
+    color: #8f8f8f;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: $color-surface-hover;
+    }
+
+    &:disabled {
+      color: #c4c4c4;
+      cursor: default;
+    }
+
+    &--decrease {
+      border-right: 1px solid #bcbcbc;
+      border-radius: $radius-4 0 0 $radius-4;
+    }
+
+    &--increase {
+      border-left: 1px solid #bcbcbc;
+      border-radius: 0 $radius-4 $radius-4 0;
     }
   }
 
@@ -639,18 +815,17 @@ $time-col-width: 60px;
     height: 24px;
     padding: 0 12px;
     border: 1px solid $color-border-light;
-    border-radius: $radius-2;
+    border-radius: $radius-4;
     background: #fff;
     cursor: grab; /* 드래그 재정렬 가능 표시 */
     font-size: $font-size-12;
     color: $color-text-default;
     transition: opacity 0.12s, box-shadow 0.12s;
 
-    &.is-active {
-      background: #E88B1D;
-      border-color: #E88B1D;
-      color: #fff;
-      font-weight: $font-weight-bold;
+    &.is-active {      
+      border-color: $color-primary;
+      color: $color-primary;
+      font-weight: $font-weight-semibold;
     }
 
     /* 드래그 중인 칩 */
@@ -671,9 +846,9 @@ $time-col-width: 60px;
       opacity: 1;
 
       &.is-active {
-        background: #bbb;
-        border-color: #bbb;
-        color: #fff;
+        background: #f4f4f4;
+        border-color: #f4f4f4;
+        color: #a5a5a5;
       }
     }
   }
@@ -692,7 +867,7 @@ $time-col-width: 60px;
     flex: 0 0 auto;
     display: flex;
     height: 32px;
-    background: $color-bg-scheduler-header;
+    background: #eee;
     border-bottom: 1px solid $color-border-light;
   }
 
@@ -733,6 +908,7 @@ $time-col-width: 60px;
     flex: 1;
     min-height: 0;
     display: flex;
+    background: #f7f7f7;
     overflow-y: auto;
     overflow-x: hidden;
     overscroll-behavior: contain;
@@ -811,8 +987,8 @@ $time-col-width: 60px;
     position: absolute;
     box-sizing: border-box;
     padding: 2px 6px;
-    border: 1px solid #BBDEFB;
-    background: #E3F2FD;
+    border: 1px solid #B8C3D7;
+    background: #F5F9FF;
     border-radius: $radius-2;
     overflow: hidden;
     display: flex;
@@ -821,7 +997,7 @@ $time-col-width: 60px;
   }
 
   &__appointmentName {
-    font-size: $font-size-13;
+    font-size: $font-size-14;
     font-weight: $font-weight-bold;
     color: #000;
     line-height: 1.2;
@@ -830,16 +1006,20 @@ $time-col-width: 60px;
     text-overflow: ellipsis;
   }
 
-  /* 카드 높이(단계)만큼 줄바꿈 노출 — 한 줄 고정이 아니라 흐르듯 wrap 되고,
-     카드 overflow:hidden 이 높이에 맞춰 잘라낸다(낮으면 1줄·높으면 여러 줄). */
+  /* 카드 높이(단계)만큼만 줄을 노출하고, 넘치는 내용은 말줄임(…) 처리한다.
+     줄 수는 인라인 CSS 변수 --preview-info-lines(1~5)로 주입된다 — 값이 없으면 기본 단계 3. */
   &__appointmentMeta {
-    display: block;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: var(--preview-info-lines, 3);
     min-width: 0;
-    font-size: $font-size-11;
-    color: #666;
+    font-size: $font-size-12;
+    color: #000;
     line-height: 1.3;
     white-space: normal;
     word-break: break-all;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   &__appointmentDivider {
@@ -855,37 +1035,10 @@ $time-col-width: 60px;
     gap: 8px;
     padding: 12px;
     border-top: 1px solid $color-border-light;
-    background: #fff;
+    background: #f7f7f7;
   }
 
-  &__cancelBtn,
-  &__saveBtn {
-    height: 32px;
-    padding: 0 24px;
-    border-radius: $radius-2;
-    cursor: pointer;
-    font-size: $font-size-13;
-    font-weight: $font-weight-medium;
-  }
-
-  &__cancelBtn {
-    border: 1px solid $color-border-light;
-    background: #fff;
-    color: $color-text-default;
-
-    &:hover { background: $color-surface-hover; }
-  }
-
-  &__saveBtn {
-    border: 1px solid #E88B1D;
-    background: #E88B1D;
-    color: #fff;
-    font-weight: $font-weight-bold;
-
-    &:hover { filter: brightness(0.95); }
-  }
-
-  /* ---------- 확인 다이얼로그 ---------- */
+  /* ---------- 확인 다이얼로그 (운영일정 설정 __deleteOverlay/__deletePanel 과 동일 규격) ---------- */
   &__confirmOverlay {
     position: fixed;
     inset: 0;
@@ -897,59 +1050,35 @@ $time-col-width: 60px;
   }
 
   &__confirmPanel {
+    position: relative;
     min-width: 280px;
-    padding: 24px 20px 16px;
-    background: #fff;
-    border-radius: $radius-2;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+
+    .schedule-popup__body {
+      padding-top: 56px;
+    }
+
+    .schedule-popup__close-button {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+    }
+  }
+
+  &__confirmMessage,
+  &__confirmSubMessage {
+    text-align: center;
+    font-size: 18px;
+    font-weight: $font-weight-bold;
+    color: #333;
+    white-space: pre-wrap;
   }
 
   &__confirmMessage {
     margin: 0;
-    text-align: center;
-    font-size: $font-size-13;
-    font-weight: $font-weight-bold;
-    color: $color-text-default;
   }
 
   &__confirmSubMessage {
     margin: 4px 0 0;
-    text-align: center;
-    font-size: $font-size-12;
-    color: $color-text-muted;
-  }
-
-  &__confirmActions {
-    display: flex;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 16px;
-  }
-
-  &__confirmCancelBtn,
-  &__confirmOkBtn {
-    height: 28px;
-    padding: 0 18px;
-    border-radius: $radius-2;
-    cursor: pointer;
-    font-size: $font-size-12;
-  }
-
-  &__confirmCancelBtn {
-    border: 1px solid #E88B1D;
-    background: #fff;
-    color: #E88B1D;
-
-    &:hover { background: rgba(232, 139, 29, 0.08); }
-  }
-
-  &__confirmOkBtn {
-    border: 1px solid #E88B1D;
-    background: #E88B1D;
-    color: #fff;
-    font-weight: $font-weight-bold;
-
-    &:hover { filter: brightness(0.95); }
   }
 }
 </style>

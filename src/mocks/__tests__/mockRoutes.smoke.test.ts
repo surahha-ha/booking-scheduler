@@ -112,33 +112,6 @@ describe('mock routes smoke', () => {
         expect(db.doctors.some(d => d.staffName === resolveDoctorKey(appt))).toBe(true);
     });
 
-    it('통계 모수 = 목록 모수 — 조회 기간 밖 예약은 세지 않는다', () => {
-        // 회귀: 통계가 전건 집계라 보드에 없는 예약까지 세었다(회원 6건 표기 ↔ 주황 이름 0개).
-        const params = range();
-        const boardItems = call('GET', '/api/booking', {params}).flatMap((g: any) => g.items);
-
-        const member = call('GET', '/api/booking/statistics/member', {params});
-        const memberTotal = member.reduce((a: number, r: any) => a + r.cnt, 0);
-        expect(memberTotal).toBe(boardItems.length);
-        expect(member.find((r: any) => r.memberYn === 'Y').cnt)
-            .toBe(boardItems.filter((it: any) => it.memberYn === 'Y').length);
-
-        // 서버 계약: 상태별 행 + 합계 행 '전체'. 합계 행은 상태별 합과 같아야 하고, 상태별 합에 섞여 들어가면 안 된다.
-        const state = call('GET', '/api/booking/statistics/state', {params});
-        const total = state.find((r: any) => r.name === '전체');
-        expect(total?.cnt).toBe(boardItems.length);
-        const byStatus = state.filter((r: any) => r.name !== '전체');
-        expect(byStatus.reduce((a: number, r: any) => a + r.cnt, 0)).toBe(boardItems.length);
-    });
-
-    it('통계는 의사 필터를 반영한다 (보드 컬럼과 정합)', () => {
-        const params = {...range(), doctorName: [db.reservations[0].staffName]};
-        const boardItems = call('GET', '/api/booking', {params}).flatMap((g: any) => g.items);
-        const member = call('GET', '/api/booking/statistics/member', {params});
-        expect(member.reduce((a: number, r: any) => a + r.cnt, 0)).toBe(boardItems.length);
-        expect(boardItems.every((it: any) => it.staffName === params.doctorName[0])).toBe(true);
-    });
-
     it('modify 와 updateStatus 패턴 충돌 없음 (modify 우선)', () => {
         // /api/booking/modify/:id 는 PUT modify 로, /api/booking/:id/:state 로 새지 않아야
         const groups = call('GET', '/api/booking', {params: range()});

@@ -17,7 +17,6 @@ import { institutionToWeekly, workHoursRowToDailySchedule, useStaffStore } from 
 const mocks = vi.hoisted(() => ({ getSiteWorkHours: vi.fn(), getStaffWorkHours: vi.fn() }))
 vi.mock('@/api/staffApi', () => ({
   getDoctors: vi.fn(),
-  addDoctors: vi.fn(),
   syncDoctors: vi.fn(),
 }))
 vi.mock('@/api/siteApi', () => ({
@@ -342,5 +341,109 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
     await expect(store.loadSchedule()).resolves.toBeDefined()
     // 실패 시 weekly 는 채워지지 않는다(빈 객체) — fallback(09~18)은 스케줄러 룰이 담당.
     expect(store.hospitalRules.weekly ?? {}).toEqual({})
+    expect(store.workTimeLoadFailed).toEqual({ site: true, staff: false })
+  })
+
+  /**
+   * ★원천별 독립 판정(allSettled) — 한쪽 장애로 성공한 쪽까지 폐기하지 않는다.
+   * 다만 부분 적용은 **한 방향만**: staff 실패 → site 만 반영 / site 실패 → 둘 다 보류.
+   * (의사 weekly 는 기관 휴게를 병합해 만들므로, site 없이 staff 만 반영하면 휴게 음영이 빠진
+   *  의사 컬럼이 그려져 점심시간에 예약이 잡힌다.)
+   * 실패는 workTimeLoadFailed 로 표면화한다 — 무음 fallback 은 장애를 "미설정"으로 위장시킨다.
+   */
+  describe('원천별 부분 실패', () => {
+    it('staff 장애(reject) + site 성공 → 기관분만 반영, doctorRules 는 손대지 않는다', async () => {
+      mocks.getStaffWorkHours.mockRejectedValueOnce(new Error('service unavailable'))
+      const store = useStaffStore()
+      await store.loadSchedule()
+
+      // 성공한 site 는 전량 반영 — weekly + 공휴일 + 시간축
+      expect(store.hospitalRules.weekly![1]!.open).toEqual({ start: '09:00', end: '18:00' })
+      expect(store.hospitalRules.weekly![6]!.open).toEqual({ start: '09:00', end: '13:00' })
+      expect(store.treatmentMinHour).toBe(9)
+      expect(store.treatmentMaxHour).toBe(18)
+      // 실패한 staff 는 이전 값 유지 — 첫 로드라 빈 상태(= 기관 fallback)
+      expect(store.doctorRules).toEqual({})
+      expect(store.workTimeLoadFailed).toEqual({ site: false, staff: true })
+    })
+
+    it('staff 가 code!=="succeed" 로 와도 reject 와 같은 실패 판정', async () => {
+      mocks.getStaffWorkHours.mockResolvedValueOnce({ data: { code: 'failed', message: '조회 실패' } })
+      const store = useStaffStore()
+      await store.loadSchedule()
+
+      expect(store.hospitalRules.weekly![1]!.open).toEqual({ start: '09:00', end: '18:00' })
+      expect(store.doctorRules).toEqual({})
+      expect(store.workTimeLoadFailed).toEqual({ site: false, staff: true })
+    })
+
+    it('staff payload 부재(succeed 인데 payload null)도 실패 판정 — "미설정"과 구분', async () => {
+      mocks.getStaffWorkHours.mockResolvedValueOnce({ data: { code: 'succeed', payload: null } })
+      const store = useStaffStore()
+      await store.loadSchedule()
+
+      expect(store.hospitalRules.weekly![1]!.open).toEqual({ start: '09:00', end: '18:00' })
+      expect(store.doctorRules).toEqual({})
+      expect(store.workTimeLoadFailed).toEqual({ site: false, staff: true })
+    })
+
+    it('staff 가 succeed + 빈 목록이면 "미설정"이라 실패가 아니다 — doctorRules 만 비고 플래그는 false', async () => {
+      mocks.getStaffWorkHours.mockResolvedValueOnce({ data: { code: 'succeed', payload: { staff: [], overrides: [] } } })
+      const store = useStaffStore()
+      await store.loadSchedule()
+
+      expect(store.doctorRules).toEqual({})
+      expect(store.workTimeLoadFailed).toEqual({ site: false, staff: false })
+    })
+
+    it('site 장애(reject) + staff 성공 → 둘 다 보류 (휴게 음영 없는 의사 컬럼을 그리지 않는다)', async () => {
+      mocks.getSiteWorkHours.mockRejectedValueOnce(new Error('service unavailable'))
+      const store = useStaffStore()
+      await store.loadSchedule()
+
+      // 기관분 미반영
+      expect(store.hospitalRules.weekly ?? {}).toEqual({})
+      expect(store.treatmentMinHour).toBeNull()
+      expect(store.treatmentMaxHour).toBeNull()
+      // 성공한 staff 도 반영하지 않는다 — 기관 휴게를 병합할 수 없기 때문
+      expect(store.doctorRules).toEqual({})
+      expect(store.workTimeLoadFailed).toEqual({ site: true, staff: false })
+      // staff 조회 자체는 정상 수행됐다(호출을 건너뛴 게 아니라 반영만 보류)
+      expect(mocks.getStaffWorkHours).toHaveBeenCalledTimes(1)
+    })
+
+    it('실패 후 재시도 성공 → 플래그가 둘 다 false 로 복귀하고 데이터가 정상 반영된다', async () => {
+      mocks.getSiteWorkHours.mockRejectedValueOnce(new Error('service unavailable'))
+      mocks.getStaffWorkHours.mockRejectedValueOnce(new Error('service unavailable'))
+      const store = useStaffStore()
+      await store.loadSchedule()
+      expect(store.workTimeLoadFailed).toEqual({ site: true, staff: true })
+
+      await store.loadSchedule() // 2회차 = 기본 mock(정상 응답)
+      expect(store.workTimeLoadFailed).toEqual({ site: false, staff: false })
+      expect(store.hospitalRules.weekly![1]!.open).toEqual({ start: '09:00', end: '18:00' })
+      expect(store.doctorRules['김의사']!.weekly![1]!.open).toEqual({ start: '09:00', end: '18:00' })
+      expect(store.treatmentMinHour).toBe(9)
+      expect(store.treatmentMaxHour).toBe(18)
+    })
+
+    it('성공 로드 후 staff 만 실패하면 직전 성공값이 그대로 남는다 (통삭제 금지)', async () => {
+      const store = useStaffStore()
+      await store.loadSchedule()
+      expect(Object.keys(store.doctorRules).sort()).toEqual(['김의사', '이의사'])
+
+      mocks.getStaffWorkHours.mockRejectedValueOnce(new Error('service unavailable'))
+      await store.loadSchedule()
+
+      // 의사 목록·요일별 값 모두 직전 성공값 유지
+      expect(Object.keys(store.doctorRules).sort()).toEqual(['김의사', '이의사'])
+      const kim = store.doctorRules['김의사']!.weekly!
+      expect(kim[1]!.open).toEqual({ start: '09:00', end: '18:00' })
+      expect(kim[1]!.breaks![0]).toMatchObject({ start: '13:00', end: '14:00', type: 'LUNCH' })
+      expect(kim[0]).toBeNull()
+      expect(store.doctorRules['이의사']!.weekly![1]!.open).toEqual({ start: '09:00', end: '13:00' })
+      // 실패는 감추지 않는다
+      expect(store.workTimeLoadFailed).toEqual({ site: false, staff: true })
+    })
   })
 })

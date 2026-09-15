@@ -199,6 +199,10 @@ export const staffWorkHours: StaffWorkHoursResponse = {
         staffId: d.staffId,
         staffName: d.staffName,
         times: staffWeekRows(i),
+        /* 휴무일 탭에서 정하는 두 축. 매월 N번째 휴무는 없는 상태로 두고,
+         * 공휴일은 NOT NULL 2상태라 서버와 같이 기본값 'Y'(진료)로 채운다. */
+        monthlyOffRules: [],
+        holidayOpenYn: 'Y',
     })),
     overrides: [],
 };
@@ -238,7 +242,7 @@ export const treatmentSettings: TreatmentSettingsPayload = {
 export const reservationSettings: ReservationSettingsPayload = {
     slotUnitMinutes: 30,
     totalColumnCount: 8,
-    displayInfo: ['NAME', 'PHONE', 'TREATMENT'],
+    displayInfo: ['NAME', 'AGE', 'GENDER', 'PHONE', 'TREATMENT'],
     cardHeightLevel: 3,
 };
 

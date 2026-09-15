@@ -34,9 +34,9 @@ test.describe('SchedulerV2 - 카드 Hover / ⋮ 메뉴', () => {
 
     const popover = page.locator('.appointment-popover');
     await expect(popover).toBeVisible();
-    // 예약 모드: 변경 / 예약 취소 / 예약 삭제
+    // 예약 모드: 변경 / 취소 / 예약 삭제
     await expect(popover.locator('.popover-menu__item', { hasText: '변경' })).toBeVisible();
-    await expect(popover.locator('.popover-menu__item', { hasText: '예약 취소' })).toBeVisible();
+    await expect(popover.locator('.popover-menu__item', { hasText: /^취소$/ })).toBeVisible();
     await expect(popover.locator('.popover-menu__item', { hasText: '예약 삭제' })).toBeVisible();
   });
 
@@ -101,7 +101,7 @@ test.describe('SchedulerV2 - 상태 변경 / 삭제', () => {
 
     const before = await cancelledCount();
 
-    await page.locator('.popover-menu__item', { hasText: '예약 취소' }).click();
+    await page.locator('.popover-menu__item', { hasText: /^취소$/ }).click();
 
     // '03' = 예약취소 — 저장분에 반영됐는지로 확인
     await expect.poll(cancelledCount, { timeout: 8_000 }).toBe(before + 1);

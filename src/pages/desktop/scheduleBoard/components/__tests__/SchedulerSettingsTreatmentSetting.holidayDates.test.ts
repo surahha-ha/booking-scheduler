@@ -38,7 +38,7 @@ vi.mock('@/stores/holidayStore', () => ({
 }))
 
 const mocks = vi.hoisted(() => ({
-  getTreatmentSettings: vi.fn(),
+  getTeams: vi.fn(),
   getSiteWorkHours: vi.fn(),
   getStaffWorkHours: vi.fn(),
   saveTreatmentSettings: vi.fn(),
@@ -46,7 +46,7 @@ const mocks = vi.hoisted(() => ({
   assignUnassigned: vi.fn(),
 }))
 vi.mock('@/api/siteApi', () => ({
-  getTreatmentSettings: mocks.getTreatmentSettings,
+  getTeams: mocks.getTeams,
   getSiteWorkHours: mocks.getSiteWorkHours,
   getStaffWorkHours: mocks.getStaffWorkHours,
   saveTreatmentSettings: mocks.saveTreatmentSettings,
@@ -76,7 +76,7 @@ describe('공휴일 날짜의 특정일자 취급', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
-    mocks.getTreatmentSettings.mockResolvedValue({
+    mocks.getTeams.mockResolvedValue({
       data: { code: 'succeed', payload: { teams: [] } },
     })
     mocks.getSiteWorkHours.mockResolvedValue({

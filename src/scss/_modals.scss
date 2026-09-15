@@ -112,7 +112,7 @@
   /* 3. Body */
   .modal-body {
     padding: 20px;
-    font-size: 14px;
+    font-size: 18px;
     color: #333;
     white-space: pre-wrap;
   }
@@ -128,9 +128,9 @@
     flex-direction: row;
     justify-content: center;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     
-    padding: 0 20px 20px 20px;
+    padding: 16px 20px 20px;
     border-top: none;
 
     /* Button Common Styles */
@@ -140,9 +140,22 @@
       align-items: center;
       justify-content: center;
       
-      min-width: 120px;
-      border-radius: 0;
+      width: 130px;
+      min-width: 130px;
+      height: 40px;
+      padding: 0 12px;
+      border: 1px solid #BCBCBC;
+      border-radius: 4px;
+      background: #fff;
+      color: #565656;
+      font-size: 16px;
+      font-weight: 600;
       margin: 0;
+
+      &:hover {
+        background: #fff;
+        color: #565656;
+      }
     }
 
     /* Confirm Button (Primary) - Orange */
@@ -156,7 +169,7 @@
       &:hover,
       &:focus,
       &:active {
-        background-color: #DC5B00;
+        background-color: var(--scheduler-brand, #2F6FED);
         color: #fff;
         box-shadow: none;
         outline: none;
@@ -168,6 +181,9 @@
     .btn-secondary {
       @extend .btn-action;
 
+      border-color: #BCBCBC;
+      background: #fff;
+      color: #565656;
       box-shadow: none;
       outline: none;
 
@@ -177,6 +193,8 @@
         box-shadow: none;
         outline: none;
         filter: none;
+        background: #fff;
+        color: #565656;
       }
     }
   }

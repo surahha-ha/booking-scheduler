@@ -34,9 +34,9 @@ export interface UnitHours {
 export type DataType = 'APPOINTMENT' | 'TREATMENT'
 
 /**
- * 칸수배정 모델 (프로토타입 비교용 토글).
- * - 'A'(기본): 레인폭 = min(maxConcurrent, N). 동시예약 수만큼 — 화면밀도↑, 겹침변동 시 밀림.
- * - 'B2'    : 레인폭 = N 고정(빈 의사도 N). 혼자=풀폭/겹침만 분할 — 밀림 0·균등컬럼, 페이징 잦음.
+ * 칸수배정 모델.
+ * - 'A'(기본·라이브): 레인폭 = min(maxConcurrent, N). 동시겹침 수만큼 — 화면밀도↑, 겹침변동 시 밀림.
+ * - 'B2'           : 레인폭 = N 고정(빈 의사도 N). 밀림 0·균등컬럼, 대신 빈 레인 상시·페이징 잦음.
  */
 export type LayoutMode = 'A' | 'B2'
 
@@ -71,6 +71,9 @@ export interface SiteInput {
   holidayHours?: UnitHours
   /** 날짜("YYYY-MM-DD") → 그 날짜에 저장된 사업장 운영시간(지정일자). 요일·공휴일보다 우선한다. */
   dateHours: Record<string, UnitHours>
+  /** 의사별 특정일자 운영시간. key = doctorId → 날짜("YYYY-MM-DD") → UnitHours.
+   *  담당자 축 안에서 일자 > 요일이고 담당자가 사업장보다 먼저라, 있으면 **모든 것보다 먼저** 쓴다. */
+  dateHoursByDoctor?: Record<string, Record<string, UnitHours>>
   /** 공휴일이면서 진료하는 날 "YYYY-MM-DD". 휴무 공휴일은 여기 없다. */
   holidayDates?: string[]
   /** 휴무 규칙 (MR-1 범위 밖 — 구조만 보존) */
@@ -142,6 +145,8 @@ export interface LayoutConfig {
   // ── 운영일정 설정 ──
   hoursByDoctor: Record<string, Record<number, UnitHours>>
   hoursByWeekday: Record<number, UnitHours>
+  /** 의사별 특정일자 운영시간(doctorId → 날짜 → UnitHours). resolveUnitHours 최우선. 미전달 시 {}. */
+  dateHoursByDoctor?: Record<string, Record<string, UnitHours>>
   /** 공휴일 운영시간(한 세트). 미설정이면 {} → resolveUnitHours 가 요일 축으로 폴백. */
   holidayHours: UnitHours
   /** 공휴일이면서 진료하는 날. 개수가 연 20건 남짓이라 배열 순회로 충분. */
@@ -221,6 +226,12 @@ export interface BandInfo extends BandSpec {
   heightPx: number
   /** 누적 top px */
   topPx: number
+  /**
+   * heightPx 에 하단 여백(EMPTY_ROW_GAP_PX)이 포함됐는가 = 그 시간대에 예약을 추가할 자리가 있는가.
+   * 카드가 걸치기만 해도(관통) true — maxRows 로 판정하면 지나가는 카드만 있는 band 가 여백 없이
+   * 카드로 꽉 차 그 시간대에 추가할 자리가 사라진다.
+   */
+  hasGap: boolean
 }
 
 /** computeRects 출력 — REDESIGN §6 z 정책. */
@@ -235,6 +246,28 @@ export interface Rect {
   /** base(auto=0) / floating(10) / 이동·하이라이트(15) */
   z: number
   isFloating: boolean
-  /** layering(더 긴 예약 위 얹힌 짧은 예약, isFloating && level>0) — 들여쓰기·그림자 대상. level0(같은 길이 동시초과)은 false. */
+  /**
+   * layering(더 긴 예약 위 얹힌 짧은 예약) — 들여쓰기·그림자 대상. 같은 길이 동시초과는 false.
+   * 판정은 시간 겹침이 아니라 **렌더(top/height) 겹침** 기준 — 관통 카드가 잘려 화면에서
+   * 겹치지 않게 되면 layering 도 아니다.
+   */
   isLayered: boolean
+  /**
+   * 레이어링 그룹의 밑바탕 카드 — 얹힌 카드(isLayered) 아래에 깔린 긴 예약 **전부**.
+   * 좌측 세로 마커 표시 대상. 3층 스택에서는 index0·index1 이 함께 true 가 된다
+   * (중간층도 좌측 한 단만 남고 가려지므로 식별 표식이 필요하다). 농도 구분은 layerDepth.
+   */
+  isLayerBase: boolean
+  /**
+   * 스택 안 길이 순위(index) — 렌더가 겹치면서 자기보다 긴 카드들의 서로 다른 duration 개수.
+   * 가장 긴 카드 = 0, 그 위 = 1, 그 위 = 2 … 계단 들여쓰기 단수이자 좌측 마커 농도 단계.
+   */
+  layerDepth: number
+  /**
+   * 긴 예약 = 꼬리가 **다른 예약이 시작하는 band** 를 지나쳐 내려간 카드 — 좌측 세로 바 표시 대상
+   * (화면정의서 1. 긴 예약 건 표기). band 는 cellDuration 단위라 '밴드를 넘는가'로 잡으면
+   * 그리드 설정에 종속된다(10분 그리드에선 30분 예약도 해당). 얹힘 여부와는 무관하므로
+   * isLayerBase 와 별개다: isLayerBase 는 밑바탕 식별(리사이즈 핸들 포털)용으로 남는다.
+   */
+  isLongCard: boolean
 }

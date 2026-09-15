@@ -142,8 +142,6 @@ export interface HeaderNode {
    * 공휴일이면서 '공휴일 휴무' 설정(holidayClosedYn)이 켜진 날에만 채워진다 — 공휴일에도 진료하는 병원이 있다.
    */
   holidayLabel?: string
-  /** 의사(doctor) 노드 전용 — 비공개(openYn='N') 담당자(#1). true 면 '비공개' 뱃지 표기. */
-  isPrivate?: boolean
 }
 
 /** leaf 노드 전용 메타데이터 */
@@ -182,6 +180,12 @@ export interface FlatColumn {
   leftPx: number
   /** 계산된 width (px) */
   widthPx: number
+  /**
+   * 이 컬럼이 화면에 그리는 sub-col 수 = subColWidth 분모.
+   * 컬럼마다 다를 수 있어(모델 A: 레인폭=동시겹침) hitTest/drag 은 전역 N 이 아니라 이 값을 써야 한다.
+   * 미전달(V2 경로)이면 소비자가 전역 patientSlotSpan 으로 폴백.
+   */
+  slots?: number
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -273,6 +277,10 @@ export interface BandCompatible {
   endMinute: number
   topPx: number
   heightPx: number
+  /** 그 band 의 행 수(BandInfo 보유). 카드 바닥 산출용 — 미전달(TimeSlot)이면 하단 여백을 빼지 않는다. */
+  maxRows?: number
+  /** 하단 여백이 붙었는가(BandInfo 보유). 카드 바닥 산출의 실제 기준 — 미전달이면 maxRows 로 떨어진다. */
+  hasGap?: boolean
 }
 
 /** hitTest 결과 */
@@ -294,12 +302,10 @@ export interface HitTestResult {
 // Snap Grid
 // ═══════════════════════════════════════════════════════════
 
-/** Snap 설정 */
+/** Snap 설정 — 예약 단위(분) 하나뿐이다. Shift 세밀 모드는 호출자가 전부 끄고 있어 뺐다. */
 export interface SnapConfig {
-  /** 기본 snap 단위 (분) */
+  /** snap 단위 (분) */
   intervalMinutes: number
-  /** Shift 키 누를 때 세밀 단위 (분) */
-  fineIntervalMinutes: number
 }
 
 // ═══════════════════════════════════════════════════════════

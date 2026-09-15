@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures/testBase';
-import { openAddReservationPopup } from './fixtures/board';
+import { navigateToFutureWeekday, openAddReservationPopup } from './fixtures/board';
 import type { Page } from '@playwright/test';
 
 /**
@@ -11,7 +11,7 @@ import type { Page } from '@playwright/test';
  *   T3. ⚙ → 그룹 추가 → 신규 그룹이 칩 목록에 즉시 반영
  *   T4. 설정 popup 내부 클릭 시 ReservationPopup 이 사라지지 않는다
  *   T5. 항목 9개 이상 → < > 페이저 노출 + 페이지 전환 동작 (Phase2 #1)
- *   T6. 일반 그룹에 항목 0개면 저장 버튼 비활성, 1개 이상이면 활성 (Phase2 #5)
+ *   T6. 빈 그룹을 선택한 채로는 닫지 못한다(alert 차단) → 항목 1개 추가 후 닫힘 (Phase2 #5)
  *   T7. 우측 공간 부족 시 설정 popup 이 ReservationPopup 영역을 덮는다 (Phase2 M8 fallback)
  *   T8. 그룹명 중복 차단 — whitespace 정규화 ('  검진  및  상담  ' → 기존 '검진 및 상담' 매치)
  *   T9. 고객명 dropdown Tab → 첫 후보 자동선택 + 다음 input(전화번호) focus 이동
@@ -20,10 +20,9 @@ import type { Page } from '@playwright/test';
  *   T12. 서비스 항목(그룹/항목)과 memo 독립 + 단일선택 토글오프 (회귀 방지)
  */
 
+/* 오늘 화면은 지난 시간대·카드에 덮인 셀이 많아 가려지지 않은 빈 셀이 없을 수 있다 → 오늘 이후 첫 평일로 간다. */
 async function navigateToScheduler(page: Page) {
-  await page.goto('/book');
-  await expect(page.locator('.scheduler-grid')).toBeVisible();
-  await page.waitForTimeout(500);
+  await navigateToFutureWeekday(page);
 }
 
 /**
@@ -172,6 +171,14 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
       timeout: 3_000,
     });
 
+    // 빈 그룹을 선택한 채로는 닫지도, 다른 그룹으로 옮기지도 못한다(안내 alert · T6).
+    // 탈출구는 항목 등록뿐이므로 항목 1개를 등록한 뒤 닫는다.
+    // auto-grow: 입력 시 빈 draft 행이 뒤에 추가되어 input 이 2개가 되므로 첫 행(입력 중인 행)을 특정.
+    const itemInput = settingRoot.locator('input[placeholder="서비스 항목 입력"]').first();
+    await itemInput.fill('신규 항목');
+    await itemInput.press('Enter');
+    await expect(settingRoot.locator('.tisp-col').last().locator('.tisp-row', { hasText: '신규 항목' })).toBeVisible({ timeout: 3_000 });
+
     // 설정 popup 닫기 후 ReservationPopup 의 그룹 칩 목록에도 반영
     // (serviceItemStore.load(true) 가 onSettingPopupClosed 에서 호출됨)
     await settingRoot.locator('button:has-text("취소")').click();
@@ -204,8 +211,8 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
       await page.waitForTimeout(80);
     }
 
-    // 설정 popup 닫기
-    await settingRoot.locator('button:has-text("저장")').click();
+    // 설정 popup 닫기 — 푸터 버튼은 '취소' 하나뿐이다(CRUD 가 조작 시점에 이미 반영된다).
+    await settingRoot.locator('button:has-text("취소")').click();
     await expect(settingRoot).toBeHidden({ timeout: 3_000 });
 
     // 방금 만든 그룹 칩 선택
@@ -232,7 +239,7 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     await expect(popup.locator('.tcs-itemChip')).toHaveText(/항목9/);
   });
 
-  test('T6. 선택된 그룹의 항목 유무에 따른 저장 활성화 (그룹 단위 검증)', async ({
+  test('T6. 빈 그룹을 선택한 채로는 닫지 못한다 — alert 차단 → 항목 추가 후 닫힘 (그룹 단위 검증)', async ({
     authedPage: page,
   }) => {
     await navigateToScheduler(page);
@@ -242,25 +249,33 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     const settingRoot = page.locator('.tisp-root');
     await expect(settingRoot).toBeVisible({ timeout: 5_000 });
 
-    const saveBtn = settingRoot.locator('button:has-text("저장")');
+    // 푸터 버튼은 '취소' 하나뿐 — CRUD 는 조작 시점에 이미 서버에 반영되므로 '저장' 이 없다.
+    const footerBtns = settingRoot.locator('.tisp-footer button');
+    await expect(footerBtns).toHaveCount(1);
+    await expect(footerBtns.first()).toHaveText('취소');
 
-    // 진입 시 첫 일반 그룹 "상담"(항목 있음)이 선택됨 → 활성
-    await expect(saveBtn).toBeEnabled();
+    // 항목 0개인 그룹을 새로 만들어 선택한 채로 닫기 → 안내 alert 로 막히고 popup 은 그대로
+    const GROUP = 'E2E 빈그룹';
+    await (await addGroup(page, GROUP)).click();
+    await footerBtns.first().click();
 
-    // 항목 0개인 그룹을 새로 만들어 선택 → 비활성
-    await (await addGroup(page, 'E2E 빈그룹')).click();
-    await expect(saveBtn).toBeDisabled();
+    const alertDialog = page.locator('.app-dialog').first();
+    await expect(alertDialog).toBeVisible({ timeout: 3_000 });
+    await expect(alertDialog.locator('.app-dialog__message')).toContainText(GROUP);
+    await alertDialog.locator('.app-dialog__btn--primary').click();
+    await expect(alertDialog).toBeHidden({ timeout: 3_000 });
+    await expect(settingRoot).toBeVisible();
 
-    // 항목 1개 추가 → 활성으로 복귀
+    // 항목 1개 추가 → 닫기 허용
     // auto-grow: 입력 시 빈 draft 행이 뒤에 추가되어 input 이 2개가 되므로 첫 행(입력 중인 행)을 특정.
     const itemInput = settingRoot.locator('input[placeholder="서비스 항목 입력"]').first();
     await itemInput.fill('신규 항목');
     await itemInput.press('Enter');
-    await expect(saveBtn).toBeEnabled({ timeout: 3_000 });
+    await expect(settingRoot.locator('.tisp-col').last().locator('.tisp-row', { hasText: '신규 항목' })).toBeVisible({ timeout: 3_000 });
 
-    // 상담 그룹 재선택 → 여전히 활성 (다른 그룹 항목 추가와 무관)
-    await groupRow(page, '상담').first().click();
-    await expect(saveBtn).toBeEnabled();
+    await footerBtns.first().click();
+    await expect(settingRoot).toBeHidden({ timeout: 3_000 });
+    await expect(page.locator('.app-dialog')).toHaveCount(0);
   });
 
   test('T7. 우측 공간 부족 시 설정 popup 이 ReservationPopup 영역을 덮는다', async ({

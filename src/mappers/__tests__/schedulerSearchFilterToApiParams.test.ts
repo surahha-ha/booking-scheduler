@@ -50,3 +50,12 @@ describe('toBookApiParams — 조회 윈도우 분기', () => {
     expect(p.endDate).toBe('20260605')
   })
 })
+
+// 기대값 출처: toBookApiParams 주석 — 상태 필터는 화면(엔진 입력)에서 거르므로 조회 payload 에 넣지 않는다.
+// 다시 넣으면 목록에서 숨긴 상태가 사라져 상태 칩 숫자(boardStatistics)를 셀 재료가 없어진다.
+describe('toBookApiParams — 상태 필터는 payload 에 없다', () => {
+  it('상태를 골라도 status 파라미터가 생기지 않는다', () => {
+    const p = toBookApiParams(baseFilter({ status: ['CANCEL'] }))
+    expect('status' in p).toBe(false)
+  })
+})

@@ -12,9 +12,9 @@ describe('buildCardMenu — 항목 구성', () => {
     expect(buttons.map(b => b.value)).toEqual(['EDIT', 'CANCEL', 'RESTORE', 'DELETE'])
   })
 
-  it('진료 화면: 완료/미이행/취소/초기화/삭제', () => {
+  it('진료 화면: 접수대기/완료/미이행/취소/초기화/삭제', () => {
     const buttons = buildCardMenu('TREATMENT', '01')
-    expect(buttons.map(b => b.value)).toEqual(['COMPLETE', 'NOSHOW', 'CANCEL', 'RESTORE', 'DELETE'])
+    expect(buttons.map(b => b.value)).toEqual(['WAITING', 'COMPLETE', 'NOSHOW', 'CANCEL', 'RESTORE', 'DELETE'])
   })
 
   it('삭제 라벨은 화면마다 다르다', () => {
@@ -50,9 +50,30 @@ describe('buildCardMenu — 초기화 활성 여부', () => {
     expect(restoreDisabled('TREATMENT', '05')).toBe(false)
   })
 
+  it('접수대기는 예약 화면에 없다 — hover 퀵액션과 같은 진료 전용 동작이다', () => {
+    expect(buildCardMenu('APPOINTMENT', '00').some(b => b.value === 'WAITING')).toBe(false)
+  })
+
   it('disabled 여도 항목은 사라지지 않는다 (메뉴 위치 고정)', () => {
     expect(buildCardMenu('TREATMENT', '00').map(b => b.value))
       .toEqual(buildCardMenu('TREATMENT', '02').map(b => b.value))
+  })
+})
+
+describe('buildCardMenu — 접수대기 활성 여부', () => {
+
+  const waitingDisabled = (status: string) =>
+    buildCardMenu('TREATMENT', status).find(b => b.value === 'WAITING')!.disabled
+
+  it('상태 05(접수대기): disabled — 이미 접수된 건이다', () => {
+    expect(waitingDisabled('05')).toBe(true)
+  })
+
+  it('상태 00/01/02/03: enabled', () => {
+    expect(waitingDisabled('00')).toBe(false)
+    expect(waitingDisabled('01')).toBe(false)
+    expect(waitingDisabled('02')).toBe(false)
+    expect(waitingDisabled('03')).toBe(false)
   })
 })
 
@@ -70,5 +91,7 @@ describe('toApiState', () => {
     expect(toApiState('COMPLETE')).toBe('complete')
     expect(toApiState('NOSHOW')).toBe('noshow')
     expect(toApiState('CANCEL')).toBe('cancel')
+    // hover 퀵액션 [접수]와 같은 state 여야 한다
+    expect(toApiState('WAITING')).toBe('waiting')
   })
 })

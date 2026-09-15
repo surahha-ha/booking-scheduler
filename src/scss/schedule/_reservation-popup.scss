@@ -1,4 +1,7 @@
 @use '../variables' as *;
+@use 'popup-mixin' as *;
+@use 'invalid' as invalid;
+
 /* status 뱃지 + EXT 뱃지를 한 줄에 인라인 배치하기 위한 wrapper */
 .schedulePopup .popupTitleBadgeGroup {
   display: inline-flex;
@@ -14,7 +17,7 @@
   justify-content: center;
   width: 64px;
   height: 18px;
-  border-radius: 2px;
+  border-radius: 4px;
   background-color: var(--scheduler-grabber, #8F94A3);
   color: #fff;
   font-size: 12px;
@@ -33,6 +36,11 @@
 
   &.is-cancel {
     background-color: var(--scheduler-status-cancel, #999);
+    color: #fff;
+  }
+
+  &.is-receipt {
+    background-color: var(--scheduler-status-receipt, #6E9E3F);
     color: #fff;
   }
 
@@ -90,7 +98,7 @@
      컬럼을 강제 확장 → 다른 입력칸까지 같이 넓어지고 팝업 우측 여백을 잡아먹는다.
      min 을 0 으로 고정해 컬럼이 콘텐츠로 늘어나지 않게 한다(담당의사는 개수 페이징으로 처리). */
   grid-template-columns: 65px minmax(0, 1fr);
-  gap: 10px;
+  gap: 20px 10px;
   align-items: center;
 }
 
@@ -120,8 +128,8 @@
   min-width: 0;
   height: 32px;
   padding: 0 10px;
-  border: 1px solid #CFCFCF;
-  border-radius: 0;
+  border: 1px solid #BCBCBC;
+  border-radius: 4px;
   background: #fff;
   outline: none;
   font-size: 14px;
@@ -135,6 +143,12 @@
   &:disabled {
     opacity: 0.4;
     pointer-events: none;
+  }
+
+  /* 필수값 미입력 표기. 팝업의 scoped 스타일에 두면 자식 컴포넌트(PatientAutocomplete 등)
+     내부 input 에는 닿지 않아 고객명만 빨간 테두리가 빠졌다 — 공통 필드 규약과 함께 전역에 둔다. */
+  &[data-invalid="true"] {
+    @include invalid.outline;
   }
 }
 
@@ -154,8 +168,8 @@ select.scheduleField {
 /* 날짜/시간 필드는 폭을 고정해주면 더 안정적 */
 .scheduleField--date {
   width: 100%;
-  height: 36px;
-  line-height: 35px;
+  height: 32px;
+  line-height: 31px;
   position: relative;
   color: #000000;
 
@@ -183,12 +197,67 @@ select.scheduleField {
   width: 125px;
 }
 
+/* 고객명(.patientAutocomplete input)은 여기에 넣지 않는다 — 그 input 은 .scheduleField 라 같은 값을
+   이미 받고, 이 자리의 border 축약형이 특이도로 [data-invalid] 빨간 테두리를 덮어써 전화번호와 달라진다. */
+.schedulePopup .timeSelect .timeSelect__btn {
+  height: 32px;
+  border: 1px solid #BCBCBC;
+  border-radius: 4px;
+}
+
 /* 버튼 영역 */
 .schedulePopupActions {
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 12px;
   margin-top: 16px;
+
+  .btn-action {
+    width: 130px;
+    min-width: 130px;
+    height: 40px;
+    padding: 0 12px;
+    border: 1px solid #BCBCBC;
+    border-radius: 4px;
+    background: #fff;
+    color: #565656;
+    font-size: 16px;
+    font-weight: 600;
+
+    &:hover {
+      background: #fff;
+      color: #565656;
+    }
+
+    &.btn-primary {
+      border-color: var(--scheduler-brand, #2F6FED);
+      background: var(--scheduler-brand, #2F6FED);
+      color: #fff;
+
+      &:hover {
+        background: var(--scheduler-brand, #2F6FED);
+        color: #fff;
+      }
+
+      &:disabled {
+        border-color: transparent;
+        background: #8F94A3;
+        color: #fff;
+      }
+    }
+  }
+
+  /* 필수값 미충족 — 비활성처럼 보이되 클릭은 받는다(눌러야 누락 항목 안내가 뜬다). */
+  .btn-primary.is-incomplete {
+    background-color: #adb5bd;
+    border-color: transparent;
+
+    &:hover,
+    &:focus,
+    &:active {
+      background-color: #adb5bd;
+    }
+  }
 }
 
 /* Patient Search UI */

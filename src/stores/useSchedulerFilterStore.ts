@@ -61,13 +61,26 @@ export const useSchedulerFilterStore = defineStore('useSchedulerFilterStore', {
         },
 
         patch(patch: Partial<SchedulerFilterState>, trigger = true) {
+            // V3 조회 창(windowAnchorDate)은 표시 날짜를 따른다(페이지가 selectedDate 로 setWindow).
+            // 날짜와 함께 재조회가 나갈 때는 창을 같은 patch 로 옮긴다 — 안 그러면 첫 조회가 옛 창 범위로
+            // 나가고 150ms 뒤 창 경로(applyDataWindow→setWindow)가 새 창으로 한 번 더 조회한다(이동 1회 = 조회 2회).
+            // 창을 먼저 옮겨 두면 뒤따르는 setWindow 는 dedup(anchor·days 동일)으로 잦아든다.
+            // trigger=false(페이지→store 동기화)는 창 경로가 재조회를 맡으므로 창을 건드리지 않는다.
+            if (trigger && patch.periodDate && this.windowDays > 0 && patch.windowAnchorDate === undefined) {
+                patch = {...patch, windowAnchorDate: dayjs(patch.periodDate).startOf('day').toDate()};
+            }
             Object.assign(this, patch);
             if (trigger) this.triggerSearch();
         },
 
         setDataType(value: DataType, trigger = true) {
             if (this.dataType === value) return;
-            const patch: Partial<SchedulerFilterState> = {dataType: value};
+            // 상태 필터는 장부를 옮길 때마다 '전체'(빈 배열)로 초기화한다.
+            // 상태 키 집합이 화면마다 달라(예약: APPOINTMENT/CANCEL, 진료: WAITING/COMPLETE/UNDONE/CANCEL)
+            // 이전 선택이 남으면 어떤 버튼도 켜져 보이지 않는데 목록만 걸러진 상태가 된다.
+            // 고객명 검색어도 같은 이유로 비운다 — 전환 전 장부에서 찾던 고객가 새 장부 목록을 계속 거르면 안 된다.
+            // (recent 모드의 입력칸·드롭다운은 store 밖 로컬 상태라 UiSearchInput 이 dataType 을 보고 스스로 비운다.)
+            const patch: Partial<SchedulerFilterState> = {dataType: value, status: [], keyword: ''};
             const today = normalizePeriodDate(new Date(), this.viewMode);
             if (value === 'TREATMENT') {
                 // 방문 장부는 미래 날짜 표기 불가 → 미래를 보던 중 진료로 전환 시 오늘로 클램프.
@@ -103,7 +116,11 @@ export const useSchedulerFilterStore = defineStore('useSchedulerFilterStore', {
         // null = '미지정'(팀 미설정 담당자). 특정 팀명 = 그 팀 멤버 이름만 표시.
         setTeam(value: string | null, trigger = true) {
             if (this.selectedTeamName === value) return;
-            this.patch({selectedTeamName: value, doctors: []}, trigger);
+            // 팀명은 장부 조회 payload 에 없다(표시 오버레이). 재조회는 의사 선택 초기화가 payload 를 실제로
+            // 바꿀 때(선택이 있었을 때)만 — 비어 있었다면 payload 가 같아 다시 받을 것이 없다.
+            // 상태·회원 카운트는 화면 카드에서 세므로(페이지 boardStatistics) 팀 전환에 재조회가 필요하지 않다.
+            const payloadChanges = this.doctors.length > 0;
+            this.patch({selectedTeamName: value, doctors: []}, trigger && payloadChanges);
         },
 
         setTreatmentStateType(value: TreatmentStateType, trigger = false) {
@@ -127,7 +144,8 @@ export const useSchedulerFilterStore = defineStore('useSchedulerFilterStore', {
             this.patch({doctors: norm}, trigger);
         },
 
-        setStatusKeys(keys: (AppointmentStatusType | TreatmentStatusType)[], trigger = true) {
+        // 상태 필터는 조회 payload 에 들어가지 않는다(목록은 모든 상태를 받고 화면에서 거른다) → 기본 재조회 없음.
+        setStatusKeys(keys: (AppointmentStatusType | TreatmentStatusType)[], trigger = false) {
             this.patch({status: keys}, trigger);
         },
 

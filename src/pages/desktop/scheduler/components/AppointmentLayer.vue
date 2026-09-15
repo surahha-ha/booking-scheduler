@@ -19,6 +19,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import AppointmentCard from './AppointmentCard.vue'
 
 const props = defineProps({
@@ -34,8 +35,21 @@ const props = defineProps({
 
 const emit = defineEmits(['edit', 'delete', 'status-change', 'callback'])
 
+/**
+ * id → 예약 조회용 인덱스.
+ * ⚠️ 템플릿에서 카드마다 `find` 로 훑으면 렌더 1회가 (카드 수 × 예약 수) 스캔이 된다
+ *    (실측 181 × 440 ≈ 8만 회). 게다가 스캔이 모든 예약의 필드를 읽어 그만큼의 반응성 의존이
+ *    레이어 렌더 이펙트에 붙고, 예약 한 건만 바뀌어도 레이어 전체가 다시 돈다.
+ *    computed 로 한 번만 만들어 O(1) 조회한다.
+ */
+const appointmentById = computed(() => {
+  const map = new Map()
+  for (const appt of props.engineAppointments) map.set(appt.id, appt)
+  return map
+})
+
 function getAppointment(id) {
-  return props.engineAppointments.find(a => a.id === id) ?? null
+  return appointmentById.value.get(id) ?? null
 }
 </script>
 

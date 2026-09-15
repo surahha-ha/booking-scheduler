@@ -129,8 +129,12 @@ export function useSchedulerPeriodPicker(options: {
     )
 
     // fixed 팝업은 스크롤을 따라가지 않아 트리거와 어긋난다 → 닫는다(카드 popover 와 같은 정책).
-    function onViewportChange() {
-        if (isDateOpen.value) closePicker();
+    // 단, 팝업 안쪽 스크롤은 트리거를 움직이지 않으므로 제외 — VueDatePicker 가 연도 오버레이를 열며
+    // 선택 연도를 가운데로 맞추려 목록의 scrollTop 을 세팅하는데, 그 scroll 이벤트에 팝업이 닫혔다.
+    function onViewportChange(e: Event) {
+        if (!isDateOpen.value) return;
+        if (e.type === 'scroll' && e.target instanceof Node && popupRef.value?.contains(e.target)) return;
+        closePicker();
     }
 
     onMounted(() => {

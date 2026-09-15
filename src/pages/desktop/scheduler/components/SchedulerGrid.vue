@@ -22,9 +22,13 @@
         @click="onCellClick($event, col, band)"
         @contextmenu.prevent="onCellContextMenu($event, col, band)"
       >
-        <!-- 차단 라벨 (점심시간/저녁시간/차단시간) -->
-        <span v-if="showBlockLabel(col, band)" class="grid-cell__badge">
-          {{ getBlockLabel(col, band) }}
+        <!-- 차단 라벨 (휴게시간1/휴게시간2/차단시간) — 연속 band 묶음의 첫 band 에만, 묶음 전체 높이 중앙 -->
+        <span
+          v-if="blockLabelOf(col, band)"
+          class="grid-cell__badge"
+          :style="{ height: blockLabelOf(col, band).spanPx + 'px' }"
+        >
+          {{ blockLabelOf(col, band).label }}
         </span>
 
         <!-- hover overlay (+추가): 빈 셀(카드 없는 영역)에만 — 카드 있는 셀에선 카드에 가려 어색하므로 비표시. -->
@@ -103,18 +107,34 @@ const popover = inject('schedulerPopover', null)
  *   blocked: false + reason: 'none'                                     → 정상 셀
  * reason === 'none'이면 null 반환, 그 외는 모두 유효한 reason.
  */
+/**
+ * (컬럼 × 밴드) → 차단사유 표.
+ * ⚠️ 셀마다 계산하면 안 된다 — 한 셀의 클래스를 내는 데 판정 함수들이 중첩 호출되어
+ *    getReason 이 셀당 10회 넘게 불린다. 호출 하나가 dayjs 체이닝 4번 + 규칙 평가라,
+ *    셀 144개짜리 화면에서 렌더 1회가 200ms 를 넘겼다(실측: 카드 0건인데 패치 232ms).
+ *    컬럼·밴드·규칙이 바뀔 때만 한 번 만들어 O(1) 조회한다.
+ */
+const reasonMap = computed(() => {
+  const map = new Map()
+  if (!getBlockedReason) return map
+  for (const col of props.columns) {
+    for (const band of props.bandInfos) {
+      if (band?.startMinute == null) continue
+      const date = dayjs(col.date)
+        .hour(Math.floor(band.startMinute / 60))
+        .minute(band.startMinute % 60)
+        .second(0)
+        .toDate()
+      const reason = getBlockedReason(date, col.resourceId)?.reason ?? null
+      if (reason && reason !== 'none') map.set(`${col.key}__${band.bandIndex}`, reason)
+    }
+  }
+  return map
+})
+
 function getReason(col, slot) {
-  if (!getBlockedReason) return null
   if (!slot || slot.startMinute == null) return null
-  const date = dayjs(col.date)
-    .hour(Math.floor(slot.startMinute / 60))
-    .minute(slot.startMinute % 60)
-    .second(0)
-    .toDate()
-  const result = getBlockedReason(date, col.resourceId)
-  const reason = result?.reason ?? null
-  if (!reason || reason === 'none') return null
-  return reason
+  return reasonMap.value.get(`${col.key}__${slot.bandIndex}`) ?? null
 }
 
 // ── 판정 함수 ──
@@ -147,26 +167,32 @@ function isSoftBlocked(col, slot) {
   return isLunch(col, slot) || isDinner(col, slot) || isBlockedTime(col, slot) || isOutsideHours(col, slot)
 }
 
+// 오늘 날짜·자정 기준시각 — 판정 함수마다 dayjs() 를 새로 만들면 셀 수만큼 곱해진다(수천 개/렌더).
+// nowTick(30초 타이머)에 연동해 갱신하므로 '지금' 판정의 정확도는 그대로다.
+const todayYmd = computed(() => { void nowTick.value; return dayjs().format('YYYY-MM-DD') })
+const startOfTodayMs = computed(() => { void nowTick.value; return dayjs().startOf('day').valueOf() })
+const MS_PER_MINUTE = 60_000
+
+// col.date 는 'YYYY-MM-DD' 고정이라 문자열 비교로 충분하다(사전순 = 시간순).
 function isTodayCol(col) {
-  return dayjs(col.date).isSame(dayjs(), 'day')
+  return col.date === todayYmd.value
 }
 
 /** isPastSlot = slotEnd <= now (해당 날짜 기준) */
 function isPastSlot(col, slot) {
   if (!isTodayCol(col)) {
-    return dayjs(col.date).isBefore(dayjs(), 'day')
+    return col.date < todayYmd.value
   }
-  const slotEndMs = dayjs().startOf('day').add(slot.endMinute, 'minute').valueOf()
-  return slotEndMs <= nowTick.value
+  return startOfTodayMs.value + slot.endMinute * MS_PER_MINUTE <= nowTick.value
 }
 
 /** isNowSlot = slotStart <= now < slotEnd (오늘만) */
 function isNowSlot(col, slot) {
   if (!isTodayCol(col)) return false
   const now = nowTick.value
-  const slotStartMs = dayjs().startOf('day').add(slot.startMinute, 'minute').valueOf()
-  const slotEndMs = dayjs().startOf('day').add(slot.endMinute, 'minute').valueOf()
-  return slotStartMs <= now && now < slotEndMs
+  const base = startOfTodayMs.value
+  return base + slot.startMinute * MS_PER_MINUTE <= now
+    && now < base + slot.endMinute * MS_PER_MINUTE
 }
 
 /**
@@ -202,21 +228,23 @@ function hasCellAppointments(col, band) {
 
 /** canShowEmptyAdd = !hasAppointments && !isBlockedCell */
 function canShowEmptyAdd(col, band) {
-  // 변경 모드: lock 은 reschedule 자신이므로 무시. 빈 셀 + 휴무/과거 아닌 셀에 이동 가능 "+" 표시
+  // 변경 모드: lock 은 reschedule 자신이므로 무시. 빈 셀 + 휴무 아닌 셀에 이동 가능 "+" 표시
   // (시간외 등 soft-blocked 도 노출 → 클릭 시 handleDrop validate 가 경고 처리, drag 와 동일 규칙).
+  // ★지난 시각도 노출한다 — 변경 모드는 신규 등록이 아니라 이미 등록된 예약의 시각 보정이라
+  //   드래그·리사이즈와 같은 규칙을 따른다. 신규 등록(아래 분기)의 과거 차단은 그대로 둔다.
   if (reschedule?.active?.value) {
-    return !hasCellAppointments(col, band) && !isDisabled(col, band) && !isPastSlot(col, band)
+    return !hasCellAppointments(col, band) && !isDisabled(col, band)
   }
   if (interactionLock?.isLocked?.value) return false
   if (hasCellAppointments(col, band)) return false
   return !isBlockedCell(col, band)
 }
 
-/** 클릭 추가 가능 = !isDisabled && !isPastSlot */
+/** 클릭 추가 가능 = !isDisabled && !isPastSlot (변경 모드는 과거 허용 — 위 canShowEmptyAdd 참고) */
 function canClickToAdd(col, slot) {
-  // 변경 모드: lock 무시(자기 자신), 빈 셀 + 휴무/과거 아닌 셀만 클릭 허용(점유 셀=드래그로 겹침 처리).
+  // 변경 모드: lock 무시(자기 자신), 빈 셀 + 휴무 아닌 셀만 클릭 허용(점유 셀=드래그로 겹침 처리).
   if (reschedule?.active?.value) {
-    return !hasCellAppointments(col, slot) && !isDisabled(col, slot) && !isPastSlot(col, slot)
+    return !hasCellAppointments(col, slot) && !isDisabled(col, slot)
   }
   // drag/resize/create 등 인터랙션 중에는 추가 hover overlay 숨김 (lock 정합성)
   if (interactionLock?.isLocked?.value) return false
@@ -225,20 +253,53 @@ function canClickToAdd(col, slot) {
   return true
 }
 
-function showBlockLabel(col, slot) {
-  const r = getReason(col, slot)
-  if (!r) return false
-  if (isClosed(col, slot)) return false
-  if (isOutsideHours(col, slot)) return false
-  return isSoftBlocked(col, slot)
+/** 라벨을 그리는 사유 → 표기. 이 맵에 없는 사유(closed/outsideHours 등)는 라벨 없음. */
+const BLOCK_LABEL_BY_REASON = {
+  lunch: '휴게시간1',
+  dinner: '휴게시간2',
+  blockedTime: '차단시간',
 }
 
-function getBlockLabel(col, slot) {
+/** 이 셀이 라벨 대상이면 그 사유, 아니면 null. */
+function labelReason(col, slot) {
   const r = getReason(col, slot)
-  if (r === 'lunch') return '휴게시간1'
-  if (r === 'dinner') return '휴게시간2'
-  if (r === 'blockedTime') return '차단시간'
-  return ''
+  return r && BLOCK_LABEL_BY_REASON[r] ? r : null
+}
+
+/**
+ * 차단 라벨 병합 — 같은 사유가 연속된 band 묶음에서 **첫 band 에만** 라벨을 두고,
+ * 묶음 전체 높이(spanPx)에 걸쳐 세로 중앙에 놓는다.
+ * (band 단위로 그리면 30분마다 '휴게시간1' 이 반복 표기된다.)
+ * key = `${col.key}__${band.bandIndex}` → { label, spanPx }
+ */
+const blockLabelMap = computed(() => {
+  const map = {}
+  const bands = props.bandInfos
+  for (const col of props.columns) {
+    let i = 0
+    while (i < bands.length) {
+      const reason = labelReason(col, bands[i])
+      if (!reason) { i++; continue }
+      // 시간이 맞닿아 있고 사유가 같은 동안 이어 붙인다(중간에 끊기면 별개 묶음).
+      let spanPx = bands[i].heightPx
+      let j = i + 1
+      while (
+        j < bands.length &&
+        bands[j].startMinute === bands[j - 1].endMinute &&
+        labelReason(col, bands[j]) === reason
+      ) {
+        spanPx += bands[j].heightPx
+        j++
+      }
+      map[`${col.key}__${bands[i].bandIndex}`] = { label: BLOCK_LABEL_BY_REASON[reason], spanPx }
+      i = j
+    }
+  }
+  return map
+})
+
+function blockLabelOf(col, slot) {
+  return blockLabelMap.value[`${col.key}__${slot.bandIndex}`] ?? null
 }
 
 function onCellClick(ev, col, slot) {
@@ -379,6 +440,8 @@ $cell-bg-stripe-even: var(--scheduler-stripe-even, #f5f6f8);
   width: 100%;
   // pointer-events를 개별 셀에서 제어
   pointer-events: none;
+  // 그리드 내부 z-index(차단 라벨)를 카드 레이어와 겹치지 않게 가둔다
+  isolation: isolate;
 }
 
 .grid-row {
@@ -454,11 +517,17 @@ $cell-bg-stripe-even: var(--scheduler-stripe-even, #f5f6f8);
 /* ═══════════════════════════════════════════════════════════
  * 차단 라벨 (점심시간 등)
  * ═══════════════════════════════════════════════════════════ */
+/* 높이(=연속 묶음 전체)는 인라인 style 로 들어온다. 다음 band 셀 위로 넘치므로 z-index 로 덮이지 않게 한다
+   (밖으로 새지 않도록 .scheduler-grid 가 stacking context 를 만든다). */
 .grid-cell__badge {
   position: absolute;
-  top: 50%;
+  top: 0;
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
   font-size: 14px;
   color: #999;
   white-space: nowrap;

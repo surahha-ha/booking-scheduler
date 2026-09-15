@@ -51,7 +51,7 @@ vi.mock('@/stores/holidayStore', () => ({
 }))
 
 const mocks = vi.hoisted(() => ({
-  getTreatmentSettings: vi.fn(),
+  getTeams: vi.fn(),
   getSiteWorkHours: vi.fn(),
   getStaffWorkHours: vi.fn(),
   saveTreatmentSettings: vi.fn(),
@@ -59,7 +59,7 @@ const mocks = vi.hoisted(() => ({
   assignUnassigned: vi.fn(),
 }))
 vi.mock('@/api/siteApi', () => ({
-  getTreatmentSettings: mocks.getTreatmentSettings,
+  getTeams: mocks.getTeams,
   getSiteWorkHours: mocks.getSiteWorkHours,
   getStaffWorkHours: mocks.getStaffWorkHours,
   saveTreatmentSettings: mocks.saveTreatmentSettings,
@@ -83,6 +83,16 @@ const siteRows = [1, 2, 3, 4, 5].map(dayCd => ({
   closeHm: '1800',
   lunchStartHm: null, lunchEndHm: null, dinnerStartHm: null, dinnerEndHm: null,
 }))
+
+/* ★토·일은 **매주 휴무로 정해 둔** 상태다 — 진료행만 월~금으로 두고 주말을 비워 놓으면
+ * "운영시간을 정하지 않은 요일"이 되어, 화면이 그 요일을 '매주 휴무'으로 자동 보정하려고
+ * site 파트를 dirty 로 만든다(missingTimeWeekdays). 이 파일의 관심사는 파트별 게이트이므로
+ * 그 보정이 끼어들지 않게 주말을 명시적 휴무로 채운다. 자동 보정 자체의 검증은
+ * SchedulerSettingsTreatmentSetting.dayState.test.ts 에 있다. */
+const weekendOffRules = [
+  { dayCd: 0, repeatTy: 'WEEKLY' },
+  { dayCd: 6, repeatTy: 'WEEKLY' },
+]
 
 /* BE 는 저장된 요일 행만 내려준다 — 7행으로 채우지 않는다.
  *   행 없음 = 미설정 / 행 + 시각 = 진료 / 행 + null = 명시적 휴무
@@ -108,7 +118,7 @@ const holidayHoursRow = {
 }
 
 function okSite() {
-  return { data: { code: 'succeed', payload: { site: siteRows, holidayHours: holidayHoursRow, recurringOffRules: [], workDates: [], offDates: [], holidayClosedYn: true } } }
+  return { data: { code: 'succeed', payload: { site: siteRows, holidayHours: holidayHoursRow, recurringOffRules: weekendOffRules, workDates: [], offDates: [], holidayClosedYn: true } } }
 }
 function okStaff() {
   return {
@@ -124,8 +134,11 @@ function okStaff() {
     },
   }
 }
+/** getTeams 응답의 팀 구성원 — 컴포넌트는 staffId 만 doctorIds 로 옮긴다 */
+const members = (...nos: number[]) => nos.map(no => ({ staffId: no, staffName: `담당자${no}` }))
+
 function okTeams() {
-  return { data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctorIds: [STAFF_SET, STAFF_UNSET] }] } } }
+  return { data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: members(STAFF_SET, STAFF_UNSET) }] } } }
 }
 
 async function mountSetting() {
@@ -147,6 +160,9 @@ const saveBtn = (wrapper: any) => wrapper.find('.schedulerTreatmentSetting__save
 /** 진입 가드와 동일한 재사용 문구 — 신규 문구를 만들지 않는다 */
 const SERVICE_UNAVAILABLE_MSG = '일시적인 서비스 접근 불가입니다.\n잠시 후에 다시 시도해주세요.'
 
+/** 구성원 없는 팀 안내 — 팀 이름을 담지 않는다(빈 팀이 여럿일 때 나머지를 감추지 않으려고) */
+const TEAM_MEMBERS_REQUIRED_MSG = '팀 구성원이 없습니다.\n구성원을 선택해 주세요.'
+
 function expectLossAlert() {
   expect(dialogMock.alert, '유실 안내 alert').toHaveBeenCalledTimes(1)
   expect(dialogMock.alert.mock.calls[0][0]).toBe(SERVICE_UNAVAILABLE_MSG)
@@ -160,9 +176,13 @@ async function toggleHoliday(wrapper: any) {
   await wrapper.vm.$nextTick()
 }
 
-/** 팀 배열 변경 → teams 파트 dirty */
+/** 팀 배열 변경 → teams 파트 dirty
+ *
+ * ★구성원을 반드시 넣는다 — 구성원이 없는 팀은 onSave 가 안내만 띄우고 막기 때문에(2026-08-24),
+ *  빈 팀으로 dirty 를 만들면 이 파일의 관심사(파트별 게이트)에 닿기 전에 걸린다.
+ *  그 가드 자체의 검증은 아래 「구성원 없는 팀」 describe 에 있다. */
 async function makeTeamDirty(wrapper: any) {
-  setupState(wrapper).teams.push({ id: 'TEAM_new', name: '신규팀', doctorIds: [] })
+  setupState(wrapper).teams.push({ id: 'TEAM_new', name: '신규팀', doctorIds: [STAFF_SET] })
   await wrapper.vm.$nextTick()
 }
 
@@ -182,7 +202,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
-    mocks.getTreatmentSettings.mockResolvedValue(okTeams())
+    mocks.getTeams.mockResolvedValue(okTeams())
     mocks.getSiteWorkHours.mockResolvedValue(okSite())
     mocks.getStaffWorkHours.mockResolvedValue(okStaff())
     mocks.saveTreatmentSettings.mockResolvedValue({ data: { code: 'succeed', message: '저장되었습니다.', payload: { staff: 'succeed', site: 'succeed' } } })
@@ -191,7 +211,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
 
   // ── 회귀 ① 팀 전멸 방지 ────────────────────────────────
   it('팀 조회 실패 → payload 에 teams/workingHours 가 없다 (전송 시 팀 전멸)', async () => {
-    mocks.getTreatmentSettings.mockRejectedValue(new Error('503'))
+    mocks.getTeams.mockRejectedValue(new Error('503'))
     const wrapper = await mountSetting()
 
     // 자체 파트만 막히고 사업장 설정은 살아 있다 → 저장 버튼은 활성
@@ -210,7 +230,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
   })
 
   it('팀 조회가 code=failed 로 와도(HTTP 200) teams 를 보내지 않는다', async () => {
-    mocks.getTreatmentSettings.mockResolvedValue({ data: { code: 'failed', message: '조회 실패', payload: null } })
+    mocks.getTeams.mockResolvedValue({ data: { code: 'failed', message: '조회 실패', payload: null } })
     const wrapper = await mountSetting()
 
     await toggleHoliday(wrapper)
@@ -305,8 +325,8 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
           },
         },
       })
-      mocks.getTreatmentSettings.mockResolvedValue({
-        data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctorIds: [STAFF_SET] }] } },
+      mocks.getTeams.mockResolvedValue({
+        data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: members(STAFF_SET) }] } },
       })
     })
 
@@ -344,10 +364,13 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
       expect(times.find((t: any) => t.dayCd === 3)).toMatchObject({ staffOpenHm: '0900', staffCloseHm: '1200' })
     })
 
-    it('요일을 비우면(X) 그 요일은 휴무 행으로 나간다 — 미설정과 구별된다', async () => {
+    /* ★2026-08-20 규약 변경 — 운영시간 탭은 휴무를 만들지 않는다(탭 책임 분리).
+     * 시간을 비우면 휴무 행이 아니라 **행 자체가 빠진다**(미설정). 휴무는 휴무일 탭에서 정한다. */
+    it('요일을 비우면 그 요일 행이 빠진다 — 휴무가 아니라 미설정이다', async () => {
       const wrapper = await mountSetting()
 
-      setupState(wrapper).clearStaffWorkHours(STAFF_SET, 1)
+      setupState(wrapper).setStaffWorkHours(STAFF_SET, 1, 'start', '')
+      setupState(wrapper).setStaffWorkHours(STAFF_SET, 1, 'end', '')
       await wrapper.vm.$nextTick()
 
       await saveBtn(wrapper).trigger('click')
@@ -356,9 +379,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
       const times = savedPayload().workingHours.staff
         .find((m: any) => m.staffId === STAFF_SET).times
 
-      expect(times.find((t: any) => t.dayCd === 1), '비운 요일은 사라지지 않고 휴무 행으로 남는다')
-        .toMatchObject({ staffOpenHm: null, staffCloseHm: null })
-      expect(times.map((t: any) => t.dayCd)).toEqual([1, 2])
+      expect(times.map((t: any) => t.dayCd), '비운 요일은 행 자체가 나가지 않는다').toEqual([2])
     })
   })
 
@@ -400,7 +421,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
 
   // ── 팀만 실패 ──────────────────────────────────────────
   it('팀만 실패 → teams/workingHours 둘 다 생략, site 는 전송, 버튼 활성', async () => {
-    mocks.getTreatmentSettings.mockRejectedValue(new Error('503'))
+    mocks.getTeams.mockRejectedValue(new Error('503'))
     const wrapper = await mountSetting()
 
     expect(saveBtn(wrapper).attributes('disabled')).toBeUndefined()
@@ -438,7 +459,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
 
   // ── 팀 + site 실패 → 보낼 파트 없음 ────────────────────
   it('팀 + site 실패 → 저장 버튼 비활성 (staff 성공이어도 단독 저장 불가)', async () => {
-    mocks.getTreatmentSettings.mockRejectedValue(new Error('503'))
+    mocks.getTeams.mockRejectedValue(new Error('503'))
     mocks.getSiteWorkHours.mockRejectedValue(new Error('503'))
     const wrapper = await mountSetting()
 
@@ -512,7 +533,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
   // 그대로 저장하면 teams:[] / site:[] 가 전송되고 BE 는 [] 를 null 과 구분해
   // "전부 삭제"라는 정상 의도로 해석한다(파트 skip 은 미전송일 때만) → 팀·운영시간 전멸 재현.
   it('팀 조회가 succeed 인데 payload 가 없으면 장애로 보고 teams 를 보내지 않는다', async () => {
-    mocks.getTreatmentSettings.mockResolvedValue({ data: { code: 'succeed', payload: null } })
+    mocks.getTeams.mockResolvedValue({ data: { code: 'succeed', payload: null } })
     const wrapper = await mountSetting()
 
     // 장애 안내가 뜨고, 사업장 설정은 살아 있으므로 저장 버튼 자체는 활성
@@ -570,7 +591,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
   //   succeed + **빈 배열을 담은 payload** 로 내려온다(payload 는 존재). 이건 장애가 아니라 정상이며,
   //   장애로 오판하면 신규 거래처가 영원히 저장 불가가 된다.
   it('팀 미설정 거래처(succeed + payload:{teams:[]})는 장애가 아니며 저장할 수 있다', async () => {
-    mocks.getTreatmentSettings.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [] } } })
+    mocks.getTeams.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [] } } })
     const wrapper = await mountSetting()
 
     expect(wrapper.find('.schedulerTreatmentSetting__loadError').exists(), '빈 배열은 장애가 아니다').toBe(false)
@@ -604,8 +625,117 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
 
     const payload = savedPayload()
     expect(payload.site, '미설정이므로 빈 배열이 정상 전송된다').toEqual([])
+    /* 운영시간을 한 번도 등록하지 않은 거래처는 저장 한 번에 7요일 전부 '매주 휴무'이 된다 —
+     * 원천(마이페이지)도 운영시간이 전혀 없으면 휴무로 읽으므로 같은 결론을 명시로 남기는 것이다.
+     * 배너가 7요일을 모두 고지한 뒤라 놀랄 일이 아니어야 한다(정책 확정 2026-09-04). */
+    expect(payload.recurringOffRules, '정한 요일이 없으면 7요일 모두 매주 휴무로 나간다')
+        .toEqual([0, 1, 2, 3, 4, 5, 6].map(dayCd => ({ dayCd, repeatTy: 'WEEKLY', monthlyNth: null })))
     expect(payload).toHaveProperty('holidayClosedYn')
     expect(payload.teams).toBeTruthy()
+  })
+
+  /* 매월 n번째만 쉬는 요일은 나머지 주에 진료하므로 운영시간이 있어야 한다. 규칙이 없는 요일처럼
+   * 자동 '매주 휴무'으로 보정하면 사용자가 고른 매월 규칙이 사라지고, 미설정으로 두면 보드가 기본
+   * 운영시간으로 열린다 — 둘 다 아니라 저장을 막고 그 요일을 가리킨다(배너 둘째 줄과 같은 문구). */
+  it('★매월 n번째만 휴무인 요일에 운영시간이 없으면 저장을 막는다 — 나머지 주에 진료하는 요일이다', async () => {
+    const FRIDAY = 5
+    mocks.getSiteWorkHours.mockResolvedValue({
+      data: {
+        code: 'succeed',
+        payload: {
+          site: siteRows.filter(r => r.dayCd !== FRIDAY),                 // 금요일 운영시간 없음
+          holidayHours: holidayHoursRow,
+          recurringOffRules: [...weekendOffRules, { dayCd: FRIDAY, repeatTy: 'MONTHLY', monthlyNth: 1 }],
+          workDates: [], offDates: [], holidayClosedYn: true,
+        },
+      },
+    })
+    const wrapper = await mountSetting()
+
+    await makeTeamDirty(wrapper)
+    await saveBtn(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.saveTreatmentSettings, '저장 API 미호출').not.toHaveBeenCalled()
+    expect(dialogMock.alert).toHaveBeenCalledTimes(1)
+    expect(dialogMock.alert.mock.calls[0][0])
+        .toBe('금요일은 매월 1번째 휴무가라 나머지 주에 진료합니다.\n운영시간을 입력해 주세요.')
+    expect(setupState(wrapper).expandedTreatmentKey, '사업장 패널을 펼쳐 그 요일을 가리킨다').toBe('institution')
+    expect(setupState(wrapper).ownerWeekdayInvalid('INSTITUTION', FRIDAY), '금요일 버튼이 붉게 켜진다').toBe(true)
+    expect(setupState(wrapper).ownerWeekdayInvalid('INSTITUTION', 1), '시간이 있는 요일은 아니다').toBe(false)
+  })
+
+  /* 그런 요일이 둘 이상이면 안내는 전부 나열하고 붉은 표시도 전부 켠다 — 첫 요일만 알리면 하나 고칠 때마다
+   * 새 안내가 떠 "몇 번을 고쳐야 하나" 가 된다. 포커스(패널 펼침)는 첫 요일 하나면 된다.
+   * 기대값 출처: 정책 결정(2026-09-04 배너 둘째 줄과 같은 문구 규약) — 감사 §2-6 의 공백 케이스. */
+  it('매월 n번째만 휴무인 요일이 둘이면 안내에 둘 다 나열하고 둘 다 붉게 켠다', async () => {
+    const THURSDAY = 4
+    const FRIDAY = 5
+    mocks.getSiteWorkHours.mockResolvedValue({
+      data: {
+        code: 'succeed',
+        payload: {
+          site: siteRows.filter(r => r.dayCd !== THURSDAY && r.dayCd !== FRIDAY),
+          holidayHours: holidayHoursRow,
+          recurringOffRules: [
+            ...weekendOffRules,
+            { dayCd: THURSDAY, repeatTy: 'MONTHLY', monthlyNth: 3 },
+            { dayCd: FRIDAY, repeatTy: 'MONTHLY', monthlyNth: 1 },
+          ],
+          workDates: [], offDates: [], holidayClosedYn: true,
+        },
+      },
+    })
+    const wrapper = await mountSetting()
+
+    await makeTeamDirty(wrapper)
+    await saveBtn(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.saveTreatmentSettings, '저장 API 미호출').not.toHaveBeenCalled()
+    expect(dialogMock.alert).toHaveBeenCalledTimes(1)
+    expect(dialogMock.alert.mock.calls[0][0])
+        .toBe('목요일은 매월 3번째, 금요일은 매월 1번째 휴무가라 나머지 주에 진료합니다.\n운영시간을 입력해 주세요.')
+    expect(setupState(wrapper).ownerWeekdayInvalid('INSTITUTION', THURSDAY), '목요일도 붉게').toBe(true)
+    expect(setupState(wrapper).ownerWeekdayInvalid('INSTITUTION', FRIDAY), '금요일도 붉게').toBe(true)
+  })
+
+  /* 사업장 조회가 잠긴(siteLocked) 동안에는 4단 게이트가 대상을 갖지 않는다.
+   * 잠김은 "원천이 뭘 갖고 있는지 모른다" 이지 "비어 있다" 가 아니고, site 파트는 어차피 전송에서 빠진다.
+   * 처음 조회는 성공했다가 재시도가 실패하면 화면에 옛 규칙(매월 n번째 + 시간 없음)이 남는데, 이때 게이트가
+   * 살아 있으면 저장 못 하는 파트 때문에 저장 가능한 파트(팀)까지 영영 못 저장하는 덫이 된다.
+   * 기대값 출처: 정책 결정(2026-09-04 잠금 축 규약 — missingTimeWeekdays 와 같은 가드). 감사 §2-7 공백. */
+  it('★사업장 조회가 재시도 실패로 잠기면 4단 게이트는 대상이 없다 — 옛 매월 규칙이 남아 있어도 저장은 나간다', async () => {
+    const FRIDAY = 5
+    mocks.getSiteWorkHours.mockResolvedValue({
+      data: {
+        code: 'succeed',
+        payload: {
+          site: siteRows.filter(r => r.dayCd !== FRIDAY),
+          holidayHours: holidayHoursRow,
+          recurringOffRules: [...weekendOffRules, { dayCd: FRIDAY, repeatTy: 'MONTHLY', monthlyNth: 1 }],
+          workDates: [], offDates: [], holidayClosedYn: true,
+        },
+      },
+    })
+    const wrapper = await mountSetting()
+    expect(setupState(wrapper).monthlyOnlyMissingTimeWeekdays, '사전조건: 잠기기 전에는 게이트 대상').toEqual([FRIDAY])
+
+    // 재시도가 실패한다 — 규칙·시간은 화면에 그대로 남고 site 만 잠긴다.
+    mocks.getSiteWorkHours.mockResolvedValue({ data: { code: 'failed', message: '사업장 설정 장애', payload: null } })
+    await setupState(wrapper).hydrateWorkingHoursFromServer({ site: true, staff: false })
+    await flushPromises()
+    expect(setupState(wrapper).siteLocked).toBe(true)
+
+    await makeTeamDirty(wrapper)
+    await saveBtn(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(setupState(wrapper).monthlyOnlyMissingTimeWeekdays, '잠기면 대상 없음').toEqual([])
+    expect(dialogMock.alert.mock.calls.map((c: any[]) => c[0]).some((m: string) => String(m).includes('매월')),
+        '4단 게이트 안내가 뜨지 않는다').toBe(false)
+    expect(mocks.saveTreatmentSettings, '팀 파트는 저장된다').toHaveBeenCalledTimes(1)
+    expect(savedPayload().site, '잠긴 site 파트는 빠진다').toBeUndefined()
   })
 
   // ── ⑥ ★게이트로 버려진 편집의 조용한 유실 방지 ──────────
@@ -712,6 +842,32 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
       expect(mocks.saveTreatmentSettings).not.toHaveBeenCalled()
       expect(wrapper.emitted('cancel')).toBeTruthy()
     })
+
+    /* ★"고친 게 없으면 안 보낸다"의 유일한 예외 — 운영시간을 정하지 않은 요일이 남아 있을 때.
+     * 그 요일을 '매주 휴무'으로 만드는 것은 사용자가 고친 값이 아니라 **화면이 만드는 값**이라
+     * isDirtyIn(SITE_STATE_KEYS) 이 잡지 못한다. 그것까지 dirty 로 세지 않으면 저장이 위
+     * "보낼 게 없다" 분기로 빠져 API 가 나가지 않고, 배너가 예고한 휴무가 아무 일도 없이
+     * 사라진다 — 안내한 것과 실제가 어긋난다(실제로 눈검증에서 잡힌 결함이다). */
+    it('★고친 게 없어도 운영시간 미설정 요일이 있으면 저장이 나간다 — 자동 매주 휴무', async () => {
+      mocks.getSiteWorkHours.mockResolvedValue({
+        data: {
+          code: 'succeed',
+          payload: {
+            site: siteRows, holidayHours: holidayHoursRow,
+            recurringOffRules: [],   // 토·일이 휴무로 정해져 있지 않다 = 미설정
+            workDates: [], offDates: [], holidayClosedYn: true,
+          },
+        },
+      })
+      const wrapper = await mountSetting()
+
+      await saveBtn(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(mocks.saveTreatmentSettings, '저장이 스킵되면 안 된다').toHaveBeenCalled()
+      expect(savedPayload().recurringOffRules, '미설정 주말이 매주 휴무로 나간다')
+          .toEqual([0, 6].map(dayCd => ({ dayCd, repeatTy: 'WEEKLY', monthlyNth: null })))
+    })
   })
 
 
@@ -793,5 +949,169 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
     await flushPromises()
 
     expect(wrapper.emitted('save')).toBeFalsy()
+  })
+
+  /**
+   * 구성원 없는 팀 (2026-08-24).
+   *
+   * 서버는 이 상태를 거부하지 않는다 — 구성원 목록이 비면 팀만 저장하고 끝난다. 그래서 화면이 막지
+   * 않으면 이름만 있는 팀이 그대로 저장되고, 사용자는 무엇이 잘못됐는지 알 수 없다.
+   */
+  describe('구성원 없는 팀 — 저장 전 안내', () => {
+    it('★구성원이 없는 팀이 있으면 저장하지 않고 안내한다', async () => {
+      const wrapper = await mountSetting()
+
+      setupState(wrapper).teams.push({ id: 'TEAM_new', name: '신규팀', doctorIds: [] })
+      await wrapper.vm.$nextTick()
+      await saveBtn(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(mocks.saveTreatmentSettings, '저장 API 를 부르지 않는다').not.toHaveBeenCalled()
+      expect(dialogMock.alert).toHaveBeenCalledTimes(1)
+      expect(dialogMock.alert.mock.calls[0][0]).toBe(TEAM_MEMBERS_REQUIRED_MSG)
+      expect(wrapper.emitted('save'), '팝업을 닫지 않는다').toBeFalsy()
+    })
+
+    /* ★문구는 팀 이름을 말하지 않는다 — 빈 팀이 여럿이면 하나만 말하게 되어 나머지를 감춘다.
+     * 어느 팀인지는 화면이 전부 표시한다. */
+    it('★빈 팀이 여럿이면 전부 하이라이트된다 — 문구는 팀 이름을 담지 않는다', async () => {
+      const wrapper = await mountSetting()
+      const state = setupState(wrapper)
+
+      state.teams.push({ id: 'TEAM_x', name: '빈팀1', doctorIds: [] })
+      state.teams.push({ id: 'TEAM_y', name: '빈팀2', doctorIds: [] })
+      await wrapper.vm.$nextTick()
+
+      /* 저장 전에는 그리지 않는다 — 입력 도중에 빨간 테두리를 띄우지 않는 규약 */
+      expect(wrapper.findAll('.schedulerTreatmentSetting__memberArea[data-invalid="true"]').length).toBe(0)
+
+      await saveBtn(wrapper).trigger('click')
+      await flushPromises()
+
+      const marked = wrapper.findAll('.schedulerTreatmentSetting__memberArea[data-invalid="true"]')
+      expect(marked.length, '빈 팀 두 개가 모두 표시돼야 한다').toBe(2)
+      expect(dialogMock.alert.mock.calls[0][0], '문구에는 팀 이름이 없다').not.toContain('빈팀')
+    })
+
+    /* ★한 번 켜고 두면 그 뒤 만드는 팀은 반드시 빈 상태로 시작하므로 이름을 적기도 전에 빨개진다.
+     * 경고가 상시가 되면 뜻을 잃는다 — 저장을 시도한 그 순간 비어 있던 팀만 표시한다. */
+    it('★저장 시도 뒤에 새로 만든 빈 팀은 다시 저장을 누르기 전까지 표시되지 않는다', async () => {
+      const wrapper = await mountSetting()
+      const state = setupState(wrapper)
+
+      state.teams.push({ id: 'TEAM_old', name: '빈팀', doctorIds: [] })
+      await wrapper.vm.$nextTick()
+      await saveBtn(wrapper).trigger('click')
+      await flushPromises()
+      expect(wrapper.findAll('.schedulerTreatmentSetting__memberArea[data-invalid="true"]').length).toBe(1)
+
+      /* 지적받은 팀을 채우고, 새 팀을 하나 만든다 */
+      state.teams = state.teams.map((t: any) => t.id === 'TEAM_old' ? { ...t, doctorIds: [STAFF_SET] } : t)
+      state.teams.push({ id: 'TEAM_fresh', name: '새로 만든 팀', doctorIds: [] })
+      await wrapper.vm.$nextTick()
+
+      const marked = wrapper.findAll('.schedulerTreatmentSetting__memberArea[data-invalid="true"]')
+      expect(marked.length, '새 팀은 아직 지적 대상이 아니다').toBe(0)
+
+      /* 다시 저장을 누르면 그때 판정된다 */
+      await saveBtn(wrapper).trigger('click')
+      await flushPromises()
+      expect(wrapper.findAll('.schedulerTreatmentSetting__memberArea[data-invalid="true"]').length).toBe(1)
+    })
+
+    it('구성원을 채우면 그대로 저장된다', async () => {
+      const wrapper = await mountSetting()
+
+      setupState(wrapper).teams.push({ id: 'TEAM_new', name: '신규팀', doctorIds: [STAFF_SET] })
+      await wrapper.vm.$nextTick()
+      await saveBtn(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(dialogMock.alert).not.toHaveBeenCalled()
+      expect(savedPayload().teams.map((t: any) => t.name)).toContain('신규팀')
+    })
+
+    /* ★이미 저장돼 있던 빈 팀이 무관한 저장을 막으면 덫이 된다 — 사용자가 그 팀을 고치기 전에는
+     * 운영시간·휴무일 변경조차 저장할 수 없게 된다. 팀을 실제로 보낼 때만 검사하는 이유다. */
+    it('빈 팀이 원래 있었어도 팀을 건드리지 않았다면 다른 파트는 저장된다', async () => {
+      mocks.getTeams.mockResolvedValue({
+        data: {
+          code   : 'succeed',
+          payload: {
+            teams: [
+              { id: 1, name: '1구역', doctors: members(STAFF_SET, STAFF_UNSET) },
+              { id: 2, name: '빈팀', doctors: [] },
+            ],
+          },
+        },
+      })
+      const wrapper = await mountSetting()
+
+      await toggleHoliday(wrapper)          // site 만 dirty — teams 는 건드리지 않는다
+      await saveBtn(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(dialogMock.alert).not.toHaveBeenCalled()
+      expect(savedPayload().site, '사업장 설정 파트는 정상 전송').toBeDefined()
+    })
+  })
+})
+
+/**
+ * 열려 있는 popover 의 입력도 저장에 실린다 (2026-09-03).
+ *
+ * 사고: 운영시간 popover 를 띄운 채 [저장] 을 누르면 방금 입력한 값이 통째로 빠졌다.
+ * 저장은 상태만 보는데 popover 의 입력은 아직 draft 였고, 그 draft 를 상태로 옮기는
+ * 배경 클릭 정리(handleDocumentClick)는 **버블**이라 저장 버튼 @click 보다 뒤에 돌기 때문이다.
+ *
+ * 규칙: onSave 가 첫머리에서 직접 정리한다(settleAllPopovers) — 시간 게이트보다 앞이라
+ * 게이트도 그 draft 를 보고 판정한다.
+ */
+describe('저장 — 열려 있는 popover 의 draft', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    mocks.getTeams.mockResolvedValue(okTeams())
+    mocks.getSiteWorkHours.mockResolvedValue(okSite())
+    mocks.getStaffWorkHours.mockResolvedValue(okStaff())
+    mocks.saveTreatmentSettings.mockResolvedValue({ data: { code: 'succeed', message: '저장되었습니다.', payload: { book: 'succeed', site: 'succeed' } } })
+    mocks.getUnassignedReservations.mockResolvedValue({ data: { payload: { assignable: false } } })
+  })
+
+  /** 사업장 월요일 popover 를 draft 만 얹어 연다 */
+  function openInstitutionMonday(state: any, draft: Record<string, { start: string; end: string }>) {
+    state.weekdayEditor.open = true
+    state.weekdayEditor.ownerKey = 'INSTITUTION'
+    state.weekdayEditor.weekday = 1
+    state.weekdayEditor.draft = {
+      WORK: { start: '', end: '' }, LUNCH: { start: '', end: '' }, DINNER: { start: '', end: '' }, ...draft,
+    }
+  }
+
+  it('★popover 를 띄운 채 저장하면 그 입력이 payload 에 실린다', async () => {
+    const wrapper = await mountSetting()
+    const state = setupState(wrapper)
+    openInstitutionMonday(state, { WORK: { start: '08:00', end: '17:00' } })
+
+    await saveBtn(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(state.weekdayEditor.open, '저장하면서 popover 도 정리된다').toBe(false)
+    expect(savedPayload().site.find((r: any) => r.dayCd === 1), '방금 입력한 08:00~17:00')
+      .toMatchObject({ openHm: '0800', closeHm: '1700' })
+  })
+
+  /* ★게이트보다 먼저 정리해야 하는 이유 — 순서가 뒤바뀌면 반쪽 입력이 게이트를 통과해
+   * 그 요일이 휴무(null)으로 저장된다. */
+  it('★popover 에 반쪽 입력이 남아 있으면 저장이 막힌다', async () => {
+    const wrapper = await mountSetting()
+    const state = setupState(wrapper)
+    openInstitutionMonday(state, { WORK: { start: '08:00', end: '' } })
+
+    await saveBtn(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mocks.saveTreatmentSettings, '저장하지 않는다').not.toHaveBeenCalled()
+    expect(dialogMock.alert.mock.calls[0][0]).toBe('시작시간과 종료시간을 모두 입력해 주세요.')
   })
 })

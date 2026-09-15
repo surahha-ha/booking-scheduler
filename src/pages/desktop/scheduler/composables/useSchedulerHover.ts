@@ -57,8 +57,8 @@ export interface UseSchedulerHoverReturn {
 
   /** 카드 mouseenter 시 호출 */
   onCardEnter: (appointmentId: string, element: HTMLElement) => void
-  /** 카드 mouseleave 시 호출 */
-  onCardLeave: () => void
+  /** 카드 mouseleave 시 호출. 이탈한 카드 id 를 넘기면 이미 다른 카드로 넘어간 뒤 도착한 이탈은 무시된다. */
+  onCardLeave: (appointmentId?: string) => void
   /** quick action 버튼 영역 mouseenter 시 호출 (leave delay 취소) */
   onQuickActionEnter: () => void
   /** quick action 버튼 영역 mouseleave 시 호출 (leave 재개) */
@@ -130,7 +130,16 @@ export function useSchedulerHover(
     startQuickActionTimer()
   }
 
-  function onCardLeave(): void {
+  /**
+   * @param appointmentId 이탈한 카드. 생략하면 "지금 hover 중인 카드가 나갔다"로 본다(quick action 영역 이탈).
+   *
+   * ★이미 다른 카드로 넘어갔으면 무시한다. 겹친(레이어링) 카드 사이나 포털에 있는 ⋮·리사이즈 핸들을 거쳐
+   *  이동하면 B 의 mouseenter 가 A 의 mouseleave 보다 먼저 도착한다. 이때 A 의 이탈을 그대로 받으면
+   *  마우스가 B 위에 있는데도 _isMouseOverCard 가 false 로 덮여 grace 후 hover 가 꺼진다.
+   */
+  function onCardLeave(appointmentId?: string): void {
+    if (appointmentId != null && _hoveredId.value !== appointmentId) return
+
     _isMouseOverCard = false
 
     // 억제 중이면 해제하지 않음

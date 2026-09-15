@@ -18,7 +18,7 @@ import { useSchedulerFilterStore } from '@/stores/useSchedulerFilterStore'
 import { useQueryString } from '@/composables/useQueryString'
 // 장부 설정(전체 칸 개수) 조회 — 방문 모드 zoom 이 설정 전체칸을 따르도록.
 import { useReservationSettingStore } from '@/stores/reservationSettingStore'
-import { useSchedulerRules } from '@/composables/useSchedulerRules'
+import { pickBlockWarning, useSchedulerRules } from '@/composables/useSchedulerRules'
 // 줄달력 날짜 상태(selectedDate 단일 기준).
 import { useSchedulerNavigation } from '@/pages/desktop/scheduler/composables/useSchedulerNavigation'
 // 인터랙션 composable 재사용(페이지-로컬 격리) — hover/popover/drag/resize/reschedule.
@@ -28,10 +28,16 @@ import { useSchedulerPopover } from '@/pages/desktop/scheduler/composables/useSc
 import { useSchedulerDrag } from '@/pages/desktop/scheduler/composables/useSchedulerDrag'
 import { useSchedulerResize } from '@/pages/desktop/scheduler/composables/useSchedulerResize'
 import { useSchedulerReschedule } from '@/pages/desktop/scheduler/composables/useSchedulerReschedule'
+// 검색 pick 카드로의 세로 스크롤 계산(가시 판정 + 스크롤 컨테이너 탐색).
+import { computeScrollDelta, findScrollContainer } from './searchScrollFocus'
 import { runLayout } from '@/scheduler-engine/redesign/layoutPipeline'
+import { normalizeRangeToGrid } from '@/scheduler-engine/schedulerSnapGrid'
+import { STEP_MIN } from '@/constants/componentConstants'
 import { toEngineAppointments } from '@/pages/desktop/scheduler/adapters/appointmentAdapter'
 import { dragResultToBookItemRequest, resizeResultToBookItemRequest } from '@/pages/desktop/scheduler/adapters/dragResultAdapter'
 import { normalizeName, resolveVisibleDoctors } from '@/utils/schedulerSearchFilterUtils'
+import { countBoardStatistics, filterByStatus } from './boardStatistics'
+import { labelBlockedReason } from '@/utils/formatStringUtils'
 import { buildStoreRunLayoutInput } from './v3StoreInput'
 import { reanchorArgsForSlot } from './navSlots'
 import { toV2Bands, toV2Columns, toV2HeaderTree, toV2Rects } from './v3ParityAdapter'
@@ -61,25 +67,36 @@ const staffStore = useStaffStore()
 const filterStore = useSchedulerFilterStore()
 const reservationSettingStore = useReservationSettingStore()
 const holidayStore = useHolidayStore()
+// 날짜 표기/이동을 일별(하루) 기준으로 DAY 강제. 조회 날짜 폭은 윈도우가 결정(viewMode 무관).
+// ⚠️ useQueryString() 보다 먼저 강제한다 — URL 에 viewMode=DAY 가 남아 있으면 store 기본값(WEEK)과 달라
+//    query→store 반영이 "실제 변경"으로 잡혀 재조회가 한 번 나간다. 어차피 DAY 로 만들 값이라 낭비다.
+if (filterStore.viewMode !== 'DAY') filterStore.setViewMode('DAY', false)
 // URL query(dataType/viewMode) ↔ filterStore 동기화 — 외부 deep-link 진입 + 기본 query set.
 // (MR-Swap 으로 /book 을 SchedulerPage→V3Page 로 옮기며 누락됐던 호출 복구.)
 useQueryString()
-// 날짜 표기/이동을 일별(하루) 기준으로 DAY 강제. 조회 날짜 폭은 윈도우가 결정(viewMode 무관).
+// query 가 viewMode=WEEK 였던 경우의 복구 — V3 는 DAY 전용(검색필터도 hide-view-mode)이라 최종값은 항상 DAY.
 if (filterStore.viewMode !== 'DAY') filterStore.setViewMode('DAY', false)
-const { appointments, redirectReason, serviceUnavailable, noTreatmentTime } = storeToRefs(bookStore)
-const { doctors, hospitalRules, doctorRules, teams } = storeToRefs(staffStore)
-// 날짜→공휴일 휴무 라벨 lookup. 헤더 날짜 행에 '휴무' 표기.
-// 공휴일이라고 다 휴무는 아니다 — '공휴일 휴무'(holidayClosedYn) 이 꺼진 병원은 공휴일에도 진료한다.
-// 그 설정은 이미 staffStore 가 closedDates 에 반영해 두므로(공휴일 합류 + workDates rescue) 그것으로 판정한다.
-const holidayLabelFor = ymd =>
-  (holidayStore.isHoliday(ymd) && hospitalRules.value?.closedDates?.has(ymd)) ? '휴무' : undefined
-const { periodDate, doctors: selectedDoctorIds, dataType, selectedTeamName } = storeToRefs(filterStore)
+const { appointments, appointmentsStale, redirectReason, serviceUnavailable, noTreatmentTime, pending: bookPending } = storeToRefs(bookStore)
+const { doctors, hospitalRules, doctorRules, teams, workTimeLoadFailed } = storeToRefs(staffStore)
+// 운영시간 조회 실패(원천 무관) — 보드는 fallback(기관/기본 시간)으로 그려지므로 배너로만 표면화한다.
+// 재시도는 승인된 재조회 경로(searchVersion watch chain)로 — clearRedirect 가 initialized 도 풀어
+// runInitialSetup(loadSchedule + noTreatmentTime 게이트)이 다시 돌게 한다.
+const workTimeLoadFailedAny = computed(() => workTimeLoadFailed.value.site || workTimeLoadFailed.value.staff)
+function retryWorkTime() {
+  bookStore.clearRedirect()
+  filterStore.triggerSearch()
+}
+// 날짜 행 '휴무' 라벨의 정의는 useSchedulerRules destructure 뒤(holidayLabelFor)에 있다 —
+// 판정을 그 composable 하나로 모으려고 뒤로 뺐다. 소비처(computed)는 지연 평가라 순서에 영향이 없다.
+const { periodDate, doctors: selectedDoctorIds, dataType, selectedTeamName, status: selectedStatusKeys } = storeToRefs(filterStore)
 // 예약장부 설정(budget base/grid 간격/카드높이/표시정보). 미로딩 시 store 기본값 → onMounted 에서 조회.
 const {
   totalColumns: settingTotalColumns,
   timeUnit: settingTimeUnit,
   displayInfo: settingDisplayInfo,
   rowHeightLevel: settingRowHeightLevel,
+  // 설정 조회 진행 여부 — 조회 윈도우 폭(BUDGET_MAX)이 totalColumns 에 걸려 있어 응답 전엔 윈도우를 잡지 않는다.
+  loading: settingLoading,
 } = storeToRefs(reservationSettingStore)
 
 // ── Navigation (selectedDate 단일 기준) ──
@@ -90,10 +107,13 @@ const navigation = useSchedulerNavigation({
   headerWindowDays: 30,
   visibleDayCount,
 })
-// navigation → filterStore (날짜 이동 시 periodDate 반영 → searchVersion watch chain 으로 재조회. load 직접호출 금지 준수)
+// navigation → filterStore (날짜 이동 시 periodDate 동기화만, 재조회는 안 건다)
+// ⚠️ trigger=false — 재조회는 조회 윈도우 경로(applyDataWindow→setWindow)가 담당한다.
+//    여기서도 트리거하면 페이징 1회에 searchVersion 이 두 번 튀어 staff·장부·통계 전 세트가
+//    2번씩 나갔다(실측). 커버 범위 안 이동이면 윈도우 경로가 재조회를 생략하는 것이 정합.
 watch(() => navigation.selectedDate.value, (newDate) => {
   if (dayjs(periodDate.value).format('YYYY-MM-DD') !== newDate) {
-    filterStore.patch({ periodDate: dayjs(newDate).toDate() })
+    filterStore.patch({ periodDate: dayjs(newDate).toDate() }, false)
   }
 })
 // filterStore → navigation (UiDateNavigator/검색필터 등 외부 변경 동기화)
@@ -124,8 +144,9 @@ const viewStep = ref(3)
 const slotDivision = ref(2)
 // 컬럼별 칸수 override(state-only). { '${date}__${doctorId}': N }. 드래그로 특정 컬럼만 N칸 조절 → 엔진 resolveSlots 우선 적용.
 const customSlots = ref({})
-// 칸수배정 모델 토글. 'A'=레인폭=동시건수 / 'B2'(기본)=레인폭 N고정·카드 1칸. 엔진 default(미전달)는 'A'.
-const layoutMode = ref('B2')
+// 칸수배정 모델. 'A'=레인폭=min(동시겹침, N) — 예약이 겹치는 만큼만 컬럼을 넓힌다(빈 담당자=1칸).
+// 'B2'=레인폭 N고정(데이터 무관). 엔진 default(미전달)도 'A'.
+const layoutMode = ref('A')
 // date-anchored 윈도우 시작 sub-col offset. 좌측 끝은 항상 selectedDate(날짜)로 고정 →
 // 데이터 재조회로 밀도가 변해도 보던 날짜가 안 끌려감(헤더 > 빈보드 점프 차단). 0 = selectedDate 첫 컬럼부터.
 // >0 은 하루 컬럼수가 budget 을 초과할 때만(within-day 의사 페이징).
@@ -267,6 +288,8 @@ const viewState = computed(() => ({
 
 // ── availableWidth 측정 (ResizeObserver) ──
 const boardEl = ref(null)
+// sticky 헤더 — 검색 pick 스크롤이 "헤더에 가린 카드"를 보인 것으로 오판하지 않도록 실측에 쓴다.
+const boardHeadEl = ref(null)
 const availableWidth = ref(0)
 let ro = null
 
@@ -279,11 +302,13 @@ onMounted(() => {
   //   await 안 함(렌더 비차단). 매 검색마다가 아닌 진입 1회. 수동 갱신은 검색필터 ↻ 버튼.
   staffStore.syncDoctor()
   if (!boardEl.value) return
+  // 정수로 끊는다 — 컬럼 경계(정수)와 보드 오른쪽 끝이 같은 자리여야 우측 끝 구분선이 경계에 맞는다.
+  // 내림인 이유: 올림하면 헤더 폭이 실제 칸보다 넓어져 마지막 세로선이 overflow:hidden 에 잘린다.
   ro = new ResizeObserver((entries) => {
-    availableWidth.value = entries[0]?.contentRect?.width ?? 0
+    availableWidth.value = Math.floor(entries[0]?.contentRect?.width ?? 0)
   })
   ro.observe(boardEl.value)
-  availableWidth.value = boardEl.value.clientWidth
+  availableWidth.value = Math.floor(boardEl.value.getBoundingClientRect().width)
   nowTimer = setInterval(() => { nowTick.value = Date.now() }, 30_000)
 })
 
@@ -295,7 +320,22 @@ onBeforeUnmount(() => {
   filterStore.setWindow(null, 0, false)
 })
 
-// ── 진료 팀 표시 필터 (이름 통일): 미지정=담당자 목록−팀멤버 / 팀=∩ → 컬럼(header tree) 소스 ──
+// ── 로딩 표시 ──────────────────────────────────────────
+// 진입 직후엔 담당자·예약장부 설정·운영시간·예약이 순차로 도착할 때까지 보드가 빈 격자로 보인다.
+// 그 구간을 "로딩 중"으로 알린다 — 데이터가 없는 건지 불러오는 중인지 사용자가 구분할 수 없기 때문.
+// 최초 조회가 한 번 끝나면(pending true→false) 이후는 재조회로 취급해 표시를 약하게 한다
+// (전체를 덮으면 페이징·필터 조작 때마다 화면이 통째로 가려져 오히려 답답하다).
+const boardReady = ref(false)
+watch(bookPending, (now, prev) => { if (prev && !now) boardReady.value = true })
+// 최초 로딩 = 아직 한 번도 그릴 데이터를 못 받은 상태. 보드를 덮는 오버레이.
+// 실패(재시도 안내·설정 화면 이동)로 끝난 경우엔 조회가 시작되지도 않아 boardReady 가 영영 false 다
+// → 그 상태에서 "불러오는 중"을 계속 띄우면 거짓 안내가 된다. 실패 신호가 있으면 즉시 걷는다.
+const isInitialLoading = computed(() =>
+  !boardReady.value && !redirectReason.value && !serviceUnavailable.value)
+// 재조회 = 이미 그려진 화면 위에서 갱신 중. 상단 진행바만(레이아웃 이동 없음).
+const isRefreshing = computed(() => boardReady.value && bookPending.value)
+
+// ── 팀 표시 필터 (이름 통일): 미지정=담당자 목록−팀멤버 / 팀=∩ → 컬럼(header tree) 소스 ──
 const visibleDoctors = computed(() => resolveVisibleDoctors(selectedTeamName.value, doctors.value, teams.value))
 
 // ── 조회 윈도우 = 예약0(최소밀도) 가정 한 화면 채울 일수 + 버퍼1 (담당자/budget 기반 동적, 과조회 방지) ──
@@ -337,12 +377,36 @@ const doctorWeeklyById = computed(() => {
   }
   return out
 })
+// doctorRules → {담당자키: {날짜: DailySchedule}} — 특정일자 진료 시각(밴드용). 요일 시각과 같은 스위치를 탄다.
+const doctorDailyByDateById = computed(() => {
+  if (!USE_DOCTOR_HOURS_IN_TIMELINE) return undefined
+  const out = {}
+  for (const [key, rule] of Object.entries(doctorRules.value ?? {})) {
+    if (rule?.dailyByDate && Object.keys(rule.dailyByDate).length) out[key] = rule.dailyByDate
+  }
+  return out
+})
 
-// 공휴일이면서 진료하는 날 → 엔진이 쓰는 배열로. store 는 Set 이라 조회가 빠르지만 엔진 config 는 plain 만 담는다.
-const holidayOpenDateList = computed(() => {
-  const src = hospitalRules.value?.holidayOpenDates
+/* 국가 공휴일 목록 → 엔진이 쓰는 배열로. store 는 Set 이라 조회가 빠르지만 엔진 config 는 plain 만 담는다.
+ * ★"사업장이 문을 여는 공휴일"(holidayOpenDates)이 아니라 **공휴일 전부**를 넘긴다 — 공휴일 축은
+ *  담당자 자기 값(HOLIDAY_OPEN_YN)이라 기관이 쉬어도 그날 진료하는 담당자가 있고, 그 사람의 밴드는
+ *  기관 공휴일 운영시간으로 그려야 한다. 예약검증(useSchedulerRules 의 isPublicHolidayDate)과 한 쌍이다. */
+const publicHolidayDateList = computed(() => {
+  const src = hospitalRules.value?.publicHolidayDates
   if (!src) return []
   return Array.isArray(src) ? src : Array.from(src)
+})
+
+// ── 상태 필터 = 그리는 단계에서 숨긴다(엔진 입력은 전체) ──
+// 목록은 모든 상태를 받는다(조회 payload 에 status 없음). 엔진에도 전체를 넣어 칸의 폭·한 페이지에 드는
+// 날짜가 필터와 무관하게 같도록 하고, 숨길 카드는 rect 단계에서 뺀다(visibleRects). 엔진 입력을 줄이면
+// 겹침이 줄어 칸이 좁아지고 날짜가 더 들어와, '취소' 칩을 켰다고 '전체'·'예약' 숫자가 늘어난다.
+// 거르는 기준은 카드가 보이는 상태(toDisplayStatus) — 예약장부의 '예약' 칩은 진료완료·미이행·접수대기도
+// 함께 보여 준다(카드가 '예약'으로 그려지는 것과 같은 규칙). 숨긴 자리(레인)는 빈 채로 남는다.
+const hiddenAppointmentIds = computed(() => {
+  if (selectedStatusKeys.value.length === 0) return new Set()
+  const shown = new Set(filterByStatus(appointments.value, selectedStatusKeys.value, dataType.value).map(a => a.id))
+  return new Set(appointments.value.filter(a => !shown.has(a.id)).map(a => a.id))
 })
 
 // ── 엔진 파이프 (store → adapter → runLayout) ──
@@ -355,10 +419,12 @@ const layout = computed(() =>
     // 공휴일 운영시간 — 공휴일에 진료하는 날은 요일·담당자 시간 대신 기관 공휴일 시간으로 밴드를 그린다
     // (예약검증 useSchedulerRules 와 같은 규칙. 한쪽만 반영하면 "밴드는 열렸는데 클릭하면 운영종료").
     holiday: hospitalRules.value?.holiday,
-    holidayDates: holidayOpenDateList.value,
+    holidayDates: publicHolidayDateList.value,
     dailyByDate: hospitalRules.value?.dailyByDate ?? undefined,
     // 담당자별 요일 운영시간(밴드용). 미설정 요일은 어댑터→엔진 fallback 이 기관으로 메꾼다.
     doctorWeeklyById: doctorWeeklyById.value,
+    // 담당자별 특정일자 진료 시각(밴드용). 그 날짜는 요일·기관 시각 대신 이걸로 연다 — 예약검증과 한 쌍.
+    doctorDailyByDateById: doctorDailyByDateById.value,
     availableWidth: availableWidth.value,
     selectedDate: selectedDate.value,
     viewState: viewState.value,
@@ -374,10 +440,12 @@ const layout = computed(() =>
 
 const columns = computed(() => layout.value.columns)
 const bandInfos = computed(() => layout.value.bandInfos)
-// 컬럼별 현재 칸수 맵 — 엔진 출력 unit.slots(customSlots 반영). SubColResizeHandles 가 컬럼별 분할선 그릴 때 사용.
+// step16 컬럼별 현재 칸수 맵 — SubColResizeHandles 분할선용.
+// 화면에 그리는 칸수(subColCount)를 쓴다. 경계에서 압축된 컬럼은 unit.slots 보다 작으므로
+// unit.slots 를 쓰면 분할선이 실제 레인과 어긋난다(카드는 subColCount 로 배치되므로).
 const slotsByKey = computed(() => {
   const map = {}
-  for (const u of layout.value.units) map[u.key] = u.slots
+  for (const col of layout.value.columns) map[col.unit.key] = col.subColCount
   return map
 })
 
@@ -392,33 +460,50 @@ function onExtendBottom() { timelineBottomExtend.value++ }
 const v2Bands = computed(() => toV2Bands(bandInfos.value))
 // Header/Grid/NowIndicator 용 FlatColumn 형태로 변환(key/date/resourceId/leftPx/widthPx).
 const v2Columns = computed(() => toV2Columns(columns.value))
-// 비공개(openYn='N') 담당자 id(=이름) 집합 — 헤더 '비공개' 뱃지. 검색필터 뱃지와 동일 소스(staffStore.doctors).
-const privateDoctorIds = computed(() => new Set(doctors.value.filter(d => d.openYn === 'N').map(d => d.id)))
 // SchedulerHeader 용 날짜>의사 트리(leaf.key=unit.key → 의사1명 행제거 자동 동작).
-const v2HeaderTree = computed(() => toV2HeaderTree(columns.value, holidayLabelFor, privateDoctorIds.value))
+const v2HeaderTree = computed(() => toV2HeaderTree(columns.value, holidayLabelFor))
 
-// ── 데이터 조회 윈도우 = 현재 페이지에 "보이는 날짜 범위" (표시 주도 조회) ──
-// 페이징(담당자 <> / 본문 <>)으로 보이는 날짜가 바뀌면 그 범위로 슬라이드 재조회.
-// 패킹 horizon(미래 빈 날짜 다수)과 분리 → endDate 누적 성장 없이 보이는 만큼만 조회(start 도 슬라이드).
+// 현재 페이지에 보이는 날짜들 — 공휴일 연도 보장·페이징 폭 등 표시용. 조회 윈도우는 선택 날짜 기준(아래)이라 여기에 매달리지 않는다.
 const visibleDates = computed(() => [...new Set(columns.value.map(c => c.unit.date))].sort())
 // 표시 날짜들의 연도 공휴일 보장 — 연 이동 시 누락 연도 보충(App.vue 는 현재±1년만 프리로드). 헤더 공휴일명 표기용.
 watch(visibleDates, (dates) => {
   const years = [...new Set(dates.map(d => Number(d.slice(0, 4))).filter(Boolean))]
   if (years.length) holidayStore.ensureYears(years)
 }, { immediate: true })
-const dataWindowAnchor = computed(() => visibleDates.value[0] ?? selectedDate.value)
-const dataWindowDays = computed(() => {
-  const ds = visibleDates.value
-  if (ds.length === 0) return 1
-  return dayjs(ds[ds.length - 1]).diff(dayjs(ds[0]), 'day') + 1
-})
+// ── 데이터 조회 윈도우 = 선택 날짜 기준 (layout 결과와 무관) ──
+// 목록과 통계(상태·회원 카운트)는 이 창 하나를 같은 파라미터로 쓴다. 창을 둘로 나누면
+// 보드에 그려진 것과 숫자의 모수가 갈라지므로 나누지 않는다.
+//
+// ⚠️ 예전에는 창을 "보이는 날짜 범위"(visibleDates)로 잡았다. 그 값은 layout 결과라 데이터에
+//    연동된다 — 카드가 겹치면 레인이 늘어 컬럼이 넓어지고, 한 페이지에 담기는 날짜가 줄었다
+//    늘었다 한다. 그대로 재조회하면 조회 → 카드 도착 → 표시 일수 변화 → 재조회 의 되먹임이
+//    생겨 페이징 1회에 조회가 3번 나갔고, 그래서 covering 규칙(이미 조회한 범위 안이면 재조회
+//    안 함)으로 끊었다. 그런데 그 규칙 때문에 날짜를 옮겨도 창이 그대로여서 상태·회원 카운트가
+//    이전 날짜의 값으로 남았다(줄달력 ‹ › 이동에서 재현).
+//    → 창을 layout 결과에서 떼어낸다. selectedDate + baseWindowDays 는 예약장부 설정값과 표시
+//      의사 수로만 정해져 데이터에 연동되지 않으므로 되먹임이 없고, covering 규칙 없이도 날짜를
+//      옮기면 언제나 그 범위로 갱신된다. baseWindowDays 는 겹침 0 가정의 한 화면 일수라,
+//      겹침이 많은 날은 화면에 그려지는 날짜가 이보다 적을 수 있다(그만큼 미리 받아 둔 셈).
+const dataWindowAnchor = computed(() => selectedDate.value)
+const dataWindowDays = computed(() => baseWindowDays.value)
+
 // load 직접호출 금지 → setWindow→searchVersion watch chain. setWindow dedup(anchor+days 동일 return)으로 수렴.
-watch([dataWindowAnchor, dataWindowDays], ([anchor, days]) => {
-  // layout 첫 평가 전(doctors 로드 전 visibleDates 빈)엔 setWindow 안 함.
-  // 빈 상태 days=1 setWindow 는 초기 load(searchVersion watch, periodDate)와 동일 윈도우 중복 호출 유발.
-  if (visibleDates.value.length === 0) return
-  filterStore.setWindow(dayjs(anchor).toDate(), days)
-}, { immediate: true })
+// 랜딩 중에는 표시 의사 집합이 단계적으로 확정된다(전체 → 팀 미배정만 → 기본 팀). 그 중간 상태마다
+// 재조회하면 같은 화면에서 조회가 3번 나가므로, 마지막 값 1회로 수렴시킨다(SSE 재조회와 동일 패턴).
+const applyDataWindow = debounce(() => {
+  // 표시 의사가 아직 없으면(담당자 로드 전) 잡지 않는다 — baseWindowDays 가 의사 수로 정해져
+  // 로드 전 값으로 한 번, 로드 후 또 한 번 조회가 나간다.
+  if (activeDoctorCount.value === 0) return
+  // 예약장부 설정(전체 칸 개수)이 도착하기 전에는 잡지 않는다 — 기본값으로 한 번, 응답 후 또 한 번 나간다.
+  // 설정 조회가 실패해도 loading 은 풀리므로(기본값 유지) 윈도우가 영영 미설정으로 남지는 않는다.
+  if (settingLoading.value) return
+
+  filterStore.setWindow(dayjs(dataWindowAnchor.value).toDate(), dataWindowDays.value)
+}, 150)
+// settingLoading 을 watch 소스에 함께 둔다 — 설정 응답이 기본값과 같아도(totalColumns 불변) 대기 해제 시 잡히도록.
+watch([dataWindowAnchor, dataWindowDays, settingLoading], () => applyDataWindow(), { immediate: true })
+// 떠난 뒤 늦게 발화해 해제해 둔 윈도우(setWindow(null,0))를 되살리지 않도록 취소.
+onBeforeUnmount(() => applyDataWindow.cancel())
 
 // ── 통합 페이징 (date-anchored) — 좌측 끝 = selectedDate(날짜), colOffset = within-day offset ──
 // 엔진이 [colOffset, colOffset+budget) 임의 슬라이스. 헤더 담당자 <> 는 윈도우를 budget 칸씩 이동하되
@@ -426,8 +511,8 @@ watch([dataWindowAnchor, dataWindowDays], ([anchor, days]) => {
 const totalSlots = computed(() => layout.value.totalSlots)
 // 실제 적용된(clamp 후) 윈도우 시작 offset — 증감 계산의 기준.
 const effectiveColOffset = computed(() => layout.value.slotOffset)
-// 현 horizon 안에 다음 budget 윈도우가 더 있나.
-const hasMoreForward = computed(() => effectiveColOffset.value + layout.value.config.budget < totalSlots.value)
+// 현 horizon 안에 다음 윈도우가 더 있나 — 엔진이 unit 경계로 낸 다음 시작 slot 유무로 판정.
+const hasMoreForward = computed(() => layout.value.nextSlotOffset != null)
 // 예약: <> 항시(과거/미래 무한). 진료: < 항시(과거), > 는 오늘 도달 시 숨김(미래 불가).
 const canPrevDoctor = computed(() => totalSlots.value > 0)
 const canNextDoctor = computed(() =>
@@ -445,11 +530,12 @@ function reanchorTo(date, offset) {
     navigation.goToDate(date) // selectedDate 변경 → colOffset reset(0) → units watch(post) 가 pending 복원
   }
 }
-// 헤더 담당자 > — 윈도우를 budget 칸 전진(착지 컬럼의 날짜로 재고정).
+// 헤더 담당자 > — 다음 윈도우로 전진(착지 컬럼의 날짜로 재고정).
+// 이동 단위는 budget 칸이 아니라 **엔진이 낸 unit 경계**다 — 마지막 컬럼이 압축 표시됐어도
+// 그 담당자는 이미 다 봤으므로 다음 페이지는 그 다음 담당자부터 시작한다(중복 노출 방지).
 function onNextDoctor() {
-  const budget = layout.value.config.budget
-  const target = effectiveColOffset.value + budget
-  if (target < totalSlots.value) {
+  const target = layout.value.nextSlotOffset
+  if (target != null) {
     const at = reanchorArgsForSlot(layout.value.units, target, selectedDate.value)
     reanchorTo(at.date, at.offset)
     return
@@ -463,11 +549,10 @@ function onNextDoctor() {
   }
   reanchorTo(dayjs(firstVisibleDate.value).add(Math.max(1, visiblePageDays.value), 'day').format('YYYY-MM-DD'), 0)
 }
-// 헤더 담당자 < — 윈도우를 budget 칸 후퇴.
+// 헤더 담당자 < — 이전 윈도우로 후퇴(unit 경계, 엔진 산출).
 function onPrevDoctor() {
-  const budget = layout.value.config.budget
-  const target = effectiveColOffset.value - budget
-  if (target >= 0) {
+  const target = layout.value.prevSlotOffset
+  if (target != null) {
     const at = reanchorArgsForSlot(layout.value.units, target, selectedDate.value)
     reanchorTo(at.date, at.offset)
     return
@@ -549,6 +634,7 @@ const {
   getBlockedReason,
   isClosedDayForHeader,
   isHospitalClosedDayForHeader,
+  isHospitalClosedDayForDoctor,
 } = useSchedulerRules({
   hospitalRules,
   doctorRules,
@@ -562,14 +648,25 @@ const {
 // Grid 가 inject 하는 셀 차단 판정 함수
 provide('getBlockedReason', getBlockedReason)
 
-// 컬럼 key → { doctorClosed, hospitalClosed } (헤더 뱃지 + Grid 셀)
+/* 날짜 행(담당자 무관)의 '휴무' 라벨.
+ * ★공휴일만이 아니라 **사업장 휴무일 전부**를 표기한다 — 요일 휴무·매월 N번째·임시휴무일도 병원이 닫는 날이다.
+ *  종전에는 `holidayStore.isHoliday(ymd) &&` 가 앞에 걸려 있어 공휴일에만 라벨이 붙었고,
+ *  기관이 매주 쉬는 요일에는 날짜 행이 아무 표시도 없었다.
+ * 판정은 셀·담당자 칸과 같은 `isHospitalClosedDayForHeader` 하나로 모은다(공휴일 진료일 rescue 포함). */
+const holidayLabelFor = ymd => (isHospitalClosedDayForHeader(dayjs(ymd).hour(12).toDate()) ? '휴무' : undefined)
+
+// 컬럼 key → { doctorClosed, hospitalClosed, dateClosed } (헤더 뱃지 + Grid 셀)
+//  - hospitalClosed: 사업장 휴무가 **이 담당자 칸에** 적용되는가 — 담당자가 그날 진료로 정했으면 false(R11).
+//    셀(getBlockedReason)과 같은 판정이어야 "뱃지는 휴무인데 셀은 열림"이 안 생긴다.
+//  - dateClosed: 사업장 순수 휴무 — 날짜 행(담당자 무관) 표기용.
 const closedDayMap = computed(() => {
   const map = {}
   for (const col of columns.value) {
     const at12 = dayjs(col.unit.date).hour(12).toDate()
     map[col.unit.key] = {
       doctorClosed: isClosedDayForHeader(at12, col.unit.doctorId),
-      hospitalClosed: isHospitalClosedDayForHeader(at12),
+      hospitalClosed: isHospitalClosedDayForDoctor(at12, col.unit.doctorId),
+      dateClosed: isHospitalClosedDayForHeader(at12),
     }
   }
   return map
@@ -597,10 +694,32 @@ const todayEdgeRect = computed(() => {
 // ── 카드 (AppointmentCard/Layer 재사용) ──
 // raw bookStore 예약 → EngineAppointment(카드가 기대하는 startMinute/statusClass/uiPatient 포함).
 const engineAppointments = computed(() => toEngineAppointments(appointments.value))
+// 상태 필터로 숨긴 카드를 뺀 rect — 그리기·hit test·스크롤 대상 전부 이것을 본다(엔진 rects 직접 사용 금지).
+// 엔진은 전체 예약으로 배치하므로 숨긴 카드의 자리는 비어 있고 다른 카드의 위치는 필터와 무관하게 같다.
+const visibleRects = computed(() => {
+  const hidden = hiddenAppointmentIds.value
+  return hidden.size === 0 ? layout.value.rects : layout.value.rects.filter(r => !hidden.has(r.id))
+})
 // redesign Rect → AppointmentRect(appointmentId/columnKey/zIndex). columns 로 columnKey 해석.
-const v2Rects = computed(() => toV2Rects(layout.value.rects, columns.value))
+const v2Rects = computed(() => toV2Rects(visibleRects.value, columns.value))
 
-const rects = computed(() => layout.value.rects)
+const rects = visibleRects
+
+// ── 상태·회원 카운트 = 화면에 그려진 칸의 예약에서 센다 ──
+// BE 집계를 쓰지 않는다 — 조회 창은 화면보다 길고(예약 0건 가정 일수) 경계 칸은 담당자 일부만 보여,
+// 어떤 조건을 보내도 SQL 의 모수와 화면의 카드는 같아질 수 없었다(카드는 없는데 건수만 뜨는 신고).
+// 입력은 페이지 컬럼(columns)의 unit 키와 상태 무관 전체 목록 — 필터·날짜·검색어가 바뀌면 목록·컬럼이
+// 바뀌고 이 값도 같은 tick 에 따라간다. 상태 필터가 켜져 있으면 켠 상태의 숫자 = 그려진 카드 수,
+// 다른 상태의 숫자 = 같은 칸에 있지만 필터로 숨긴 카드 수.
+// 조건이 바뀐 재조회가 떠 있는 동안(appointmentsStale)은 목록이 이전 조건의 것이라 0 으로 보인다 —
+// 이전 조건의 숫자가 잠시 남아 새 조건의 값처럼 읽히지 않게. 같은 조건의 재조회(SSE)는 그대로 센다.
+const boardStatistics = computed(() =>
+  countBoardStatistics(
+    appointmentsStale.value ? [] : appointments.value,
+    columns.value.map(c => c.unit.key),
+    dataType.value,
+  ),
+)
 
 // ── 인터랙션 composable (페이지-로컬 격리, 공유 store 변경 없음) ──
 // AppointmentCard 는 hover/popover/drag/resize 4 inject 를 null 가드 없이 즉시 사용 → 모두 존재해야 함.
@@ -643,42 +762,39 @@ watch(serviceUnavailable, async (msg) => {
   }
 })
 
-// validate: closedDate/closedWeekday(invalid) / outsideHours(warning) / 과거(invalid). getBlockedReason 재사용.
-const HARD_BLOCKED_REASONS = new Set(['closedDate', 'closedWeekday'])
-const WARNING_REASONS = new Set(['outsideHours'])
+// validate: 운영시간 밖(휴무·휴게시간·운영종료)은 막지 않고 확인 팝업으로 넘긴다 — 등록(ReservationPopup)과 같은 규칙.
+//   ★하드 차단을 두지 않는 이유: 등록은 확인 후 허용인데 이동만 무안내로 되돌리면, 같은 시각이
+//     등록은 되고 이동은 안 되는 상태가 된다. 사용자에겐 "아무 반응 없이 카드가 튕기는" 것으로만 보인다.
+//   ★과거 시각도 막지 않는다 — 지난 예약의 시각 보정을 허용한다(TC 003-03 v0.3).
+// 사유 우선순위(휴무 > 휴게시간 > 운영종료)는 pickBlockWarning 이 SSOT — 등록 경로와 같은 판정을 쓴다.
 function minuteToDate(dateStr, minute) {
   const h = Math.floor(minute / 60)
   const m = minute % 60
   return dayjs(dateStr).hour(h).minute(m).second(0).toDate()
 }
-function isPastDateTime(date, startMinute) {
+/** 놓을 구간을 셀 단위로 훑어 안내할 사유 하나를 고른다. 없으면 null. */
+function scanWarning(date, resourceId, startMinute, endMinute) {
   const step = ruleCellDuration.value || 30
-  const bandEndMinute = Math.ceil((startMinute + 1) / step) * step
-  return dayjs(minuteToDate(date, bandEndMinute)).isBefore(dayjs())
-}
-function validateDropPosition(appointmentId, columnKey, date, resourceId, startMinute, endMinute) {
-  if (isPastDateTime(date, startMinute)) return { isValid: false, reason: 'past' }
-  const step = ruleCellDuration.value || 30
-  let warningReason = null
+  let warning = null
   for (let m = startMinute; m < endMinute; m += step) {
-    const result = getBlockedReason(minuteToDate(date, m), resourceId)
-    if (HARD_BLOCKED_REASONS.has(result.reason)) return { isValid: false, reason: result.reason }
-    if (WARNING_REASONS.has(result.reason)) warningReason = result.reason
+    warning = pickBlockWarning(warning, getBlockedReason(minuteToDate(date, m), resourceId).reason)
   }
-  return warningReason ? { isValid: true, warning: warningReason } : { isValid: true }
+  return warning
+}
+// ★ 두 함수 모두 isValid 는 항상 true 다 — 휴무·휴게시간은 막지 않고 확인만 받는 것이 정책이라
+//   여기서 차단되는 경우가 없다. "검증"이라는 이름과 달리 실제로 고르는 것은 warning(안내 사유) 뿐이다.
+//   isValid 를 남겨둔 것은 죽은 값이라서가 아니라 drag/resize 컴포저블이 그것을 소비하기 때문이다
+//   (프리뷰의 is-invalid 빨간 표시 + drop 발행 게이트). 언젠가 정말 막아야 하면 여기서 false 를
+//   돌려주면 되고, 컴포저블 쪽은 이미 그 값을 처리한다. 호출부에 !isValid 방어를 다시 두지 않는다.
+function validateDropPosition(appointmentId, columnKey, date, resourceId, startMinute, endMinute) {
+  const warning = scanWarning(date, resourceId, startMinute, endMinute)
+  return warning ? { isValid: true, warning } : { isValid: true }
 }
 function validateResizePosition(appointmentId, columnKey, startMinute, endMinute) {
   const col = v2Columns.value.find(c => c.key === columnKey)
   if (!col) return { isValid: true }
-  if (isPastDateTime(col.date, startMinute)) return { isValid: false, reason: 'past' }
-  const step = ruleCellDuration.value || 30
-  let warningReason = null
-  for (let m = startMinute; m < endMinute; m += step) {
-    const result = getBlockedReason(minuteToDate(col.date, m), col.resourceId)
-    if (HARD_BLOCKED_REASONS.has(result.reason)) return { isValid: false, reason: result.reason }
-    if (WARNING_REASONS.has(result.reason)) warningReason = result.reason
-  }
-  return warningReason ? { isValid: true, warning: warningReason } : { isValid: true }
+  const warning = scanWarning(col.date, col.resourceId, startMinute, endMinute)
+  return warning ? { isValid: true, warning } : { isValid: true }
 }
 
 // 의사 이름 resolver (drag adapter용, 이름키 정합)
@@ -686,15 +802,30 @@ function resolveDoctorName(doctorName) {
   return doctors.value.find(d => d.id === doctorName)?.text ?? doctorName
 }
 
+/** 운영시간 밖으로 놓을 때의 확인 — 문구는 등록(ReservationPopup)과 같은 labelBlockedReason 을 쓴다.
+ *  라벨을 여기서 다시 적으면 사유가 늘 때 두 경로가 갈라진다. */
+async function confirmBlockedMove(doctorName, warning) {
+  const label = labelBlockedReason(warning) || '운영종료 시간'
+  return dialog.confirm(`해당 시간에 ${doctorName}님은 ${label}입니다.\n예약을 등록하시겠습니까?`, { title: '예약 확인' })
+}
+
+// 이동(drop·변경 모드)은 예약을 통째로 다시 놓는 것이라, 격자 밖으로 저장돼 있던 예약도
+// 이 기회에 예약 단위 격자로 맞춘다. 규칙은 예약 수정 화면과 동일(내림·최소 한 칸).
+// 시간축 검증(운영시간 밖 확인창)보다 먼저 적용해야 확인창이 실제 저장될 시간을 보고 뜬다.
+// ※ resize 는 제외한다 — 잡지 않은 반대쪽 끝을 건드리지 않는 것이 resize 의 규약이다.
+function toBookingGrid(result) {
+  const { startMinute, endMinute } = normalizeRangeToGrid(result.newStartMinute, result.newEndMinute, STEP_MIN)
+  return { ...result, newStartMinute: startMinute, newEndMinute: endMinute }
+}
+
 // drop/resize → bookStore 저장 (raw 원본 + dragResultAdapter → modifyAppointment → onCardCallback(triggerSearch))
-async function handleDrop(result) {
+async function handleDrop(rawResult) {
+  const result = toBookingGrid(rawResult)
   const raw = appointments.value.find(a => a.id === result.appointmentId)
   if (!raw) return
   const validation = validateDropPosition(result.appointmentId, result.toColumnKey, result.toDate, result.toResourceId, result.newStartMinute, result.newEndMinute)
-  if (!validation.isValid) return
   if (validation.warning) {
-    const doctorName = resolveDoctorName(result.toResourceId) || ''
-    const ok = await dialog.confirm(`해당 시간에 ${doctorName}님은 운영종료 시간입니다.\n예약을 등록하시겠습니까?`, { title: '예약 확인' })
+    const ok = await confirmBlockedMove(resolveDoctorName(result.toResourceId) || '', validation.warning)
     if (!ok) return
   }
   const request = dragResultToBookItemRequest(result, raw, resolveDoctorName)
@@ -706,11 +837,9 @@ async function handleResize(result) {
   const raw = appointments.value.find(a => a.id === result.appointmentId)
   if (!raw) return
   const validation = validateResizePosition(result.appointmentId, result.columnKey, result.newStartMinute, result.newEndMinute)
-  if (!validation.isValid) return
   if (validation.warning) {
     const col = v2Columns.value.find(c => c.key === result.columnKey)
-    const doctorName = col?.resourceLabel || ''
-    const ok = await dialog.confirm(`해당 시간에 ${doctorName}님은 운영종료 시간입니다.\n예약을 등록하시겠습니까?`, { title: '예약 확인' })
+    const ok = await confirmBlockedMove(col?.resourceLabel || '', validation.warning)
     if (!ok) return
   }
   const request = resizeResultToBookItemRequest(result, raw)
@@ -738,18 +867,22 @@ function rescheduleGetOrigin(appointmentId) {
   return { appointmentId, fromColumnKey, startMinute, endMinute: startMinute + durationMin }
 }
 // 변경 모드 전용 commit — handleDrop 과 동일하나 raw 를 윈도우 조회 대신 begin 캡처본에서 가져온다.
-async function handleRescheduleCommit(result) {
+// 고른 칸의 시각을 그대로 쓰면 시간 단위 설정이 10·20·45분일 때 격자 밖 시각이 저장되므로
+// handleDrop 과 같은 toBookingGrid 를 거친다.
+async function handleRescheduleCommit(rawResult) {
+  const result = toBookingGrid(rawResult)
   const raw = rescheduleOriginRaw
   if (!raw || raw.id !== result.appointmentId) return
   const validation = validateDropPosition(result.appointmentId, result.toColumnKey, result.toDate, result.toResourceId, result.newStartMinute, result.newEndMinute)
-  if (!validation.isValid) return
   if (validation.warning) {
-    const doctorName = resolveDoctorName(result.toResourceId) || ''
-    const ok = await dialog.confirm(`해당 시간에 ${doctorName}님은 운영종료 시간입니다.\n예약을 등록하시겠습니까?`, { title: '예약 확인' })
+    const ok = await confirmBlockedMove(resolveDoctorName(result.toResourceId) || '', validation.warning)
     if (!ok) return
   }
   const request = dragResultToBookItemRequest(result, raw, resolveDoctorName)
   if (!request) return
+  // 저장이 확정된 지점에서만 변경 모드를 끝낸다 — 위 return 들(확인창 '아니오' 포함)로 중단되면
+  // 배너가 살아 있어 사용자가 다른 자리를 다시 고를 수 있다.
+  reschedule.cancel()
   const response = await bookStore.modifyAppointment(result.appointmentId, request)
   rescheduleOriginRaw = null
   onCardCallback(response)
@@ -762,7 +895,8 @@ const reschedule = useSchedulerReschedule({
 provide('schedulerReschedule', reschedule)
 // 변경 모드 종료 시 캡처본(가비지) 정리. commit 은 handleRescheduleCommit 이 자체 null 처리하나,
 // ESC/배너X 취소 경로는 cancel() 이 composable 내부라 page 변수를 못 건드림 → active=false 전이로 보강.
-// (watch 는 flush 지연 — pickSlot 의 cancel()→onCommit 동기 호출 시 raw 는 이미 캡처돼 영향 없음.)
+// (watch 는 flush 지연 — handleRescheduleCommit 이 저장 직전 cancel() 을 불러도 raw 는 함수 진입 시
+//  이미 지역변수로 잡아둔 뒤라 영향 없음.)
 watch(() => reschedule.active.value, (active) => {
   if (!active) rescheduleOriginRaw = null
 })
@@ -785,9 +919,13 @@ onBeforeUnmount(() => {
 // ── ReservationPopup (예약 생성/수정) — 공유 컴포넌트 ──
 const reservationPopupVisible = ref(false)
 const reservationPopupPayload = ref(null)
+// 저장 요청 진행 중 — 연타로 등록이 두 번 나가는 것을 막는다(팝업 버튼 비활성도 이 값을 본다).
+const reservationSaving = ref(false)
+// 담당자 칸 뱃지와 같은 판정 — 담당자가 그날 진료로 정했으면 사업장 휴무가어도 휴무일이 아니다(R11).
 const reservationPopupIsDayOff = computed(() => {
-  const startDate = reservationPopupPayload.value?.startDateTime
-  return startDate ? isHospitalClosedDayForHeader(startDate) : false
+  const p = reservationPopupPayload.value
+  const startDate = p?.startDateTime
+  return startDate ? isHospitalClosedDayForDoctor(startDate, p?.doctorName) : false
 })
 // 빈 셀 클릭 → 변경 모드면 슬롯 선택(pickSlot), 아니면 예약 생성(ADD)
 function onGridCellClick(payload) {
@@ -818,15 +956,28 @@ function handleEdit(appointmentId) {
 function closeReservationPopup() {
   reservationPopupVisible.value = false
 }
+// 성공일 때만 닫는다. 실패에도 닫으면 ReservationPopup 이 visible=false 를 감시해
+// resetFormState 를 돌리므로 사용자가 입력한 값이 통째로 사라진다.
+// (운영일정 설정 저장의 "성공 시에만 팝업 닫기" 와 같은 규약)
 async function handleSaveReservation(payload) {
-  const response = await bookStore.addAppointment(payload)
-  onCardCallback(response)
-  closeReservationPopup()
+  if (reservationSaving.value) return // 연타 — 앞 요청이 끝나기 전에는 다시 보내지 않는다
+  reservationSaving.value = true
+  try {
+    const response = await bookStore.addAppointment(payload)
+    if (onCardCallback(response)) closeReservationPopup()
+  } finally {
+    reservationSaving.value = false
+  }
 }
 async function handleModifyReservation(payload) {
-  const response = await bookStore.modifyAppointment(payload.id, payload)
-  onCardCallback(response)
-  closeReservationPopup()
+  if (reservationSaving.value) return
+  reservationSaving.value = true
+  try {
+    const response = await bookStore.modifyAppointment(payload.id, payload)
+    if (onCardCallback(response)) closeReservationPopup()
+  } finally {
+    reservationSaving.value = false
+  }
 }
 // 팝업 상호 배제: ReservationPopup ↔ ⋮popover
 watch(reservationPopupVisible, (v) => { if (v) popover.close() })
@@ -859,15 +1010,17 @@ provide('schedulerResize', resize)
 // 페이지는 결과만 받아 갱신(filterStore.triggerSearch — searchVersion watch chain, load 직접호출 금지 준수)+토스트.
 const SUCCESS_MESSAGE = '정상처리 되었습니다.'
 const FAIL_MESSAGE = '처리실패 되었습니다.'
+// 성공 여부를 돌려준다 — 호출부가 'succeed' 판정을 베끼지 않고 이 결과만 보게 한다.
 function onCardCallback(response) {
   if (response?.code === 'succeed') {
     filterStore.triggerSearch()
     const toast = push.success(SUCCESS_MESSAGE)
     setTimeout(() => toast.clear(), 3000)
-  } else {
-    const msg = response?.message
-    push.error(msg && msg !== '500' && msg !== 500 ? msg : FAIL_MESSAGE)
+    return true
   }
+  const msg = response?.message
+  push.error(msg && msg !== '500' && msg !== 500 ? msg : FAIL_MESSAGE)
+  return false
 }
 // @delete/@status-change 는 카드가 emit 하지 않음(카드 내부 bookStore 직접 호출→onCardCallback) — no-op.
 function onCardDelete() {}
@@ -876,9 +1029,20 @@ function onCardStatusChange() {}
 // ── 검색 드롭다운 pick ──
 // 최근 예약 항목 pick → 해당 날짜 이동(setPeriodDate → searchVersion·periodDate watch chain) + 대상 카드 하이라이트.
 const SEARCH_HIGHLIGHT_MS = 5000
+// 날짜 이동 pick 은 재조회가 끝나야 대상 카드가 그려진다 — 그때까지 스크롤을 미뤄두고 기다리는 상한.
+const SEARCH_SCROLL_WAIT_MS = 5000
 const searchHighlightId = ref(null)
 provide('schedulerSearchHighlight', { highlightedId: searchHighlightId })
 let searchHighlightTimer = null
+// 스크롤이 성사되는(또는 포기하는) 시점에 5초를 센다 — pick 즉시 세면 재조회가 느린 환경에서
+// 사용자가 카드에 도착했을 땐 이미 강조가 꺼져 있다.
+function startHighlightTimer() {
+  if (searchHighlightTimer) clearTimeout(searchHighlightTimer)
+  searchHighlightTimer = setTimeout(() => {
+    searchHighlightId.value = null
+    searchHighlightTimer = null
+  }, SEARCH_HIGHLIGHT_MS)
+}
 // pick 한 예약 의사(staffName)가 속한 팀명 — 어느 팀에도 없으면 null(미지정 그룹).
 function findTeamOfDoctor(staffName) {
   const target = normalizeName(staffName)
@@ -906,6 +1070,100 @@ function focusDoctorColumn(targetDate, doctorName) {
     acc += Math.max(1, u.slots)
   }
 }
+// ── 대상 카드로 세로 스크롤 ──
+// 가로(담당자 컬럼)는 focusDoctorColumn 의 페이징이 맡고, 세로(시간축)는 여기가 맡는다.
+// 예약시간 단위가 10분이면 보드 높이가 3배가 되어 오후 예약은 진입 시 화면 밖에 있다.
+let pendingScrollId = null
+let pendingScrollTimer = null
+let detachUserScrollGuard = null
+
+function clearPendingScroll() {
+  pendingScrollId = null
+  if (pendingScrollTimer) {
+    clearTimeout(pendingScrollTimer)
+    pendingScrollTimer = null
+  }
+  if (detachUserScrollGuard) {
+    detachUserScrollGuard()
+    detachUserScrollGuard = null
+  }
+}
+
+/** 대기가 끝났다(성사·포기 무관) — 미뤄둔 스크롤을 접고 강조 타이머를 시작한다. */
+function finishPendingScroll() {
+  clearPendingScroll()
+  startHighlightTimer()
+}
+
+/** 기다리는 동안 사용자가 직접 스크롤하면 자동 스크롤은 물러난다 — 보고 있는 자리를 뺏지 않는다. */
+function bindUserScrollGuard() {
+  const onUserScroll = () => finishPendingScroll()
+  window.addEventListener('wheel', onUserScroll, { passive: true, capture: true })
+  window.addEventListener('touchmove', onUserScroll, { passive: true, capture: true })
+  detachUserScrollGuard = () => {
+    window.removeEventListener('wheel', onUserScroll, true)
+    window.removeEventListener('touchmove', onUserScroll, true)
+  }
+}
+
+/** 카드 DOM 을 찾아 스크롤. 카드가 아직 안 그려졌으면 false. */
+function scrollToCard(id) {
+  const board = boardEl.value
+  if (!board) return false
+  const card = Array.from(board.querySelectorAll('[data-appointment-id]'))
+    .find(el => el.dataset.appointmentId === id)
+  if (!card) return false
+
+  const container = findScrollContainer(card)
+  const isDocument = container === document.scrollingElement || container === document.documentElement
+  const containerRect = isDocument ? null : container.getBoundingClientRect()
+  const containerTop = containerRect ? containerRect.top : 0
+  const containerBottom = containerRect ? containerRect.bottom : window.innerHeight
+  // sticky 헤더가 덮는 만큼을 뺀 실제 가시 영역. 헤더는 스크롤 위치에 따라 붙었다 떨어지므로 매번 실측한다.
+  const headBottom = boardHeadEl.value?.getBoundingClientRect().bottom ?? containerTop
+  const cardRect = card.getBoundingClientRect()
+
+  const delta = computeScrollDelta({
+    cardTop   : cardRect.top,
+    cardBottom: cardRect.bottom,
+    viewTop   : Math.max(containerTop, headBottom),
+    viewBottom: containerBottom,
+  })
+  if (delta === null) return true // 이미 보인다 — 화면을 흔들지 않는다.
+
+  const maxScrollTop = container.scrollHeight - container.clientHeight
+  container.scrollTop = Math.max(0, Math.min(container.scrollTop + delta, maxScrollTop))
+  return true
+}
+
+/** 대상 카드가 그려져 있으면 즉시 스크롤, 아니면 다음 레이아웃까지 기다린다. */
+async function tryConsumePendingScroll() {
+  if (pendingScrollId === null) return
+  // 드래그·리사이즈·예약변경 중이면 자동 스크롤이 조작을 망친다 — 물러난다.
+  if (interactionLock.isLocked.value) {
+    finishPendingScroll()
+    return
+  }
+  if (!rects.value.some(r => String(r.id) === pendingScrollId)) return
+  const id = pendingScrollId
+  await nextTick()
+  if (pendingScrollId !== id) return // 대기 중 취소되었거나 다른 항목으로 교체됨
+  if (scrollToCard(id)) finishPendingScroll()
+}
+
+function requestScrollToCard(id) {
+  clearPendingScroll()
+  pendingScrollId = String(id)
+  bindUserScrollGuard()
+  // 재조회가 끝내 대상을 데려오지 못해도(상태·회원 필터로 빠졌거나 담당자 컬럼 매칭 실패) 대기가 남지 않게 상한을 둔다.
+  // 운영시간 밖 예약은 여기 해당하지 않는다 — 시간축이 예약 envelope 으로 늘어나 그려진다(computeOperatingRange).
+  pendingScrollTimer = setTimeout(finishPendingScroll, SEARCH_SCROLL_WAIT_MS)
+  tryConsumePendingScroll()
+}
+
+// 재조회·필터 변경으로 카드 집합이 바뀔 때마다 대상이 나타났는지 확인.
+watch(rects, () => { tryConsumePendingScroll() })
+
 async function onRecentPick(item) {
   const d = dayjs(item.startAt)
   if (!d.isValid()) return
@@ -934,14 +1192,11 @@ async function onRecentPick(item) {
     focusDoctorColumn(targetDate, item.staffName)
   }
   searchHighlightId.value = targetId
-  if (searchHighlightTimer) clearTimeout(searchHighlightTimer)
-  searchHighlightTimer = setTimeout(() => {
-    searchHighlightId.value = null
-    searchHighlightTimer = null
-  }, SEARCH_HIGHLIGHT_MS)
+  requestScrollToCard(targetId)
 }
 onBeforeUnmount(() => {
   if (searchHighlightTimer) clearTimeout(searchHighlightTimer)
+  clearPendingScroll()
 })
 
 /** body 전체 높이 = 마지막 band 하단. */
@@ -966,7 +1221,14 @@ const bodyHeight = computed(() => {
 
     <div class="v3-filterStripArea">
       <!-- 공유 검색필터 바 재사용 (예약/진료·날짜·의사·상태·회원·검색·설정). 일별/주별 토글은 V3에서 숨김. -->
-      <SchedulerSearchFilter class="v3-searchfilter" :hide-view-mode="true" :recent-search="true" @pick-recent="onRecentPick" />
+      <SchedulerSearchFilter
+        class="v3-searchfilter"
+        :hide-view-mode="true"
+        :recent-search="true"
+        :state-statistics="boardStatistics.state"
+        :member-statistics="boardStatistics.member"
+        @pick-recent="onRecentPick"
+      />
 
       <!-- 운영시간/담당자 미등록 안내 -->
       <div v-if="redirectReason" class="v3-redirect-notice" role="alert">
@@ -975,6 +1237,17 @@ const bodyHeight = computed(() => {
           운영시간 또는 담당자가 등록되지 않아 예약을 조회할 수 없습니다.
           <b>설정</b>에서 운영시간과 담당자를 등록해 주세요.
         </span>
+      </div>
+
+      <!-- 운영시간 조회 실패(장애) — fallback 렌더가 실패를 "미설정"처럼 위장하지 않게 표면화.
+           미등록 안내(noTreatmentTime)보다 우선한다: site 실패 시 weekly 가 비어 미등록으로 오판되기 때문. -->
+      <div v-else-if="workTimeLoadFailedAny" class="v3-redirect-notice" role="alert">
+        <span class="v3-redirect-notice__icon" aria-hidden="true">!</span>
+        <span class="v3-redirect-notice__text">
+          운영시간 정보를 불러오지 못해 기본 운영시간으로 표시 중입니다.
+          <b>설정<span class="v3-redirect-notice__gear" aria-hidden="true"></span> &gt; 운영시간</b>에서 등록을 권장합니다. (예약 등록은 가능합니다)
+        </span>
+        <button class="v3-redirect-notice__retry" type="button" @click="retryWorkTime">재시도</button>
       </div>
 
       <!-- 운영시간 미등록 안내(비블로킹) — 보드는 로드·예약 등록 가능, 운영종료 상태로 표시. -->
@@ -1035,6 +1308,21 @@ const bodyHeight = computed(() => {
       <!-- 팝업 열림 시 스케줄러 영역 클릭/drag 차단 -->
       <div v-if="isAnyPopupOpen" class="v3-blocker" />
 
+      <!-- 최초 로딩 — 데이터 도착 전 빈 격자를 "없음"으로 오해하지 않도록 덮는다.
+           absolute overlay 라 보드 레이아웃을 밀지 않는다(도착 후 그대로 드러남). -->
+      <div v-if="isInitialLoading" class="v3-loading" role="status" aria-live="polite">
+        <div class="v3-loading__spinner" aria-hidden="true" />
+        <p class="v3-loading__text">예약장부를 불러오는 중입니다</p>
+      </div>
+      <!-- 재조회 — 이미 그려진 화면 위 갱신. 진행바(장식) + 헤더 하단 배지(주 표시, v3-board-head 안).
+           오늘 날짜 헤더가 브랜드색이라 진행바 단독으로는 묻힌다 — 트랙 바탕을 깔고 배지를 병행한다. -->
+      <div v-else-if="isRefreshing" class="v3-refreshing" aria-hidden="true">
+        <span class="v3-refreshing__bar" />
+      </div>
+      <!-- 재조회 중 본문 blur — 갱신 중임을 면으로 표현하고 본문 클릭·드래그를 잠시 막는다.
+           sticky 헤더(z30) 아래(z25)에 깔아 헤더 조작(페이징·날짜 이동)은 막지 않는다. -->
+      <div v-if="isRefreshing" class="v3-refreshing-dim" aria-hidden="true" />
+
       <!-- 오늘 날짜 그룹 좌/우 경계선 — 헤더 날짜셀 브랜드 강조와 한 쌍.
            헤더(날짜행+의사행)와 본문을 하나로 관통해야 해서 보드 최상위에 단일 요소로 둔다.
            헤더 셀/그리드 셀에 나눠 그리면 행 구분선(1px)마다 끊겨 보인다.
@@ -1049,7 +1337,7 @@ const bodyHeight = computed(() => {
       />
       <!-- sticky 헤더 행 (코너 + 헤더) — 일반 흐름의 블록이라 viewport 기준 상단 고정.
            ⚠️ grid item 으로 두면 자기 row 영역에 sticky 가 갇혀 본문 위로 못 따라온다(브라우저 전체 스크롤). -->
-      <div class="v3-board-head">
+      <div ref="boardHeadEl" class="v3-board-head">
         <!-- 좌상단 빈 코너 -->
         <div class="v3-corner" />
 
@@ -1075,6 +1363,12 @@ const bodyHeight = computed(() => {
             <span v-if="fallbackHolidayLabel" class="v3-header-holiday">{{ fallbackHolidayLabel }}</span>
           </div>
         </div>
+        </div>
+
+        <!-- 재조회 배지 — sticky 헤더 하단 중앙에 붙어 스크롤 중에도 시야에 남는다(스케줄러 영역 내 갱신 표시).
+             absolute + pointer-events:none — 레이아웃을 밀지 않고 조작도 막지 않는다. -->
+        <div v-if="isRefreshing" class="v3-refreshing-badge" role="status" aria-live="polite">
+          <span class="v3-refreshing-badge__spinner" aria-hidden="true" />갱신 중
         </div>
       </div>
 
@@ -1173,6 +1467,7 @@ const bodyHeight = computed(() => {
       :payload="reservationPopupPayload"
       :visible="reservationPopupVisible"
       :is-day-off="reservationPopupIsDayOff"
+      :saving="reservationSaving"
       @close="closeReservationPopup"
       @save="handleSaveReservation"
       @modify="handleModifyReservation"
@@ -1227,39 +1522,51 @@ const bodyHeight = computed(() => {
   transform: translateX(-50%);
   z-index: 60002;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  max-width: 520px;
-  padding: 12px 14px 12px 18px;
-  border: 1px solid #f0b27a;
-  border-left: 5px solid var(--scheduler-brand, #2F6FED);
-  border-radius: 8px;
-  background: #fff5ec;
-  box-shadow: 0 6px 20px rgba(235, 97, 0, 0.28);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  width: 400px;
+  max-width: calc(100vw - 16px);
+  min-height: 90px;
+  padding: 20px;
+  border: 1px solid #eee;
+  border-radius: 0;
+  background: #fff;
+  box-sizing: border-box;
+  box-shadow: 0 4px 10px 0 rgba(0, 0, 0, 0.24);
   animation: apptRescheduleBannerIn 0.15s ease;
 }
 .v3-reschedule-banner__text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
-  color: #8a4b00;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #565656;
 }
-.v3-reschedule-banner__text strong { font-weight: 700; }
-.v3-reschedule-banner__text span { font-size: 11px; color: #b06a2a; }
+.v3-reschedule-banner__text strong { font-size: 16px; font-weight: 700; color: #000; }
+.v3-reschedule-banner__text span { font-size: 12px; color: #565656; }
 .v3-reschedule-banner__close {
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: 0;
-  border-radius: 4px;
   background: transparent;
-  color: #8a4b00;
+  cursor: pointer;
+  font-size: 0;
+  color: transparent;
+}
+.v3-reschedule-banner__close::before {
+  content: '\2715';
+  color: #000;
   font-size: 18px;
   line-height: 1;
-  cursor: pointer;
+  transform: translateY(-3px);
 }
-.v3-reschedule-banner__close:hover { background: rgba(235, 97, 0, 0.12); }
 @keyframes apptRescheduleBannerIn {
   from { opacity: 0; transform: translate(-50%, 8px); }
   to { opacity: 1; transform: translate(-50%, 0); }
@@ -1302,6 +1609,31 @@ const bodyHeight = computed(() => {
 }
 .v3-redirect-notice__text b {
   font-weight: 700;
+}
+.v3-redirect-notice__retry {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid #d9a06b;
+  border-radius: 4px;
+  background: #fff;
+  color: #8a4b00;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.v3-redirect-notice__retry:hover {
+  background: #fdeadd;
+}
+/* "설정" 글자 옆 톱니 표기(장식) — 검색필터 설정 버튼(scheduleSearchFilter__settingBtn)과 같은 아이콘.
+   사용자가 어느 버튼을 말하는지 알아보게 하는 인지용이라 클릭 동작은 없다. */
+.v3-redirect-notice__gear {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin: 0 1px 0 3px;
+  vertical-align: -2px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23424242' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/%3E%3C/svg%3E") no-repeat center / 14px 14px;
 }
 /* 줄달력 행 — 검색필터 아래 한 행, 가로 꽉 채움 */
 .v3-stripRow {
@@ -1377,6 +1709,102 @@ const bodyHeight = computed(() => {
   position: absolute;
   inset: 0;
   z-index: 40;
+}
+/* 최초 로딩 오버레이 — 보드 위 z45(blocker z40 위). 도착 전 빈 격자를 가린다.
+   높이는 최소값만 두어(뷰포트 절반) 데이터 도착 후 보드 높이가 튀지 않게 한다. */
+.v3-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  min-height: 50vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.82);
+}
+.v3-loading__spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--scheduler-border, #d0d0d0);
+  border-top-color: var(--scheduler-brand, #2F6FED);
+  border-radius: 50%;
+  animation: v3-spin 0.8s linear infinite;
+}
+.v3-loading__text {
+  margin: 0;
+  font-size: 13px;
+  color: #666;
+}
+@keyframes v3-spin {
+  to { transform: rotate(360deg); }
+}
+/* 접근성 — 모션 최소화 설정이면 회전 대신 정지된 링으로 표시. */
+@media (prefers-reduced-motion: reduce) {
+  .v3-loading__spinner { animation: none; }
+  .v3-refreshing__bar { animation: none; width: 100%; opacity: 0.6; }
+  .v3-refreshing-badge__spinner { animation: none; }
+}
+/* 재조회 진행바 — 화면을 덮지 않는다(조작 계속 가능). 보드 상단에 얇게.
+   트랙(옅은 바탕)을 함께 그린다 — 오늘 날짜 헤더 셀이 브랜드색이라 바만 두면 같은 색에 묻힌다. */
+.v3-refreshing {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 45;
+  overflow: hidden;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.65);
+}
+.v3-refreshing__bar {
+  display: block;
+  width: 30%;
+  height: 100%;
+  background: var(--scheduler-brand, #2F6FED);
+  animation: v3-progress 1.1s ease-in-out infinite;
+}
+@keyframes v3-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+/* 재조회 배지 — sticky 헤더(.v3-board-head) 하단 중앙. 헤더가 sticky 라 스크롤 중에도 시야에 남는다. */
+.v3-refreshing-badge {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border: 1px solid var(--scheduler-border, #d0d0d0);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.16);
+  font-size: 14px;
+  font-weight: 500;
+  color: #444;
+  pointer-events: none;
+}
+.v3-refreshing-badge__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--scheduler-border, #d0d0d0);
+  border-top-color: var(--scheduler-brand, #2F6FED);
+  border-radius: 50%;
+  animation: v3-spin 0.8s linear infinite;
+}
+/* 재조회 중 본문 blur — 갱신 면 표현 + 본문 클릭·드래그 차단(pointer-events 기본 auto).
+   z25 = 카드 위 · sticky 헤더(z30)/page-nav(z35) 아래 — 페이징 등 이동 조작은 계속 가능하다. */
+.v3-refreshing-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  backdrop-filter: blur(2px);
+  background: rgba(255, 255, 255, 0.35);
 }
 .v3-corner {
   background: var(--scheduler-header-bg, #f4f4f4);

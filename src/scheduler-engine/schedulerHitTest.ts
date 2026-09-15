@@ -15,6 +15,7 @@ import type {
   HitTestInput,
   HitTestResult,
 } from './types/scheduler.types'
+import { EMPTY_ROW_GAP_PX } from './redesign/layoutPipeline'
 
 /**
  * hitTest에서 band를 찾지 못했을 때 사용하는 sentinel 값.
@@ -35,10 +36,13 @@ export function isValidMinute(minute: number): boolean {
  */
 export function hitTest(input: HitTestInput): HitTestResult {
   const { mouseX, mouseY, columns, bandInfos, patientSlotSpan = 1 } = input
-  const N = Math.max(1, patientSlotSpan)
 
   // X → column 매핑
   const column = findColumnAtX(mouseX, columns)
+
+  // sub-col 분모는 컬럼별 실제 레인 수(column.slots) 우선 — 모델 A 는 컬럼마다 레인폭이 다르다.
+  // 전역 patientSlotSpan 으로 나누면 1레인 컬럼에서 hit 이 조각난 폭으로 잡힌다. 미전달(V2)이면 폴백.
+  const N = Math.max(1, column?.slots ?? patientSlotSpan)
 
   // X → sub-column 매핑 (column 내부)
   let subColIndex = 0
@@ -107,6 +111,53 @@ export function minuteToBandTopPx(
 }
 
 /**
+ * band 의 '카드 바닥' = 마지막 행의 바닥. band 하단 여백(EMPTY_ROW_GAP_PX)은 그 시간대에
+ * 예약을 추가하는 클릭 자리라 카드가 쓰지 않으므로 제외한다 — 그래야 resize 프리뷰 바닥이
+ * 실제 카드 바닥과 일치한다.
+ * ⭐판정은 `hasGap`(여백이 실제로 붙었는가)이다. `maxRows > 0` 로 보면 카드가 지나가기만 하는
+ * band(시작 카드 0 · 여백은 있음)에서 바닥을 여백까지 끌어내려 그 추가 자리를 덮는다.
+ * hasGap 미전달(TimeSlot 등 구 호환)이면 종전대로 maxRows 로 떨어진다.
+ */
+function cardBottomOfBand(band: BandCompatible): number {
+  const bottom = band.topPx + band.heightPx
+  const hasGap = band.hasGap ?? (band.maxRows ?? 0) > 0
+  return hasGap ? bottom - EMPTY_ROW_GAP_PX : bottom
+}
+
+/**
+ * minute → band 내부까지 시간 비례로 보간한 topPx
+ *
+ * 현재 시각선처럼 band 경계에 걸리지 않는 임의의 분을 그릴 때 사용.
+ * minuteToBandTopPx 는 band 시작 경계로 snap 하므로, 예약단위가 커질수록
+ * (45분 등) 선이 최대 '단위-1분' 만큼 위로 밀린다 — 그 용도로는 쓰지 않는다.
+ *
+ * band 높이는 시간 비례가 아니라 예약 행 수로 정해지므로(computeBandHeights),
+ * 보간은 band 안에서의 상대 위치만 시간 비례로 맞춘다.
+ */
+export function minuteToBandOffsetPx(
+  minute: number,
+  bandInfos: BandCompatible[]
+): number {
+  if (bandInfos.length === 0) return 0
+
+  for (const band of bandInfos) {
+    if (minute >= band.startMinute && minute < band.endMinute) {
+      const span = band.endMinute - band.startMinute
+      if (span <= 0) return band.topPx
+      return band.topPx + ((minute - band.startMinute) / span) * band.heightPx
+    }
+  }
+
+  // 범위 밖: 마지막 band 하단
+  const last = bandInfos[bandInfos.length - 1]
+  if (minute >= last.endMinute) {
+    return last.topPx + last.heightPx
+  }
+
+  return bandInfos[0].topPx
+}
+
+/**
  * minute → 해당 band의 bottomPx (band 종료 경계)
  *
  * resize/drag preview의 height 계산에 사용.
@@ -122,7 +173,7 @@ export function minuteToBandBottomPx(
   // 이 경우 해당 band의 하단을 반환
   for (const band of bandInfos) {
     if (minute > band.startMinute && minute <= band.endMinute) {
-      return band.topPx + band.heightPx
+      return cardBottomOfBand(band)
     }
   }
 
@@ -132,8 +183,7 @@ export function minuteToBandBottomPx(
   }
 
   // 범위 밖
-  const last = bandInfos[bandInfos.length - 1]
-  return last.topPx + last.heightPx
+  return cardBottomOfBand(bandInfos[bandInfos.length - 1])
 }
 
 /**

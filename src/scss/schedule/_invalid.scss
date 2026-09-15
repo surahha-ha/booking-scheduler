@@ -1,0 +1,20 @@
+/* src/scss/schedule/_invalid.scss
+ * ======================================================================
+ * 필수·오류 표시 — 한 벌.
+ * - 규약: 표시할 요소에 data-invalid="true" 를 붙이고, 스타일은 이 믹스인만 쓴다.
+ *   예약 팝업(.scheduleField)·운영일정 설정(요일 칩·시간 입력칸·팀 구성원·일자 줄)·UiTimeSelect 가 공유한다.
+ *   같은 값이 파일마다 리터럴로 있으면 한 화면 안에서 오류 색이 갈린다.
+ * - 값은 v3/_tokens.scss 의 --scheduler-invalid 가 소유한다(여기서는 fallback 만).
+ * - 공휴일 빨강($color-danger #F03823, 헤더 #d32f2f)과는 다른 색이다 — 분리 유지가 정책이다.
+ * ====================================================================== */
+
+/* 테두리 + 바깥 링 — 입력칸·칩·영역 */
+@mixin outline {
+  border-color: var(--scheduler-invalid, #e54848);
+  box-shadow: 0 0 0 2px var(--scheduler-invalid-ring, rgba(229, 72, 72, 0.15));
+}
+
+/* 글자색 — 셀 안처럼 테두리를 그릴 수 없는 자리 */
+@mixin text {
+  color: var(--scheduler-invalid, #e54848);
+}

@@ -1,0 +1,57 @@
+@mixin common-popup-style {
+  .dx-popup-content {
+    padding: 0 20px 20px 20px !important; /* 공통 패딩 적용 */
+    overflow: visible;
+    box-sizing: border-box;
+    height: 100%;
+  }
+
+  .dx-overlay-content {
+    box-sizing: border-box;
+  }
+
+  &.dx-popup-wrapper > .dx-overlay-content {
+    border-radius: 0;
+    box-shadow: 0 4px 10px 0 rgba(0, 0, 0, 0.24);
+  }
+
+  /* Title & Close Button overrides */
+  .dx-popup-title {
+    padding: 20px;
+    border-bottom: 0;
+    background-color: #fff;
+    color: #000;
+    font-size: 18px;
+    font-weight: 600;
+
+    &.dx-toolbar .dx-toolbar-label {
+      color: #000;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .dx-closebutton {
+      /* 닫기 버튼 위치/스타일 미세조정 필요시 */
+      // margin-right: 10px;
+
+      .dx-button-content {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+      }
+
+      .dx-icon-close {
+        font-size: 21px;
+        line-height: 1;
+        transform: translateY(-3px);
+        color: #333;
+      }
+      /* Close Icon 변경 (예: 얇은 X) */
+      .dx-icon-close::before {
+        content: '\2715'; 
+        color: #000;
+      }
+    }
+  }
+}

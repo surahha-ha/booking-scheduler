@@ -1,13 +1,11 @@
 import {defineStore} from 'pinia';
 import {computed, ref} from 'vue';
 import {
-    addDoctors,
     type ApiResponse,
     type DoctorPayload,
     getDoctors,
     syncDoctors
 } from '@/api/staffApi';
-import {push} from 'notivue';
 import dayjs from 'dayjs';
 import {
     getSiteWorkHours,
@@ -20,11 +18,16 @@ import {
     type SiteDateHours,
     type SiteHolidayHours,
     type StaffWorkHoursResponse,
+    type StaffMonthlyOffRule,
+    type StaffHolidayOpenYn,
+    type WorkTimeOverride,
     type WorkHoursRow,
     type TreatmentSettingsPayload
 } from '@/api/siteApi';
 import {fetchPublicHolidays} from '@/api/publicHolidayApi';
 import {DEFAULT_END, DEFAULT_START} from '@/constants/schedulerBoard';
+import {STEP_MIN} from '@/constants/componentConstants';
+import {floorToStep} from '@/scheduler-engine/schedulerSnapGrid';
 
 // 운영시간·담당자 store
 export type Doctor = {
@@ -79,11 +82,29 @@ export type SchedulerRuleSet = {
      *  미설정일 때만 holiday 운영시간을 쓴다. 단 휴게는 사업장만 소유하므로 담당자 값을 쓸 때도
      *  이 날짜의 기관 휴게(= 공휴일 휴게)로 간다 — pickDailySchedule·resolveUnitHours 같은 규칙. */
     holidayOpenDates?: Set<string> | string[] | null;
-    /** 날짜("YYYY-MM-DD") → 그 날짜에 **실제로 저장된** 사업장 운영시간. 원천 = 사업장 설정 일자별 운영시간.
-     *  지정일자(임시진료)의 시간이며, 없으면 그 날짜는 종전대로 종일 열림으로 본다.
+    /** 날짜("YYYY-MM-DD") → 그 날짜에 **실제로 저장된** 운영시간.
+     *  - 사업장 축: 원천 = 사업장 설정 일자별 운영시간. 지정일자(임시진료)의 시간이며, 없으면 그 날짜는 종전대로 종일 열림으로 본다.
+     *  - 담당자 축: 원천 = 자체 특정일자 진료(override, 시분 있음). 기관 휴게를 얹어 담는다(staffOverridesToDailyMap).
      *  ★요일·공휴일보다 우선한다 — 날짜를 콕 집어 정한 값이라 의도가 가장 구체적이다
-     *  (BE 운영중 판정도 "일자별 → 공휴일 → 요일별" 순서다). */
+     *  (BE 운영중 판정도 "일자별 → 공휴일 → 요일별" 순서다). 담당자 것은 사업장 것보다도 먼저다(§3-1-1). */
     dailyByDate?: Record<string, DailySchedule> | null;
+    /** 이 담당자가 **진료로 정한** 날짜·요일 — 사업장 휴무를 덮는다(R11: 담당자 우선).
+     *  사업장 축에는 쓰지 않는다. 기관의 임시진료 지정일은 종전대로 holidayWorkDates 다.
+     *  ★자기 휴무(closedDates·closedWeekdays)이 먼저다 — 담당자 축 안에서는 일자 > 요일. */
+    workDates?: Set<string> | string[] | null;
+    workWeekdays?: Set<number> | number[] | null;
+    /** 사업장 휴무를 출처별로 다시 가른 것 + 그 창의 공휴일 — 사업장 축에만 채운다(buildHolidayClosure 참조). */
+    designatedOffDates?: Set<string> | string[] | null;
+    recurringClosedDates?: Set<string> | string[] | null;
+    publicHolidayDates?: Set<string> | string[] | null;
+    /** 이 담당자가 그 축을 **하나도 정하지 않아** 아직 사업장을 따라가는가 — 담당자 축에만 채운다.
+     *  상속은 축 단위다(§4-2): 요일 축·일자 축 각각, 스스로 하나라도 정하면 그 축은 기관을 따라가지 않는다.
+     *  공휴일 축은 여기 없다 — `HOLIDAY_OPEN_YN` 이 NOT NULL 2상태라 늘 자기 값이고, 상속은 런타임이 아니라
+     *  팀 배치 시점 복사로 끝난다(§3-2).
+     *  화면(SchedulerSettingsTreatmentSetting.inheritedInstitutionOff)과 같은 규칙이어야 한다 —
+     *  갈리면 설정에서 진료로 보이는 날에 보드가 예약을 막는다. */
+    inheritsHospitalDateOff?: boolean;
+    inheritsHospitalWeekdayOff?: boolean;
 };
 
 export type DoctorRuleMap = Record<string, SchedulerRuleSet | null | undefined>;
@@ -125,10 +146,6 @@ function hmToMinutes(hm: string | number | null | undefined): number | null {
     if (!Number.isFinite(h) || !Number.isFinite(m) || m < 0 || m >= 60) return null;
 
     return h * 60 + m;
-}
-
-function floorToStep(min: number, step: number) {
-    return Math.floor(min / step) * step;
 }
 
 function ceilToStep(min: number, step: number) {
@@ -188,6 +205,35 @@ export function workHoursRowToDailySchedule(
 
     const breaks = clampBreaksToOpen(open, institutionBreaks ?? []);
     return {dayOffYn: 'N', open, breaks: breaks.length ? breaks : null, blocks: null};
+}
+
+/**
+ * 담당자 특정일자 진료 목록 → 날짜("YYYY-MM-DD") → DailySchedule Map.
+ *
+ * 시분이 있는 override 만 담는다. 시분 없는 override 는 "그 날짜만 휴무" 이라 closedDates 가 이미 갖고 있다.
+ * 휴게는 담당자가 소유하지 않으므로 **그 날짜의 기관 휴게**(institutionDailyByDate — 기관 지정일자)를,
+ * 없으면 **그 요일의 기관 휴게**(breaksByWeekday)를 얹는다. 요일 행(workHoursRowToDailySchedule)과 같은 규칙.
+ */
+export function staffOverridesToDailyMap(
+    overrides: WorkTimeOverride[],
+    institutionDailyByDate: Record<string, DailySchedule> | null | undefined,
+    breaksByWeekday: Partial<Record<Weekday, { range: TimeRange; type: BreakType }[]>>,
+): Record<string, DailySchedule> {
+    const out: Record<string, DailySchedule> = {};
+    for (const o of overrides) {
+        if (!o?.date) continue;
+        const wd = dayjs(o.date).day() as Weekday;
+        const dateBreaks = institutionDailyByDate?.[o.date]?.breaks;
+        const institutionBreaks = dateBreaks
+            ? dateBreaks.map((b) => ({range: {start: b.start, end: b.end}, type: b.type}))
+            : breaksByWeekday[wd];
+        const daily = workHoursRowToDailySchedule(
+            {dayCd: wd, staffOpenHm: o.overrideOpenHm, staffCloseHm: o.overrideCloseHm},
+            institutionBreaks,
+        );
+        if (daily) out[o.date] = daily;
+    }
+    return out;
 }
 
 /**
@@ -267,6 +313,15 @@ export type HolidayClosure = {
     closedWeekdays: Set<number>;
     holidayWorkDates: Set<string>;
     holidayOpenDates: Set<string>;
+    /** closedDates 를 출처별로 다시 가른 것 — 담당자가 축 단위로 상속할 때 어느 축인지 알아야 한다.
+     *  designatedOffDates = 일자 지정 휴무(일자 축) / recurringClosedDates = 매월 N번째 전개(요일 축).
+     *  closedDates 에서 이 둘을 뺀 나머지가 공휴일에서 온 휴무가고, 그것은 담당자가 상속하지 않는다
+     *  — 공휴일은 담당자 자기 축(holidayOpenYn)이다. */
+    designatedOffDates: Set<string>;
+    recurringClosedDates: Set<string>;
+    /** 그 창(horizon)의 공휴일 전부 — 휴무 여부와 무관하다. 담당자가 공휴일 축을 정했는지에 따라
+     *  기관 공휴일·요일 판정을 적용할지 갈라야 해서, 소비하는 쪽이 "그 날짜가 공휴일인가"를 알아야 한다. */
+    publicHolidayDates: Set<string>;
 };
 
 /**
@@ -301,7 +356,12 @@ export function buildHolidayClosure(
     }
 
     const closedDates = new Set<string>();
-    for (const d of settings.offDates ?? []) closedDates.add(d);
+    const designatedOffDates = new Set<string>();
+    const recurringClosedDates = new Set<string>();
+    for (const d of settings.offDates ?? []) {
+        closedDates.add(d);
+        designatedOffDates.add(d);
+    }
     if (settings.holidayClosedYn) {
         for (const d of publicHolidays) closedDates.add(d);
     }
@@ -315,13 +375,18 @@ export function buildHolidayClosure(
             const occ = Math.ceil(cursor.date() / 7); // 1~5
             if (monthlyRules.some((r) => r.weekday === wd && r.occurrence === occ)) {
                 closedDates.add(cursor.format('YYYY-MM-DD'));
+                recurringClosedDates.add(cursor.format('YYYY-MM-DD'));
             }
             cursor = cursor.add(1, 'day');
         }
     }
 
     // 휴일근무(workDates) rescue → closedDates 에서 제외
-    for (const d of workSet) closedDates.delete(d);
+    for (const d of workSet) {
+        closedDates.delete(d);
+        designatedOffDates.delete(d);
+        recurringClosedDates.delete(d);
+    }
 
     // 공휴일 중 최종적으로 휴무가 아닌 날 = 공휴일 운영시간 적용 대상. rescue 반영 뒤에 계산해야 한다.
     const holidayOpenDates = new Set<string>();
@@ -329,7 +394,76 @@ export function buildHolidayClosure(
         if (!closedDates.has(d)) holidayOpenDates.add(d);
     }
 
-    return {closedDates, closedWeekdays, holidayWorkDates: workSet, holidayOpenDates};
+    return {closedDates, closedWeekdays, holidayWorkDates: workSet, holidayOpenDates,
+        designatedOffDates, recurringClosedDates, publicHolidayDates: new Set(publicHolidays)};
+}
+
+/** MONTHLY expand horizon — today ±1년(연 경계). 기관·담당자 두 축이 같은 창을 써야 판정이 갈리지 않는다. */
+export function offDayHorizon(today = dayjs()): { startYmd: string; endYmd: string } {
+    return {
+        startYmd: today.subtract(1, 'year').startOf('year').format('YYYY-MM-DD'),
+        endYmd: today.add(1, 'year').endOf('year').format('YYYY-MM-DD'),
+    };
+}
+
+/** 담당자 1명의 휴무 원천(S1~S2 계약) → buildHolidayClosure 입력. 사업장 축과 같은 합성기를 쓴다. */
+export type StaffOffSource = {
+    times?: WorkHoursRow[] | null;
+    monthlyOffRules?: StaffMonthlyOffRule[] | null;
+    holidayOpenYn?: StaffHolidayOpenYn;
+};
+
+/**
+ * 담당자 휴무 원천 → HolidaySettingsInput.
+ *
+ * 담당자 축은 표현이 사업장과 다르다 — 매주 휴무는 별도 규칙 목록이 아니라 **운영시간 행의 시분 null** 이고,
+ * 특정일자는 일자 override 행의 시분 null 이다(계획서 §2-3). 그 차이를 여기서 흡수해
+ * 합성은 `buildHolidayClosure` 하나로 유지한다.
+ *
+ * - 매주 휴무(times 시분 null) → WEEKLY 규칙. weekly[wd]=null 과 **중복 표현이지만 가산이다** —
+ *   차단 사유가 `휴무` 대신 `휴무요일(월)` 로 정확해지고, 공휴일 진료일에는 closedWeekdays 검사가
+ *   건너뛰어지므로 weekly=null 쪽이 여전히 담당자 휴무를 지킨다.
+ * - 특정일자 휴무(override 시분 null) → offDates / 특정일자 진료(시분 있음) → workDates(rescue).
+ * - 공휴일: `'N'` 만 휴무로 본다. `null`(미설정)은 사업장 판정 상속이고, `'Y'` 는 사업장이
+ *   공휴일 휴무일 때 그것을 뒤집어야 하는데 **현행 엔진은 그 경로가 없다**(§4-2 각주 · R6).
+ */
+export function staffOffSettingsInput(
+    staff: StaffOffSource,
+    overrides: WorkTimeOverride[] = [],
+): HolidaySettingsInput {
+    const recurringOffRules: HolidaySettingsInput['recurringOffRules'] = [];
+
+    for (const row of staff.times ?? []) {
+        if (row.dayCd < 0 || row.dayCd > 6) continue;
+        if (row.staffOpenHm || row.staffCloseHm) continue;   // 시각이 있으면 진료 요일
+        recurringOffRules.push({dayCd: row.dayCd, repeatTy: 'WEEKLY', monthlyNth: null});
+    }
+    for (const rule of staff.monthlyOffRules ?? []) {
+        if (rule.dayCd < 0 || rule.dayCd > 6) continue;
+        recurringOffRules.push({dayCd: rule.dayCd, repeatTy: 'MONTHLY', monthlyNth: rule.monthlyNth});
+    }
+
+    const offDates: string[] = [];
+    const workDates: string[] = [];
+    for (const o of overrides) {
+        if (!o?.date) continue;
+        if (o.overrideOpenHm || o.overrideCloseHm) workDates.push(o.date);
+        else offDates.push(o.date);
+    }
+
+    return {offDates, workDates, recurringOffRules, holidayClosedYn: staff.holidayOpenYn === 'N'};
+}
+
+/** 담당자 목록 동치 판정 — 순서 포함. 하나라도 다르면 false(교체 필요). */
+function isSameDoctorList(prev: Doctor[], next: Doctor[]): boolean {
+    if (prev.length !== next.length) return false;
+    return prev.every((p, i) => {
+        const n = next[i];
+        return p.id === n.id
+            && p.text === n.text
+            && p.staffId === n.staffId
+            && p.openYn === n.openYn;
+    });
 }
 
 export const useStaffStore = defineStore('staffStore', () => {
@@ -356,6 +490,9 @@ export const useStaffStore = defineStore('staffStore', () => {
 
     /** 의사별 룰 */
     const doctorRules = ref<DoctorRuleMap>({});
+
+    /** 운영시간 조회 실패 표면화(보드 배너용) — fallback 렌더가 실패를 "미설정"처럼 위장하지 않게 원천별로 기록한다. */
+    const workTimeLoadFailed = ref<{ site: boolean; staff: boolean }>({site: false, staff: false});
 
     /** 진료최소시작시간, 진료최대종료시간 */
     const schedulerDayRange = computed(() => {
@@ -389,7 +526,13 @@ export const useStaffStore = defineStore('staffStore', () => {
                 };
             });
 
-            doctors.value.splice(0, doctors.value.length, ...list);
+            // 내용이 같으면 배열을 교체하지 않는다(identity 유지).
+            // 교체하면 doctors 를 쓰는 computed(visibleDoctors→columns→조회 윈도우)가 전부 재평가되고,
+            // 윈도우가 흔들리면 searchVersion 이 다시 올라 loadDoctor 가 또 불리는 되먹임이 생긴다.
+            // 비교는 화면에 반영되는 4필드 + 순서 전체 — openYn 은 ITF(마이페이지)에서 바뀌어 syncDoctor 로 들어온다.
+            if (!isSameDoctorList(doctors.value, list)) {
+                doctors.value.splice(0, doctors.value.length, ...list);
+            }
             return true;
         } catch (e) {
             console.error('[담당자 > 조회] 실패', e);
@@ -408,17 +551,8 @@ export const useStaffStore = defineStore('staffStore', () => {
         }
     }
 
-    async function addDoctorName(params: string) {
-        try {
-            const res = await addDoctors(params);
-            const body = unwrapBody<any>(res);
-            await loadDoctor();
-            return body;
-        } catch (e) {
-            push.error(e?.response?.data?.message || '오류가 발생했습니다.');
-            console.error('[담당자 > 추가] 실패', e);
-        }
-    }
+    // 담당자 추가(addDoctorName)는 제거했다 — 담당자 원장의 원천이 사업장 설정로 넘어가
+    // 등록·수정을 마이페이지가 소유한다. BE 의 담당자 등록 API 도 함께 제거됐다.
 
     /**
      * 담당자 마스터 동기화 — 외부 시스템에서 담당자 갱신 후 로컬 목록 재조회.
@@ -443,24 +577,23 @@ export const useStaffStore = defineStore('staffStore', () => {
      * SSOT = 설정화면 isDisplayedOff. 합성은 buildHolidayClosure(순수) 참조.
      * - 공휴일은 범용 데이터(휴무일과 별개). includePublicHolidays=true 일 때만 합류.
      */
-    async function loadHolidaySettings() {
+    async function loadHolidaySettings(publicHolidaysPromise?: Promise<string[]>) {
         try {
             // 휴무 = 자체(BOOK) SSOT — 자체 휴무일 설정(recurringOffRules/offDates) + 공휴일만.
             // 외부 일정 조회().dayOffYn 은 휴무 소스에서 제외(사용자 확정 2026-06-16). 외부 시스템 전요일 off 가
             // 자체 운영시간/등록 가능 거래처를 전원 휴무로 덮던 문제 해소.
             const [settingsRes, publicHolidays] = await Promise.all([
                 getTreatmentSettings(),
-                fetchPublicHolidays(),
+                publicHolidaysPromise ?? fetchPublicHolidays(),
             ]);
             const body = unwrapBody<TreatmentSettingsPayload>(settingsRes);
             const payload = body?.payload;
 
             // MONTHLY expand horizon: today ±1년(연 경계). 보드 표시/네비 범위 커버.
-            const today = dayjs();
-            const startYmd = today.subtract(1, 'year').startOf('year').format('YYYY-MM-DD');
-            const endYmd = today.add(1, 'year').endOf('year').format('YYYY-MM-DD');
+            const {startYmd, endYmd} = offDayHorizon();
 
-            const {closedDates, closedWeekdays, holidayWorkDates, holidayOpenDates} = buildHolidayClosure(
+            const {closedDates, closedWeekdays, holidayWorkDates, holidayOpenDates,
+                designatedOffDates, recurringClosedDates, publicHolidayDates} = buildHolidayClosure(
                 {
                     offDates: payload?.offDates,
                     workDates: payload?.workDates,
@@ -479,6 +612,9 @@ export const useStaffStore = defineStore('staffStore', () => {
                 closedWeekdays,
                 holidayWorkDates,
                 holidayOpenDates,
+                designatedOffDates,
+                recurringClosedDates,
+                publicHolidayDates,
             };
 
             return body;
@@ -498,49 +634,91 @@ export const useStaffStore = defineStore('staffStore', () => {
      * 휴게(점심·저녁)는 기관만 소유하므로, 담당자 weekly 에도 **같은 요일의 기관 휴게를 넣어 준다**
      * — 의사 컬럼에도 휴게 음영이 그려져야 그 시간에 예약이 잡히지 않는다.
      * (여기는 보드 표시용 조회다. 저장 게이트는 설정 화면(SchedulerSettingsTreatmentSetting)의 몫.)
+     *
+     * ★실패 판정은 원천별 독립(allSettled) + 부분 적용은 한 방향만:
+     *  - staff 실패 → 성공한 site 만 반영. doctorRules 는 마지막 성공값 유지(첫 로드면 빈 상태 → 기관 fallback).
+     *  - site 실패 → 둘 다 보류. 의사 weekly 는 기관 휴게(breaksByWeekday)를 병합해 만들므로
+     *    site 없이 staff 만 반영하면 휴게 음영 없는 의사 컬럼이 그려진다(휴게시간에 예약 가능).
+     *  어느 쪽이든 workTimeLoadFailed 에 기록해 보드가 배너로 표면화한다 — 무음 fallback 은
+     *  실패를 "미설정"과 같은 화면으로 위장시켜 무엇이 고장인지 알 수 없게 하기 때문.
      */
-    async function loadWorkHours() {
-        try {
-            const [siteRes, staffRes] = await Promise.all([getSiteWorkHours(), getStaffWorkHours()]);
-            const siteBody = unwrapBody<SiteWorkHoursResponse>(siteRes);
-            const staffBody = unwrapBody<StaffWorkHoursResponse>(staffRes);
-            const sitePayload = siteBody?.payload;
-            const staffPayload = staffBody?.payload;
+    function settledWorkBody<T>(settled: PromiseSettledResult<unknown>, label: string): ApiResponse<T> | null {
+        // 장애 3형(reject / code!=='succeed' / payload 부재)을 실패로 본다 — "미설정"은 succeed + 빈 목록으로 온다.
+        if (settled.status === 'rejected') {
+            console.error(`[운영시간 > ${label} 조회] 실패`, settled.reason);
+            return null;
+        }
+        const body = unwrapBody<T>(settled.value);
+        if (body?.code && body.code !== 'succeed') {
+            console.error(`[운영시간 > ${label} 조회] 실패`, body?.message);
+            return null;
+        }
+        if (!body?.payload) {
+            console.error(`[운영시간 > ${label} 조회] payload 부재`);
+            return null;
+        }
+        return body;
+    }
 
-            // ── 기관 운영시간: site[] → hospitalRules.weekly + min/max ──
-            // 공휴일 운영시간은 요일 축이 없는 별도 한 세트라 weekly 에 섞지 않는다
-            // (weekly 를 통째로 순회하는 소비처들이 특수 키를 요일로 오인한다).
-            const weekly = institutionToWeekly(sitePayload?.site);
-            const holiday = holidayHoursToDailySchedule(sitePayload?.holidayHours) ?? null;
-            // 지정일자의 그 날짜 시간 — 종일 열림으로 추정하지 않고 저장된 값을 그대로 쓴다.
-            const dailyByDate = dateTimesToDailyMap(sitePayload?.dateTimes);
-            hospitalRules.value = {...hospitalRules.value, weekly, holiday, dailyByDate};
+    async function loadWorkHours(publicHolidaysPromise?: Promise<string[]>) {
+        const [siteSettled, staffSettled] = await Promise.allSettled([getSiteWorkHours(), getStaffWorkHours()]);
+        const siteBody = settledWorkBody<SiteWorkHoursResponse>(siteSettled, '사업장(site)');
+        const staffBody = settledWorkBody<StaffWorkHoursResponse>(staffSettled, '담당자(staff)');
+        workTimeLoadFailed.value = {site: !siteBody, staff: !staffBody};
 
-            // 담당자 운영시간에 얹을 요일별 기관 휴게 (담당자는 휴게를 소유하지 않는다).
-            const breaksByWeekday: Partial<Record<Weekday, { range: TimeRange; type: BreakType }[]>> = {};
-            for (const row of sitePayload?.site ?? []) {
-                const wd = row.dayCd;
-                if (wd == null || wd < 0 || wd > 6) continue;
-                breaksByWeekday[wd as Weekday] = institutionBreakRanges(row);
+        if (!siteBody) return;
+        const sitePayload = siteBody.payload;
+
+        // ── 기관 운영시간: site[] → hospitalRules.weekly + min/max ──
+        // 공휴일 운영시간은 요일 축이 없는 별도 한 세트라 weekly 에 섞지 않는다
+        // (weekly 를 통째로 순회하는 소비처들이 특수 키를 요일로 오인한다).
+        const weekly = institutionToWeekly(sitePayload?.site);
+        const holiday = holidayHoursToDailySchedule(sitePayload?.holidayHours) ?? null;
+        // 지정일자의 그 날짜 시간 — 종일 열림으로 추정하지 않고 저장된 값을 그대로 쓴다.
+        const dailyByDate = dateTimesToDailyMap(sitePayload?.dateTimes);
+        hospitalRules.value = {...hospitalRules.value, weekly, holiday, dailyByDate};
+
+        // 담당자 운영시간에 얹을 요일별 기관 휴게 (담당자는 휴게를 소유하지 않는다).
+        const breaksByWeekday: Partial<Record<Weekday, { range: TimeRange; type: BreakType }[]>> = {};
+        for (const row of sitePayload?.site ?? []) {
+            const wd = row.dayCd;
+            if (wd == null || wd < 0 || wd > 6) continue;
+            breaksByWeekday[wd as Weekday] = institutionBreakRanges(row);
+        }
+
+        // 그리드 시간축은 요일마다 운영시간이 달라도 모두 담아야 하므로 7요일 전체의 최소~최대로 잡는다.
+        // (한 요일만 보면 그 요일이 휴무일 때 시간축이 사라진다.)
+        // 공휴일 운영시간은 여기 넣지 않는다 — 1년에 며칠뿐인데 전역 min/max 를 넓히면 평상시 그리드가
+        // 늘어난다. 공휴일 당일 밴드는 V3 엔진이 unit(날짜) 단위로 따로 계산한다.
+        let minMinutes: number | null = null;
+        let maxMinutes: number | null = null;
+        for (const daily of Object.values(weekly)) {
+            if (!daily?.open) continue;
+            const s = hmToMinutes(daily.open.start);
+            const e = hmToMinutes(daily.open.end);
+            if (s != null && (minMinutes == null || s < minMinutes)) minMinutes = s;
+            if (e != null && (maxMinutes == null || e > maxMinutes)) maxMinutes = e;
+        }
+        treatmentMinHour.value = minMinutes != null ? floorToStep(minMinutes, STEP_MIN) / 60 : null;
+        treatmentMaxHour.value = maxMinutes != null ? ceilToStep(maxMinutes, 30) / 60 : null;
+
+        // ── 담당자별 운영시간: staff → doctorRules (설정한 요일만, 미설정=기관 fallback) ──
+        if (staffBody) {
+            const staffPayload = staffBody.payload;
+
+            /* 담당자 휴무일(S1~S2 신설분) → doctorRules 의 closedDates/closedWeekdays.
+             * useSchedulerRules.pickReason 이 소스별로 이 두 필드를 먼저 보므로 **엔진 변경 없이** 보드에 실린다.
+             * 공휴일 합류에 필요한 목록은 loadHolidaySettings 와 **같은 promise 를 공유**한다 — 따로 부르면
+             * 연 3회 조회가 6회로 늘어난다. */
+            const publicHolidays = await (publicHolidaysPromise ?? fetchPublicHolidays());
+            const {startYmd, endYmd} = offDayHorizon();
+            const overridesByStaffNo = new Map<number, WorkTimeOverride[]>();
+            for (const o of staffPayload?.overrides ?? []) {
+                const list = overridesByStaffNo.get(o.staffId);
+                if (list) list.push(o);
+                else overridesByStaffNo.set(o.staffId, [o]);
             }
 
-            // 그리드 시간축은 요일마다 운영시간이 달라도 모두 담아야 하므로 7요일 전체의 최소~최대로 잡는다.
-            // (한 요일만 보면 그 요일이 휴무일 때 시간축이 사라진다.)
-            // 공휴일 운영시간은 여기 넣지 않는다 — 1년에 며칠뿐인데 전역 min/max 를 넓히면 평상시 그리드가
-            // 늘어난다. 공휴일 당일 밴드는 V3 엔진이 unit(날짜) 단위로 따로 계산한다.
-            let minMinutes: number | null = null;
-            let maxMinutes: number | null = null;
-            for (const daily of Object.values(weekly)) {
-                if (!daily?.open) continue;
-                const s = hmToMinutes(daily.open.start);
-                const e = hmToMinutes(daily.open.end);
-                if (s != null && (minMinutes == null || s < minMinutes)) minMinutes = s;
-                if (e != null && (maxMinutes == null || e > maxMinutes)) maxMinutes = e;
-            }
-            treatmentMinHour.value = minMinutes != null ? floorToStep(minMinutes, 30) / 60 : null;
-            treatmentMaxHour.value = maxMinutes != null ? ceilToStep(maxMinutes, 30) / 60 : null;
-
-            // ── 담당자별 운영시간: staff → doctorRules (설정한 요일만, 미설정=기관 fallback) ──
             const map: DoctorRuleMap = {};
             for (const m of staffPayload?.staff ?? []) {
                 const key = replaceDoctorName(m.staffName);
@@ -556,22 +734,76 @@ export const useStaffStore = defineStore('staffStore', () => {
                     if (wd < 0 || wd > 6) continue;
                     docWeekly[wd as Weekday] = workHoursRowToDailySchedule(row, breaksByWeekday[wd as Weekday]) ?? null;
                 }
-                map[key] = {weekly: docWeekly};
+
+                /* holidayOpenDates·holidayWorkDates 는 담지 않는다 — isHolidayOpenDate·isHolidayWorkDate 가
+                 * hospitalRules 만 읽어(useSchedulerRules) 담당자 값은 어디서도 소비되지 않는다.
+                 * 담아 두면 "설정했는데 안 먹는다" 를 코드가 스스로 감춘다.
+                 * 담당자가 **진료로 정한** 축은 별도 필드(workDates·workWeekdays)로 넘긴다 — R11. */
+                const offInput = staffOffSettingsInput(m, overridesByStaffNo.get(m.staffId) ?? []);
+                const {closedDates, closedWeekdays} = buildHolidayClosure(
+                    offInput,
+                    publicHolidays,
+                    startYmd,
+                    endYmd,
+                );
+
+                /* 진료로 정한 날짜 = 특정일자 진료. 진료로 정한 요일 = 운영시간을 가진 요일.
+                 * 둘 다 사업장 휴무를 덮는 근거다.
+                 *
+                 * ★공휴일 진료 'Y' 를 여기 담지 않는다. 담으면 그 날짜가 통째로 "담당자가 진료로 정한 날"이
+                 *  되어 **사업장이 콕 집어 지정한 임시휴무까지** 덮었다(보드는 진료 / 설정·뷰어는 휴무).
+                 *  'Y' 는 "공휴일이라는 이유로는 쉬지 않는다"는 뜻일 뿐이고, 사업장의 공휴일 휴무는
+                 *  애초에 담당자에게 상속되지 않는다 — 공휴일은 담당자 자기 축이다(§4-2 2단계). */
+                const workDates = new Set(offInput.workDates ?? []);
+                const workWeekdays = new Set<number>();
+                for (const [wd, daily] of Object.entries(docWeekly)) {
+                    if (daily) workWeekdays.add(Number(wd));
+                }
+
+                /* 특정일자 진료의 **시각** → dailyByDate. workDates 는 "그날 진료한다"는 사실만 담고
+                 * 값은 버리므로, 이것이 없으면 보드가 그날을 요일 시각(또는 기관 폴백)으로 열어
+                 * 저장한 시간 밖에도 예약을 받는다. 휴게는 담당자가 소유하지 않으므로 그 날짜의
+                 * 기관 값(dailyByDate)을, 없으면 그 요일의 기관 휴게를 얹는다 — 요일 행과 같은 규칙. */
+                const docDailyByDate = staffOverridesToDailyMap(
+                    overridesByStaffNo.get(m.staffId) ?? [],
+                    dailyByDate,
+                    breaksByWeekday,
+                );
+
+                /* ★공휴일 진료 'Y' 라고 해서 매주 휴무 요일을 열지 않는다 — 'Y' 는 "공휴일이라는 이유로는
+                 * 쉬지 않는다"는 뜻일 뿐 요일 판정을 덮지 않는다(§4-2 2단계). 종전에는 여기서 기관 공휴일
+                 * 시간·요일 시간을 dailyByDate 에 채워 그날을 열었는데, 매주 금요일 쉬는 담당자가 금요일
+                 * 공휴일에 진료로 뜨는 결론이 됐다. */
+
+                map[key] = {
+                    weekly: docWeekly,
+                    closedDates,
+                    closedWeekdays,
+                    workDates,
+                    workWeekdays,
+                    dailyByDate: docDailyByDate,
+                    /* 축 단위 상속(§4-2) — 반복 휴무를 하나도 정하지 않았으면 요일 축을, 일자 지정을
+                     * 하나도 하지 않았으면 일자 축을 아직 사업장에서 빌려 쓴다.
+                     * 판별 기준은 설정 화면(hasOwnRecurringOff·hasOwnDateOverrides)과 같아야 한다. */
+                    inheritsHospitalWeekdayOff: (offInput.recurringOffRules?.length ?? 0) === 0,
+                    inheritsHospitalDateOff   : (offInput.offDates?.length ?? 0) === 0
+                        && (offInput.workDates?.length ?? 0) === 0,
+                };
             }
             doctorRules.value = map;
-
-            return siteBody;
-        } catch (e) {
-            console.error('[운영시간 > 조회] 실패', e);
         }
+
+        return siteBody;
     }
 
     async function loadSchedule() {
         pending.value = true;
         try {
+            // 공휴일 목록은 두 로더가 함께 쓴다 — promise 를 넘겨 조회 1회로 유지한다(연 3콜).
+            const publicHolidaysPromise = fetchPublicHolidays();
             const [workBody, holidayBody] = await Promise.all([
-                loadWorkHours(),
-                loadHolidaySettings()
+                loadWorkHours(publicHolidaysPromise),
+                loadHolidaySettings(publicHolidaysPromise)
             ]);
 
             return {scheduleBody: workBody, holidayBody};
@@ -588,10 +820,10 @@ export const useStaffStore = defineStore('staffStore', () => {
         loadTeams,
         pending,
         loadDoctor,
-        addDoctorName,
         syncDoctor,
         hospitalRules,
         doctorRules,
+        workTimeLoadFailed,
         loadSchedule,
         treatmentMinHour,
         treatmentMaxHour,

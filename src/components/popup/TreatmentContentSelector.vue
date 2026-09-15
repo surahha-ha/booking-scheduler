@@ -5,13 +5,15 @@
 // V2 진료등록 팝업의 서비스 내용 영역. 의원별 서비스 항목 마스터를 사용한다.
 // - 서비스 항목(그룹+항목)과 memo 는 완전 독립. 항목 선택은 serviceGroupId/serviceItemId
 //   에만 반영되고 memo 에는 절대 쓰지 않는다. memo 는 항상 자유 편집.
-// - 그룹↔항목은 필수 쌍. 그룹 선택 시 첫 항목 자동 선택, 활성 그룹 재클릭 = 그룹+항목 동시 해제.
-//   항목은 그룹 내 단일 선택(토글오프 없음). 유효 상태: (그룹+항목) | memo만 | 완전 빈 상태.
+// - 항목이 없는 그룹은 선택 불가(disabled). 그룹 선택 시 첫 항목 자동 선택,
+//   활성 그룹 재클릭 = 그룹+항목 동시 해제.
+//   항목은 그룹 내 단일 선택(토글오프 없음). 저장 가능 여부 판정은 treatmentItemRules 가 SSOT.
 // ============================================================================
 import {computed, ref, watch} from 'vue';
 import {storeToRefs} from 'pinia';
 import {push} from 'notivue';
 import {useServiceItemStore} from '@/stores/serviceItemStore';
+import {hasSelectableItems} from '@/components/popup/treatmentItemRules';
 
 const props = defineProps({
   modelValue: {type: String, default: ''},       // memo (자유 텍스트, 항목과 독립)
@@ -64,18 +66,29 @@ watch(
 );
 
 // 팝업 오픈 시 초기 선택. props.groupId 있으면 그대로 반영(EDIT),
-// 없고 defaultFirstGroup 면 첫 그룹 기본 선택(ADD 등록 편의). 항목·memo 는 건드리지 않음.
+// 없고 defaultFirstGroup 면 첫 그룹 기본 선택(ADD 등록 편의). memo 는 건드리지 않음.
+// 어느 경로든 그룹이 정해지면 항목이 비어 있을 때 첫 항목을 채운다.
 function initSelection() {
   if (props.groupId != null) {
+    const grp = userGroups.value.find((g) => g.serviceGroupId === props.groupId);
+    // 항목이 하나도 없는 그룹은 고를 수 없으므로 선택 상태로 남기지 않는다(BE 도 같은 규칙 — clearBookItemRef).
+    if (!hasSelectableItems(grp)) {
+      selectedGroupId.value = null;
+      emit('update:groupId', null);
+      emit('update:itemId', null);
+      return;
+    }
     selectedGroupId.value = props.groupId;
+    // 그룹만 있고 항목이 비어 있으면 첫 항목을 기본 선택 — 그룹 기본 선택과 같은 규칙.
+    if (props.itemId == null) emit('update:itemId', grp.items[0].serviceItemId);
     return;
   }
-  const first = userGroups.value[0];
+  // 항목 없는 그룹은 고를 수 없으므로 기본 선택에서도 건너뛴다(첫 그룹이 빈 그룹이면 그 다음).
+  const first = userGroups.value.find(hasSelectableItems);
   if (props.defaultFirstGroup && first) {
-    // 첫 그룹 + 그 그룹의 첫 항목 자동 선택(그룹 선택 시 항목 필수 규칙 → valid 기본 상태)
     selectedGroupId.value = first.serviceGroupId;
     emit('update:groupId', first.serviceGroupId);
-    emit('update:itemId', first.items?.[0]?.serviceItemId ?? null);
+    emit('update:itemId', first.items[0].serviceItemId);
   } else {
     selectedGroupId.value = null;
   }
@@ -125,7 +138,7 @@ function onGroupClick(grp) {
     emit('update:itemId', null);
     return;
   }
-  // 그룹 선택 시 첫 항목 자동 선택(그룹↔항목 필수 쌍). 항목 없는 그룹은 itemId null(저장 비활성).
+  // 그룹 선택 시 첫 항목 자동 선택. 빈 그룹은 disabled 라 여기로 오지 않는다.
   selectedGroupId.value = grp.serviceGroupId;
   emit('update:groupId', grp.serviceGroupId);
   emit('update:itemId', grp.items?.[0]?.serviceItemId ?? null);
@@ -143,9 +156,6 @@ function onMemoInput(e) {
   emit('update:modelValue', e.target.value);
 }
 
-function openSetting() {
-  emit('openSetting');
-}
 </script>
 
 <template>
@@ -157,18 +167,14 @@ function openSetting() {
             v-for="grp in userGroups"
             :key="grp.serviceGroupId"
             :class="['tcs-groupChip', { 'is-active': grp.serviceGroupId === selectedGroupId }]"
+            :disabled="!hasSelectableItems(grp)"
+            :data-tooltip="grp.serviceGroupName"
             type="button"
             @click="onGroupClick(grp)"
         >
-          {{ grp.serviceGroupName }}
+          <span class="tcs-groupChip__text">{{ grp.serviceGroupName }}</span>
         </button>
       </div>
-      <button
-          aria-label="서비스 항목 설정"
-          class="tcs-settingBtn"
-          type="button"
-          @click="openSetting"
-      >⚙</button>
     </div>
 
     <!-- 항목 영역 (그룹 선택 시 해당 그룹 항목 표시, 단일 선택) -->
@@ -195,7 +201,8 @@ function openSetting() {
           </button>
         </template>
         <div v-else-if="selectedGroup" class="tcs-empty">
-          등록된 서비스 항목이 없습니다. 우측 상단 ⚙ 버튼으로 추가하세요.
+          선택한 그룹에 등록된 서비스 항목이 없습니다.<br/>
+          왼쪽 '서비스 내용' 아래 ⚙ 버튼으로 추가하세요.
         </div>
       </div>
       <button
@@ -238,54 +245,71 @@ function openSetting() {
   gap: 6px;
 }
 
+/* min-width:0 필수 — flex item 의 암묵적 최소폭은 min-content 이고, wrap 컨테이너의
+ * min-content 는 '가장 넓은 칩 하나의 폭'이다. 긴 그룹명 칩 하나가 생기면 그룹칩 영역
+ * 전체가 그 폭까지 벌어져 짧은 칩까지 팝업 밖으로 밀려난다.
+ * 칩 폭 상한(.tcs-groupChip max-width)이 min-content 를 팝업 폭 아래로 묶고 있는 동안은
+ * 이 줄이 발동하지 않지만, 상한이 커지거나 팝업이 좁아지면 이 줄만 남는다. 둘은 서로를
+ * 대신하지 못하므로 함께 둔다. */
 .tcs-groups {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 6px;
 }
 
+/* 그룹명은 최대 50자까지 저장되므로 칩 폭에 상한을 둔다. 넘치면 말줄임 + hover 툴팁
+ * (항목 칩과 동일한 규칙). tooltip 을 위해 칩 자체 overflow 는 visible 이어야 하므로
+ * 말줄임은 inner span 으로 격리한다.
+ * 이 상한을 없애면 칩이 칩 영역 밖으로 넘는다 — .tcs-groups 의 min-width:0 이 이것까지
+ * 막아주지는 않는다(e2e T13 이 잡는다). */
 .tcs-groupChip {
-  /* 기본 .scheduleField 와 동일 톤 (border #CFCFCF, hover 브랜드 컬러) */
-  border: 1px solid #CFCFCF;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 32px;
+  max-width: 160px;
+  padding: 0 8px;
+  border: 1px solid #BCBCBC;
   background: #fff;
-  padding: 3px 10px;
-  border-radius: 14px;
-  font-size: 12px;
+  border-radius: 4px;
+  color: #565656;
+  font-size: 14px;
   cursor: pointer;
-  line-height: 1.5;
   transition: border-color 0.2s, color 0.2s, background-color 0.2s;
 }
 
+.tcs-groupChip__text {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tcs-groupChip:hover {
-  border-color: #2F6FED;
-  color: #2F6FED;
+  border-color: var(--scheduler-brand, #2F6FED);
+  color: var(--scheduler-brand, #2F6FED);
 }
 
 .tcs-groupChip.is-active {
-  background: #fff3e6;
-  border-color: #2F6FED;
-  color: #2F6FED;
-  font-weight: 600;
+  border-color: var(--scheduler-brand, #2F6FED);
+  color: var(--scheduler-brand, #2F6FED);
 }
 
-.tcs-settingBtn {
-  width: 28px;
-  height: 26px;
-  border: 1px solid #CFCFCF;
-  background: #fff;
-  border-radius: 0;
-  cursor: pointer;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: border-color 0.2s, color 0.2s;
+/* 진료항목이 없는 그룹 — 선택 불가. 선택 중이던 그룹의 항목을 설정에서 모두 지운 경우도
+ * 같이 회색이 되어야 한다(예외를 두면 지워진 줄 모른다). 그 경우 선택 자체는 해제된다. */
+.tcs-groupChip:disabled {
+  border-color: #E0E0E0;
+  background: #F5F5F5;
+  color: #BCBCBC;
+  cursor: default;
 }
 
-.tcs-settingBtn:hover {
-  border-color: #2F6FED;
-  color: #2F6FED;
+.tcs-groupChip:disabled:hover {
+  border-color: #E0E0E0;
+  color: #BCBCBC;
 }
 
 /* 칩 영역: 항목 수에 따라 1행/2행 자동 변동.
@@ -317,11 +341,11 @@ function openSetting() {
   height: 40px;
   min-width: 0;
   box-sizing: border-box;
-  border: 1px solid #CFCFCF;
-  background: #fff;
+  border: 0;
+  background: transparent;
   padding: 4px 10px;
   border-radius: 0;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.3;
   cursor: pointer;
   display: inline-flex;
@@ -329,7 +353,7 @@ function openSetting() {
   justify-content: center;
   text-align: center;
   overflow: visible;
-  transition: border-color 0.2s, color 0.2s, background-color 0.2s;
+  transition: color 0.2s;
 }
 
 .tcs-itemChip__text {
@@ -344,22 +368,22 @@ function openSetting() {
 }
 
 .tcs-itemChip:hover {
-  border-color: #2F6FED;
   color: #2F6FED;
 }
 
 .tcs-itemChip.is-active {
-  background: #2F6FED;
-  border-color: #2F6FED;
-  color: #fff;
+  color: var(--scheduler-brand, #2F6FED);
+  font-weight: 600;
 }
 
 .tcs-itemChip.is-active:hover {
-  color: #fff;
+  color: var(--scheduler-brand, #2F6FED);
 }
 
-/* 커스텀 tooltip — chip 위쪽 표시 (브라우저 native title 의 우측 하단 위치 회피) */
-.tcs-itemChip::after {
+/* 커스텀 tooltip — chip 위쪽 표시 (브라우저 native title 의 우측 하단 위치 회피).
+ * 그룹 칩·항목 칩이 같은 규칙을 쓴다. */
+.tcs-itemChip::after,
+.tcs-groupChip::after {
   content: attr(data-tooltip);
   position: absolute;
   bottom: calc(100% + 6px);
@@ -382,7 +406,8 @@ function openSetting() {
   z-index: 10;
 }
 
-.tcs-itemChip:hover::after {
+.tcs-itemChip:hover::after,
+.tcs-groupChip:hover::after {
   opacity: 1;
   visibility: visible;
 }
@@ -437,11 +462,11 @@ function openSetting() {
 }
 
 .tcs-memo {
-  /* .scheduleField 와 동일 톤 */
+  /* 예약 팝업 공통 입력 필드와 동일한 외형 */
   width: 100%;
   height: 64px;
-  border: 1px solid #CFCFCF;
-  border-radius: 0;
+  border: 1px solid #BCBCBC;
+  border-radius: 4px;
   padding: 8px;
   font-size: 13px;
   resize: none;

@@ -149,11 +149,17 @@ describe('useSchedulerRules — 예약 팝업 운영종료 오판 회귀 (③)',
     })
   }
 
-  it('의사키 생략 → 기관(미설정) fallback → 운영종료(outsideHours) [버그 재현]', () => {
+  it('의사키 생략 → 기관(미설정) fallback → 기본 운영시간(09~18)으로 판정한다', () => {
     const { getBlockedReason } = setupDoctorOnly()
-    const r = getBlockedReason(`2026-06-16T10:00:00`, undefined)
-    expect(r.blocked).toBe(true)
-    expect(r.reason).toBe('outsideHours')
+
+    /* 종전에는 "아무도 그 요일을 정하지 않음"을 휴무로 접어 10:00 도 운영종료로 막았다(이 파일이 재현하던 증상).
+     * 지금은 그 경우를 09~18 로 연다 — 정한 적 없는 휴무를 만들어 내지 않기 위해서다(2026-08-28 확정).
+     * 그래도 판정 근거는 **그 의사의 시간이 아니라 기본값**이라, 팝업은 여전히 의사키를 넘겨야 한다. */
+    expect(getBlockedReason(`2026-06-16T10:00:00`, undefined).blocked, '기본 운영시간 안').toBe(false)
+
+    const early = getBlockedReason(`2026-06-16T08:00:00`, undefined)
+    expect(early.blocked, '기본 운영시간 밖은 그대로 막힌다').toBe(true)
+    expect(early.reason).toBe('outsideHours')
   })
 
   it('의사키 전달 → 의사 운영시간(09~18) 기준 → 차단 없음 [수정 후]', () => {

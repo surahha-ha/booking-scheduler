@@ -191,6 +191,8 @@ onBeforeUnmount(() => {
   </div>
 </template>
 <style lang="scss" scoped>
+@use '@/scss/schedule/invalid' as invalid;
+
 .timeSelect,
 .timeSelect * {
   box-sizing: border-box;
@@ -275,7 +277,6 @@ onBeforeUnmount(() => {
 }
 
 .timeSelect[data-invalid="true"] .timeSelect__btn {
-  border-color: #e54848;
-  box-shadow: 0 0 0 2px rgba(229, 72, 72, 0.15);
+  @include invalid.outline;
 }
 </style>

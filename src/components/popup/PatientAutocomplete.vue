@@ -135,10 +135,9 @@ function onInput(e) {
   emit('update:modelValue', next);
   if (props.isPicking) return;
 
-  // IME composition 중에는 search 발사 보류 — 자모 단위 의도 외 검색 회피.
-  // composition 완료 시 compositionend 핸들러가 마무리 search 를 호출한다.
-  if (composing.value || e.isComposing) return;
-
+  // IME composition 중에도 발사한다. 한글 첫 글자는 다음 글자를 칠 때까지 조합이 끝나지
+  // 않아, compositionend 를 기다리면 1자 검색이 영영 불가능했다(영문만 1자에 떴다).
+  // 중간 조합 상태의 요청은 사용처 debounce 가 흡수한다.
   emitSearch(next);
 }
 
@@ -152,6 +151,8 @@ function emitSearch(rawValue) {
   emit('search', trimmed);
 }
 
+// 조합 확정 값은 대개 직전 input 이 이미 발사했다. IME 가 확정 시 input 을 생략하는
+// 경우를 위한 보정으로만 남긴다 — 중복분은 사용처 debounce 가 걷어낸다.
 function onCompositionEnd(e) {
   composing.value = false;
   if (props.isPicking) return;
@@ -450,9 +451,9 @@ onBeforeUnmount(() => {
 }
 
 .patientAutocomplete__input {
+  /* 높이는 정하지 않는다 — 예약 팝업에서는 .scheduleField(32px) 규약을, 검색필터바에서는
+     UiSearchInput 의 :deep 규칙(24px)을 따른다. 여기에 두면 팝업의 고객명만 전화번호와 높이가 달라진다. */
   width: 100%;
-  height: 24px;
-
 }
 
 .patientAutocomplete__list {

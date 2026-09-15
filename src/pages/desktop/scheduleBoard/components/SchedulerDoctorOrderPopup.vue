@@ -7,15 +7,15 @@
  *          draft 의 팀별 doctors 순서를 { teamId, orderedStaffIds } 로 보내면 BE 가 그 index 로
  *          팀 멤버 SORT_ORD 만 UPDATE 한다(팀·운영시간·사업장(사업장 설정) 무관, 전체 치환/passthrough 없음).
  *          저장 후 staffStore.loadTeams() 재조회 → resolveVisibleDoctors(team.doctors 순서)로 검색필터/예약팝업/보드 반영.
- *  - 미지정 데이터 설정 버튼은 증분 3 에서 추가.
+ *  - 미지정 데이터 설정 버튼 → 공용 UnassignedDataModal (설정 화면과 동일 컴포넌트).
  */
 import {computed, ref, watch} from 'vue';
 import {storeToRefs} from 'pinia';
 import {push} from 'notivue';
 import {useStaffStore} from '@/stores/staffStore';
-import {useSchedulerFilterStore} from '@/stores/useSchedulerFilterStore';
 import {reorderTeamMembers} from '@/api/siteApi';
-import {assignUnassigned, getUnassignedReservations} from '@/api/bookApi';
+import {getUnassignedReservations} from '@/api/bookApi';
+import UnassignedDataModal from '@/components/popup/UnassignedDataModal.vue';
 
 const props = defineProps({
   visible: {type: Boolean, default: false},
@@ -24,7 +24,6 @@ const emit = defineEmits(['close', 'saved']);
 
 const staffStore = useStaffStore();
 const {teams} = storeToRefs(staffStore);
-const filterStore = useSchedulerFilterStore();
 
 /* 드래그 재정렬 대상 draft — 오픈 시 staffStore.teams 를 깊은 복사(취소 시 원복). */
 const draft = ref([]);
@@ -44,7 +43,7 @@ watch(
     {immediate: true},
 );
 
-/* ── 미지정 데이터 설정 (화면정의서 4-2 우상단 버튼, 설정화면 unassignedDataModal 과 동일 기능) ── */
+/* ── 미지정 데이터 설정 (화면정의서 4-2 우상단 버튼) ── */
 /* 팀에 등록된 담당자(중복 제거, 팀/구성원 순서 유지) — 미지정 데이터 적용 대상 후보 */
 const teamDoctors = computed(() => {
   const seen = new Set();
@@ -74,40 +73,10 @@ async function fetchUnassignedAssignable() {
   }
 }
 
-const unassignedModal = ref({open: false, selectedStaffId: null});
-const applyingUnassigned = ref(false);
+const unassignedModalOpen = ref(false);
 
-function openUnassignedModal() {
-  unassignedModal.value = {open: true, selectedStaffId: teamDoctors.value[0]?.staffId ?? null};
-}
-
-function closeUnassignedModal() {
-  unassignedModal.value = {...unassignedModal.value, open: false};
-}
-
-async function applyUnassignedData() {
-  if (applyingUnassigned.value) return;
-  const staffId = unassignedModal.value.selectedStaffId;
-  if (staffId == null) return;
-  applyingUnassigned.value = true;
-  try {
-    const res = await assignUnassigned(staffId);
-    const body = res?.data ?? res;
-    if (body?.code && body.code !== 'succeed') {
-      push.error(body.message || '미지정 데이터 적용에 실패했습니다.');
-      return;
-    }
-    if (body?.message) push.success(body.message);
-    closeUnassignedModal();
-    unassignedAssignable.value = false; // 적용 후 재노출 방지(다음 오픈 시 재조회)
-    // load() 직접 호출 금지 — searchVersion watch chain 으로 재조회
-    filterStore.triggerSearch();
-  } catch (e) {
-    push.error(e?.response?.data?.message || '미지정 데이터 적용에 실패했습니다.');
-    console.error('[미지정 데이터 적용] 실패', e);
-  } finally {
-    applyingUnassigned.value = false;
-  }
+function onUnassignedApplied() {
+  unassignedAssignable.value = false; // 적용 후 재노출 방지(다음 오픈 시 재조회)
 }
 
 /* ── 드래그 (팀 내 한정) ── */
@@ -195,32 +164,33 @@ function onCancel() {
         class="doctorOrderPopup__overlay"
         @click.self="onCancel"
     >
-      <div class="doctorOrderPopup__panel">
-        <header class="doctorOrderPopup__header">
-          <span class="doctorOrderPopup__title">담당자 순서 변경</span>
+      <div class="doctorOrderPopup__panel schedule-popup">
+        <header class="doctorOrderPopup__header schedule-popup__header">
+          <span class="doctorOrderPopup__title schedule-popup__title">담당자 순서 변경</span>
           <div class="doctorOrderPopup__headerRight">
             <button
                 v-if="showUnassignedBtn"
                 class="doctorOrderPopup__unassignedBtn"
                 type="button"
-                @click="openUnassignedModal"
+                @click="unassignedModalOpen = true"
             >미지정 데이터 설정</button>
             <button
                 aria-label="닫기"
-                class="doctorOrderPopup__close"
+                class="doctorOrderPopup__close schedule-popup__close-button"
                 type="button"
                 @click="onCancel"
             >×</button>
           </div>
         </header>
 
-        <p class="doctorOrderPopup__desc">
-          담당자를 드래그하여 순서를 변경하세요<br>
-          (팀 변경은 불가합니다)
-        </p>
+        <div class="doctor-order-popup__body schedule-popup__body">
+          <p class="doctorOrderPopup__desc">
+            담당자를 드래그하여 순서를 변경하세요<br>
+            <span class="doctor-order-popup__notice">(팀 변경은 불가합니다)</span>
+          </p>
 
-        <div class="doctorOrderPopup__tableWrap">
-          <table class="doctorOrderPopup__table">
+          <div class="doctorOrderPopup__tableWrap">
+            <table class="doctorOrderPopup__table">
             <thead>
               <tr>
                 <th class="doctorOrderPopup__thTeam">소속 팀</th>
@@ -228,7 +198,7 @@ function onCancel() {
               </tr>
             </thead>
             <tbody>
-              <template v-for="team in draft" :key="team.id">
+              <template v-for="(team, teamIndex) in draft" :key="team.id">
                 <tr
                     v-for="(doc, idx) in team.doctors"
                     :key="`${team.id}-${doc.staffId}`"
@@ -247,7 +217,7 @@ function onCancel() {
                   <td
                       v-if="idx === 0"
                       :rowspan="team.doctors.length"
-                      class="doctorOrderPopup__teamCell"
+                      :class="['doctorOrderPopup__teamCell', { 'is-last-team': teamIndex === draft.length - 1 }]"
                   >{{ team.name }}</td>
                   <td class="doctorOrderPopup__doctorCell">
                     <span class="doctorOrderPopup__handle">≡</span>
@@ -259,19 +229,20 @@ function onCancel() {
                 <td class="doctorOrderPopup__empty" colspan="2">팀에 등록된 담당자가 없습니다.</td>
               </tr>
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
 
-        <div class="doctorOrderPopup__actions">
+        <div class="doctorOrderPopup__actions schedule-popup__footer">
           <button
               :disabled="saving"
-              class="doctorOrderPopup__cancelBtn"
+              class="doctorOrderPopup__cancelBtn schedule-popup__button"
               type="button"
               @click="onCancel"
           >취소</button>
           <button
               :disabled="saving || !draft.length"
-              class="doctorOrderPopup__saveBtn"
+              class="doctorOrderPopup__saveBtn schedule-popup__button schedule-popup__button--primary"
               type="button"
               @click="onSave"
           >{{ saving ? '저장 중...' : '저장' }}</button>
@@ -279,57 +250,15 @@ function onCancel() {
       </div>
     </div>
 
-    <!-- 미지정 데이터 설정 (중첩 모달) -->
-    <div
-        v-if="unassignedModal.open"
-        class="doctorOrderPopup__overlay doctorOrderPopup__overlay--nested"
-        @click.self="closeUnassignedModal"
-    >
-      <div class="doctorOrderPopup__panel doctorOrderPopup__panel--narrow">
-        <header class="doctorOrderPopup__header">
-          <span class="doctorOrderPopup__title">미지정 데이터 적용</span>
-          <button
-              aria-label="닫기"
-              class="doctorOrderPopup__close"
-              type="button"
-              @click="closeUnassignedModal"
-          >×</button>
-        </header>
-        <p class="doctorOrderPopup__desc">
-          담당자가 미지정된 예약/진료건에 대해 일괄 적용할 대상을 선택해주세요.
-        </p>
-        <div class="doctorOrderPopup__radioList">
-          <label
-              v-for="doc in teamDoctors"
-              :key="`unassigned-${doc.staffId}`"
-              class="doctorOrderPopup__radioItem"
-          >
-            <input
-                :checked="unassignedModal.selectedStaffId === doc.staffId"
-                name="doctorOrderUnassigned"
-                type="radio"
-                @change="unassignedModal.selectedStaffId = doc.staffId"
-            >
-            <span>{{ doc.name }}</span>
-          </label>
-        </div>
-        <div class="doctorOrderPopup__actions">
-          <button
-              :disabled="applyingUnassigned"
-              class="doctorOrderPopup__cancelBtn"
-              type="button"
-              @click="closeUnassignedModal"
-          >취소</button>
-          <button
-              :disabled="applyingUnassigned || unassignedModal.selectedStaffId == null"
-              class="doctorOrderPopup__saveBtn"
-              type="button"
-              @click="applyUnassignedData"
-          >{{ applyingUnassigned ? '적용 중...' : '적용' }}</button>
-        </div>
-      </div>
-    </div>
   </Teleport>
+
+  <!-- 미지정 데이터 설정 (공용 모달) -->
+  <UnassignedDataModal
+      :doctors="teamDoctors"
+      :visible="unassignedModalOpen"
+      @applied="onUnassignedApplied"
+      @close="unassignedModalOpen = false"
+  />
 </template>
 
 <style lang="scss" scoped>
@@ -341,8 +270,6 @@ function onCancel() {
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.35);
-
-  &--nested { z-index: 60010; } /* 미지정 모달 — 순서변경 팝업 위 */
 }
 
 .doctorOrderPopup__headerRight {
@@ -352,34 +279,19 @@ function onCancel() {
 }
 
 .doctorOrderPopup__unassignedBtn {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid #ccc;
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 12px;
+  margin-right: 4px;
+  border: 1px solid #a5a5a5;
   border-radius: 4px;
   background: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  color: #555;
+  color: #565656;
+  font-size: 16px;
+  font-weight: 500;
   cursor: pointer;
 
-  &:hover { background: #f0f0f0; }
-}
-
-.doctorOrderPopup__radioList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 240px;
-  overflow-y: auto;
-  margin-bottom: 4px;
-}
-
-.doctorOrderPopup__radioItem {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  cursor: pointer;
+  &:hover { background: #f2f2f2; }
 }
 
 .doctorOrderPopup__panel {
@@ -388,80 +300,81 @@ function onCancel() {
   max-height: calc(100vh - 64px);
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-  padding: 20px;
-  box-sizing: border-box;
-
-  &--narrow { width: 360px; }
 }
 
-.doctorOrderPopup__header {
+.doctor-order-popup__body {
+  flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.doctorOrderPopup__title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #222;
-}
-
-.doctorOrderPopup__close {
-  border: 0;
-  background: none;
-  font-size: 22px;
-  line-height: 1;
-  color: #888;
-  cursor: pointer;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .doctorOrderPopup__desc {
   margin: 0 0 12px;
-  font-size: 12px;
-  color: #888;
+  font-size: 18px;
+  font-weight: 700;
+  color: #393939;
   line-height: 1.4;
+}
+
+.doctor-order-popup__notice {
+  font-size: 14px;
+  font-weight: 400;
+  color: #727272;
 }
 
 .doctorOrderPopup__tableWrap {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
+  border: 1px solid #d2d2d2;
 }
 
 .doctorOrderPopup__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 14px;
 
   th,
   td {
-    border-bottom: 1px solid #eee;
-    padding: 8px 12px;
+    height: 28px;
+    padding: 0 12px;
+    border-bottom: 1px solid #d2d2d2;
     text-align: left;
   }
 
   thead th {
-    background: #f5f6f8;
-    font-weight: 700;
-    color: #555;
+    height: 26px;
+    background: #f4f4f4;
+    border-bottom-color: #d2d2d2;
+    text-align: center;
+    font-weight: 600;
+    color: #565656;
     position: sticky;
     top: 0;
   }
+
+  th + th {
+    border-left: 1px solid #d2d2d2;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
 }
 
-.doctorOrderPopup__thTeam { width: 35%; }
+.doctorOrderPopup__thTeam { width: 40%; }
 
 .doctorOrderPopup__teamCell {
-  font-weight: 700;
-  color: #444;
+  text-align: center !important;
+  font-weight: 500;
+  color: #565656;
   vertical-align: middle;
-  background: #fafbfc;
-  border-right: 1px solid #eee;
+  background: #fff;
+
+  &.is-last-team {
+    border-bottom: 0;
+  }
 }
 
 .doctorOrderPopup__row {
@@ -494,19 +407,20 @@ function onCancel() {
 .doctorOrderPopup__doctorCell {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  border-left: 1px solid #d2d2d2;
 }
 
 .doctorOrderPopup__handle {
-  color: #b0b4bd;
-  font-size: 15px;
+  color: #727272;
+  font-size: 14px;
   cursor: grab;
   user-select: none;
 }
 
 .doctorOrderPopup__doctorName {
-  color: #5b6cb8;
-  font-weight: 600;
+  color: #565656;
+  font-weight: 400;
 }
 
 .doctorOrderPopup__empty {
@@ -515,34 +429,4 @@ function onCancel() {
   padding: 24px 0;
 }
 
-.doctorOrderPopup__actions {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.doctorOrderPopup__cancelBtn,
-.doctorOrderPopup__saveBtn {
-  min-width: 72px;
-  height: 34px;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.doctorOrderPopup__cancelBtn {
-  border: 1px solid #ccc;
-  background: #fff;
-  color: #555;
-}
-
-.doctorOrderPopup__saveBtn {
-  border: 0;
-  background: #f47725;
-  color: #fff;
-
-  &:disabled { opacity: 0.5; cursor: default; }
-}
 </style>

@@ -65,7 +65,7 @@ test.describe('SchedulerV2 - 진료 모드 (TREATMENT)', () => {
     await expect(page.locator('.scheduleDateStrip')).toBeVisible();
   });
 
-  test('30. TREATMENT 모드에서 카드 ⋮ 메뉴는 진료 모드 항목 5개 (완료/미이행/취소/초기화/삭제)', async ({ authedPage: page }) => {
+  test('30. TREATMENT 모드에서 카드 ⋮ 메뉴는 진료 모드 항목 6개 (접수대기/완료/미이행/취소/초기화/삭제)', async ({ authedPage: page }) => {
     await navigateTreatment(page);
     // 오늘 또는 과거 날짜의 카드가 1개 이상 있어야 시나리오 동작
     const cardCount = await page.locator('.appointment-card').count();
@@ -79,10 +79,11 @@ test.describe('SchedulerV2 - 진료 모드 (TREATMENT)', () => {
     const popover = page.locator('.appointment-popover');
     await expect(popover).toBeVisible();
 
-    // 진료 모드 메뉴 항목 검증
-    await expect(popover.locator('.popover-menu__item', { hasText: '완료' })).toBeVisible();
+    // 진료 모드 메뉴 항목 검증 — 접수대기는 hover 퀵액션 [접수]와 같은 동작(상태 05)
+    await expect(popover.locator('.popover-menu__item', { hasText: '접수대기' })).toBeVisible();
+    await expect(popover.locator('.popover-menu__item', { hasText: /^완료$/ })).toBeVisible();
     await expect(popover.locator('.popover-menu__item', { hasText: '미이행' })).toBeVisible();
-    await expect(popover.locator('.popover-menu__item', { hasText: '예약 취소' })).toBeVisible();
+    await expect(popover.locator('.popover-menu__item', { hasText: /^취소$/ })).toBeVisible();
     await expect(popover.locator('.popover-menu__item', { hasText: '초기화' })).toBeVisible();
     await expect(popover.locator('.popover-menu__item', { hasText: '진료 삭제' })).toBeVisible();
   });

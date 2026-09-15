@@ -7,6 +7,7 @@
   -->
   <div
     ref="cardEl"
+    :data-appointment-id="appointment.id"
     class="appointment-card"
     :class="[
       statusContainerClass,
@@ -19,6 +20,8 @@
         'is-search-highlighted': isSearchHighlighted,
         'is-reschedule-target': isRescheduleTarget,
         'is-layered': rect.isLayered,
+        'is-layer-base': rect.isLayerBase,
+        'is-long-card': rect.isLongCard,
       },
     ]"
     :style="cardStyle"
@@ -109,17 +112,49 @@
         class="quick-action-wrapper"
         :style="quickActionStyle"
       >
+        <!-- 화면에 보이는 것이 문자 ⋮ 뿐이라 보조기기에는 이름 없는 버튼으로 읽힌다 →
+             aria-label 로 무엇을 여는 버튼인지, aria-expanded 로 지금 열려 있는지를 밝힌다.
+             아이콘 자체는 aria-hidden — 라벨과 겹쳐 "⋮ 예약 메뉴 열기" 로 두 번 읽히지 않게 한다. -->
         <button
           ref="quickActionBtnEl"
+          :aria-expanded="isPopoverOpen"
+          :aria-label="`${dataTypeLabel} 메뉴 열기`"
+          aria-haspopup="menu"
           class="quick-action-btn"
           @mouseenter="hover.onQuickActionEnter()"
           @mouseleave="hover.onQuickActionLeave()"
           @mousedown.stop
           @click.stop="onQuickActionClick"
         >
-          <span class="quick-action-icon">⋮</span>
+          <span
+            aria-hidden="true"
+            class="quick-action-icon"
+          >⋮</span>
         </button>
       </div>
+    </Teleport>
+
+    <!-- 리사이즈 핸들 포털 사본 — 밑바탕(isLayerBase) 카드 전용. 꼬리 위에 float 카드가 얹히면(z 10 > base 0)
+         카드 안의 하단 핸들이 float 밑에 깔려 좌측 들여쓰기 폭만 남는다 → hover 중 같은 자리에 포털(전 카드 위)
+         사본을 띄워 전폭에서 잡히게 한다. mousedown 은 카드 안 핸들과 같은 함수(startResize 는 핸들 DOM 무관).
+         밑바탕이 아닌 카드는 자기 핸들이 안 가려지므로 제외 — 전 카드에 켜면 e2e 의 핸들 좌표 클릭을 포털이 가로챈다. -->
+    <Teleport to=".v3-qa-portal">
+      <template v-if="showPortalResizeHandles">
+        <div
+          class="resize-handle-portal resize-handle-portal--top"
+          :style="portalHandleStyle('top')"
+          @mouseenter="hover.onQuickActionEnter()"
+          @mouseleave="hover.onQuickActionLeave()"
+          @mousedown="onResizeTop"
+        />
+        <div
+          class="resize-handle-portal resize-handle-portal--bottom"
+          :style="portalHandleStyle('bottom')"
+          @mouseenter="hover.onQuickActionEnter()"
+          @mouseleave="hover.onQuickActionLeave()"
+          @mousedown="onResizeBottom"
+        />
+      </template>
     </Teleport>
 
     <!-- popover: ⋮ 메뉴 — 별도 Teleport(body) fixed (레이어링 카드 안 가림) -->
@@ -150,6 +185,7 @@
     <Teleport to="body">
       <div
         v-if="infoTooltipOpen"
+        ref="infoTooltipEl"
         class="appt-info-tooltip"
         :style="infoTooltipStyle"
       >{{ infoText }}</div>
@@ -158,13 +194,15 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, inject, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, inject, nextTick, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { storeToRefs } from 'pinia'
 import { useDialog } from '@/lib/useDialog'
 import { useBookStore } from '@/stores/bookStore'
 import { useSchedulerFilterStore } from '@/stores/useSchedulerFilterStore'
 import { buildCardMenu, toApiState } from '../appointmentCardMenu'
+import { toDisplayStatus, toStatusClassName } from '@/utils/schedulerSearchFilterUtils'
+import { clampFlyoutPos } from '@/utils/popoverPlacementUtils'
 
 // ── props / emits ──
 const props = defineProps({
@@ -194,8 +232,9 @@ const secondaryParts = computed(() => {
     else if (code === 'GENDER') v = a.gender ?? ''
     else if (code === 'TREATMENT') {
       // 서비스 항목 = 등록된 서비스 항목 선택값(treatmentCategory) + 서비스 내용(memo) 함께 표기.
-      // 둘 다 nullable(각각 단독/둘다/없음 허용) → 존재하는 것만 공백으로 이어 붙임.
-      v = [a.treatmentCategory ?? '', a.memo ?? ''].filter(Boolean).join(' ')
+      // 둘 다 nullable(각각 단독/둘다/없음 허용) → 존재하는 것만 쉼표로 이어 붙인다.
+      // 공백으로 이으면 '점검 > 정기 점검 구강검진' 처럼 선택값과 직접입력이 한 덩어리로 읽힌다.
+      v = [a.treatmentCategory ?? '', a.memo ?? ''].filter(Boolean).join(', ')
     }
     else if (code === 'PHONE') {
       const digits = (a.patientPhone ?? '').replace(/\D/g, '')
@@ -219,6 +258,7 @@ const infoLineClamp = computed(() => {
 const infoBlockEl = ref(null)
 const infoTooltipOpen = ref(false)
 const infoTooltipStyle = ref({})
+const infoTooltipEl = ref(null)
 function onInfoEnter() {
   const el = infoBlockEl.value
   if (!el) return
@@ -233,9 +273,31 @@ function onInfoEnter() {
     ? { position: 'fixed', top: `${Math.round(r.bottom + 6)}px`, left: `${Math.round(left)}px`, maxWidth: `${TOOLTIP_MAX_W}px` }
     : { position: 'fixed', bottom: `${Math.round(window.innerHeight - r.top + 6)}px`, left: `${Math.round(left)}px`, maxWidth: `${TOOLTIP_MAX_W}px` }
   infoTooltipOpen.value = true
+  // 여러 줄로 늘어난 툴팁은 임계값(r.top < 120)만으로는 위쪽이 잘리는지 알 수 없다 — 실측해서 넘치면 아래로 돌린다.
+  settleInfoTooltip(r, TOOLTIP_MAX_W)
+  // fixed 좌표라 스크롤·리사이즈에 따라오지 못한다. 카드는 움직이는데 툴팁만 남아 무관한 예약을 덮으므로 닫는다.
+  window.addEventListener('scroll', onInfoLeave, { passive: true, capture: true })
+  window.addEventListener('resize', onInfoLeave)
+}
+async function settleInfoTooltip(anchorRect, maxWidth) {
+  await nextTick()
+  const tip = infoTooltipEl.value
+  if (!tip || !infoTooltipOpen.value) return
+  const box = tip.getBoundingClientRect()
+  if (!box.height) return // 크기를 못 재면(테스트 stub 등) 임시 배치를 그대로 둔다
+  if (box.top >= 8) return // 위쪽이 잘리지 않았다 — 그대로
+  // bottom 기준을 top 기준으로 갈아끼운다(두 값이 함께 남으면 높이가 늘어난다)
+  infoTooltipStyle.value = {
+    position: 'fixed',
+    top: `${Math.round(anchorRect.bottom + 6)}px`,
+    left: infoTooltipStyle.value.left,
+    maxWidth: `${maxWidth}px`,
+  }
 }
 function onInfoLeave() {
   infoTooltipOpen.value = false
+  window.removeEventListener('scroll', onInfoLeave, true)
+  window.removeEventListener('resize', onInfoLeave)
 }
 
 const emit = defineEmits(['edit', 'delete', 'status-change', 'callback'])
@@ -295,9 +357,11 @@ const isRescheduleTarget = computed(() =>
   && String(reschedule.targetId.value) === String(props.appointment.id)
 )
 
-// '당일' 뱃지 — 진료 화면에서만, 예약 등록일(createdAt)이 오늘이면 표시(고객명 line 우측).
+// '당일' 뱃지 — 진료 화면에서만, **진료장부에서 등록한 건**(isTreatmentRegistered) 중 예약 등록일(createdAt)이
+// 오늘이면 표시(고객명 line 우측). 예약장부에서 등록한 건은 진료 화면에 보여도 뱃지를 붙이지 않는다.
 const isRegisteredToday = computed(() => {
   if (isAppointmentMode.value) return false // 진료 화면 전용
+  if (!props.appointment.isTreatmentRegistered) return false // 예약장부 등록건 제외
   const reg = props.appointment.createdAt
   return !!reg && dayjs(reg).isSame(dayjs(), 'day')
 })
@@ -314,19 +378,48 @@ const cardStyle = computed(() => {
     // 검색 하이라이트는 z 를 올리지 않음(테두리만). 단 예약 변경 대상 카드는 선택 테두리가 아래 카드에 가리지
     // 않도록 z 를 최상위로 올린다(사용자 요청). 인라인 style 이라 CSS 클래스보다 우선 적용됨.
     zIndex: isRescheduleTarget.value ? 60001 : (props.rect.zIndex ?? 1),
+    // 밑바탕 좌측 마커 농도 — 층수(layerDepth)만큼 연해지는 계단. 들여쓰기 계단과 같은 방향으로
+    // '누가 맨 아래인가'를 읽히게 한다. 하한 0.3: 연한 상태색(취소 회색 등)이 배경에 묻히지 않는 최소값.
+    '--layer-marker-opacity': String(Math.max(0.3, 1 - (props.rect.layerDepth ?? 0) * 0.3)),
   }
 })
 
 // ⋮ popover 위치 — Teleport(body) 후 fixed 좌표. trigger(⋮ 버튼) 기준 좌상단, 왼쪽으로 펼침.
+// 트리거 좌표 그대로 펼치면 화면 하단 카드에서 메뉴 아래쪽(초기화·삭제)이 잘린다 → 렌더 후 실측해 접는다.
+// 측정 전 임시 배치는 종전과 같은 우측 정렬(right)이고, 접고 나면 실좌표(left)로 바뀐다.
+const popoverSettled = ref(null)
 const popoverStyle = computed(() => {
   const rect = popover.popoverState.value?.anchorRect
   if (!rect) return {}
+  if (popoverSettled.value) {
+    return {
+      position: 'fixed',
+      top: `${popoverSettled.value.top}px`,
+      left: `${popoverSettled.value.left}px`,
+      // CSS 의 right:24px 를 끄지 않으면 left 와 함께 걸려 팝오버가 가로로 늘어난다.
+      right: 'auto',
+      zIndex: 60000,
+    }
+  }
   return {
     position: 'fixed',
     top: `${rect.top}px`,
     right: `${window.innerWidth - rect.left}px`,
     zIndex: 60000,
   }
+})
+
+// 열릴 때마다 실측 → 뷰포트 안으로. 크기를 못 재면(테스트 stub 등) 임시 배치를 그대로 둔다.
+watch(isPopoverOpen, async (open) => {
+  popoverSettled.value = null
+  if (!open) return
+  await nextTick()
+  const el = popoverPanelEl.value
+  const rect = popover.popoverState.value?.anchorRect
+  if (!el || !rect) return
+  const box = el.getBoundingClientRect()
+  if (!box.width || !box.height) return
+  popoverSettled.value = clampFlyoutPos(rect, box.width, box.height)
 })
 
 // ⋮ 버튼 위치 — .v3-qa-portal(보드 좌표) 로 teleport 후 카드 rect 기준 absolute. 카드 우측 변 24px.
@@ -353,6 +446,24 @@ const hoverBorderStyle = computed(() => {
     height: `${r.height}px`,
   }
 })
+
+// 리사이즈 핸들 포털 사본 — 밑바탕(isLayerBase) 카드가 hover 중이고 드래그/리사이즈 대상이 아닐 때만.
+// 밑바탕 카드의 꼬리(endBand row 0) 위에 float(z 10)이 얹히면 카드 안 하단 핸들(3px)이 들여쓰기 폭(10px)만 남고
+// 가려진다. 카드 z 를 올리는 대신(hover z-lift 금지 정책) ⋮ 버튼과 같은 포털에 핸들 사본을 띄운다.
+const PORTAL_HANDLE_PX = 3
+const showPortalResizeHandles = computed(() =>
+  isHovered.value && !!props.rect.isLayerBase && !isDragTarget.value && !isResizeTarget.value,
+)
+function portalHandleStyle(edge) {
+  const r = props.rect
+  return {
+    position: 'absolute',
+    top: `${edge === 'top' ? r.top : r.top + r.height - PORTAL_HANDLE_PX}px`,
+    left: `${r.left}px`,
+    width: `${r.width}px`,
+    height: `${PORTAL_HANDLE_PX}px`,
+  }
+}
 
 // ── 시간 라벨 ──
 function formatMinute(m) {
@@ -388,8 +499,13 @@ const STATUS_CLASS_MAP = {
   'is-receipt': 'status-receipt',
 }
 
+// 예약 화면은 예약(00)·취소(03)만 상태 색으로 구분한다 — 진료완료·미이행·접수대기 건은 예약(00)처럼 그린다.
+// 실제 status 는 그대로 두고(⋮ 메뉴·퀵액션 판정용) 표시 클래스만 바꾼다. 규칙 SSOT = toDisplayStatus.
 const statusContainerClass = computed(() => {
-  const v1Class = props.appointment.statusClass
+  const displayStatus = toDisplayStatus(props.appointment.status, selectedDataType.value)
+  const v1Class = displayStatus === props.appointment.status
+    ? props.appointment.statusClass
+    : toStatusClassName(displayStatus)
   return STATUS_CLASS_MAP[v1Class] ?? ''
 })
 
@@ -407,7 +523,8 @@ function onCardEnter(e) {
 }
 
 function onCardLeave() {
-  hover.onCardLeave()
+  // 어느 카드가 나갔는지 함께 넘긴다 — 겹친 카드에서 이탈이 다음 카드 진입보다 늦게 와도 hover 가 꺼지지 않게.
+  hover.onCardLeave(props.appointment.id)
 }
 
 // 카드 위 우클릭 → 아래 grid-cell 로 위임(셀 예약추가 메뉴 재사용). 카드가 칸을 채워 빈 strip 우클릭이 어려운 경우.
@@ -468,7 +585,7 @@ function onQuickActionClick(e) {
 // ═══════════════════════════════════════════════════════════
 // Dot Menu + Hover Quick Action
 // 예약화면: ⋮ → 변경/취소/삭제
-// 진료화면: ⋮ → 완료/미이행/취소/초기화/삭제
+// 진료화면: ⋮ → 접수대기/완료/미이행/취소/초기화/삭제
 //           hover 퀵액션 → 상태 00: [접수], 05: [완료]
 // ═══════════════════════════════════════════════════════════
 
@@ -552,8 +669,10 @@ async function handleQuickAction() {
 }
 
 // ── popover panel element 등록 ──
+// 자기 id 를 함께 넘긴다 — 슬롯이 전역 하나라, 다른 카드로 옮겨 열릴 때 이 카드의 해제(null)가
+// 뒤늦게 도착해 새 카드의 패널을 덮지 않도록 composable 이 주인을 가린다.
 watch(popoverPanelEl, (el) => {
-  popover.setPopoverElement(el)
+  popover.setPopoverElement(el, props.appointment.id)
 })
 
 onBeforeUnmount(() => {
@@ -563,6 +682,7 @@ onBeforeUnmount(() => {
   if (hover.hoveredId.value === props.appointment.id) {
     hover.clearHover()
   }
+  onInfoLeave() // 툴팁이 열린 채 카드가 사라지면 window 리스너가 남는다
 })
 </script>
 
@@ -579,6 +699,12 @@ $border-default: var(--scheduler-card-waiting-border, #BBDEFB);
 $border-done: var(--scheduler-card-done-border, rgba(46, 125, 50, 0.3));
 $border-undone: var(--scheduler-card-undone-border, rgba(229, 57, 53, 0.3));
 $border-cancel: var(--scheduler-card-cancel-border, #d0d0d0);
+
+/* 레이어링 밑바탕 카드 좌측 마커 — 상태별(색 SSOT = scss/schedule/v3/_tokens.scss). */
+$marker-done: var(--scheduler-layer-marker-done, #4D9151);
+$marker-undone: var(--scheduler-layer-marker-undone, #E95753);
+$marker-cancel: var(--scheduler-layer-marker-cancel, #A8A8A8);
+$marker-receipt: var(--scheduler-layer-marker-receipt, #90BE5E);
 
 /* ═══════════════════════════════════════════════════════════
  * 카드 컨테이너
@@ -653,33 +779,68 @@ $border-cancel: var(--scheduler-card-cancel-border, #d0d0d0);
     box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.3) !important;
   }
 
-  /* ── 상태별 컨테이너 스타일 ── */
+  /* ── 상태별 컨테이너 스타일 ──
+     --card-layer-marker: is-long-card 좌측 마커 색(상태별). ::before 가 상속받는다.
+     상태 클래스가 없는 00 예약완료는 ::before 의 fallback(파랑)이 그대로 쓰인다. */
   &.status-done {
     border-color: $border-done;
     background: $bg-done;
+    --card-layer-marker: #{$marker-done};
   }
 
   &.status-undone {
     border-color: $border-undone;
     background: $bg-undone;
+    --card-layer-marker: #{$marker-undone};
   }
 
   &.status-cancel {
     border-color: $border-cancel;
     background: $bg-cancel;
     opacity: 0.85;
+    --card-layer-marker: #{$marker-cancel};
   }
 
-  /* 접수대기(05): 오렌지 계열 */
+  /* 접수대기(05) */
   &.status-receipt {
     border-color: var(--scheduler-card-receipt-border, rgba(245, 124, 0, 0.3));
     background: var(--scheduler-card-receipt-bg, #FFF3E0);
+    --card-layer-marker: #{$marker-receipt};
   }
 
   /* layering(긴 예약 위 얹힌 짧은 예약, level>0 floating) — 약한 그림자로 '위에 떠 있음' 입체감.
+     ⭐그림자는 오른쪽·아래로만(offset-x 1px, spread −1px). x-offset 0 이면 왼쪽으로도 퍼져
+     좌측 마커 바깥에 어두운 띠가 깔리고, 같은 4px 마커가 index0 보다 굵어 보인다.
      dragging/resizing 은 box-shadow:none 이 위에서 덮어 그림자 제거됨(정상). */
   &.is-layered {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    box-shadow: 1px 1px 3px -1px rgba(0, 0, 0, 0.22);
+  }
+
+  /* 가려진 긴 예약 — 좌측 세로 바. 화면정의서 「1. 긴 예약 건 표기」의 파란 세로선이다.
+     조건은 둘을 **함께** 만족할 때다:
+       ① 긴 예약인가 — isLongCard = '다른 예약의 행을 지나쳐 내려갔나'.
+          ⭐밴드를 넘는가로 판정하지 말 것: band 가 cellDuration 단위라 10분 그리드에서 전 카드에 붙는다.
+       ② 그 위에 얹힌 카드가 있어 가려졌나 — isLayerBase.
+     ②가 빠지면 아무에게도 가려지지 않은 긴 예약까지 바가 붙어, 바가 '아래에 가려진 것이 있다'는
+     신호가 아니라 '길다'는 사실만 말하게 된다(mock 9/17 실측: 바 65장 중 26장이 그런 경우였다).
+     (isLayerBase 는 리사이즈 핸들 포털 조건으로도 계속 쓰인다 — 그쪽은 이 바와 별개다.)
+     border-left 가 아니라 ::before 인 이유: hover(border-width:2px)·is-invalid(!important)·
+     status-* 가 모두 border-color/width 를 덮어써서 마커가 지워지기 때문.
+     색은 상태별 --card-layer-marker(위 status-* 에서 지정), 미지정(00 예약완료)이면 파랑 base. */
+  &.is-long-card.is-layer-base::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--card-layer-marker, var(--scheduler-layer-base-marker, #1D95E7));
+    /* 층수별 농도 계단(index0=1.0 → 깊을수록 연함, 하한 0.3) — 값은 cardStyle 이 layerDepth 로 산출.
+       고정 0.58(is-layer-nested 일괄)이던 것을 깊이 비례로 대체 — 중간층 2개(index1·index2)가
+       같은 농도로 나와 동일 마커가 중복돼 보이던 문제. */
+    opacity: var(--layer-marker-opacity, 1);
+    pointer-events: none;
+    z-index: 2; /* card-body 위, resize-handle(3) 아래 */
   }
 }
 
@@ -733,9 +894,10 @@ $border-cancel: var(--scheduler-card-cancel-border, #d0d0d0);
 }
 
 /* 표시정보 말줄임 시 전체내용 툴팁 — body teleport. 줄바꿈 허용(nowrap 아님) + max-width 폭 제한. 위치는 인라인 :style(fixed). */
+/* z 는 ⋮ popover(60000) 바로 아래 — 읽기용 툴팁이 조작하는 메뉴를 덮으면 안 된다. */
 .appt-info-tooltip {
   position: fixed;
-  z-index: 100000;
+  z-index: 59999;
   background: rgba(33, 33, 33, 0.92);
   color: #fff;
   padding: 6px 10px;
@@ -901,6 +1063,19 @@ $border-cancel: var(--scheduler-card-cancel-border, #d0d0d0);
    포털이 pointer-events:none 이므로 wrapper 는 auto 로 복구해 클릭 가능. */
 .quick-action-wrapper {
   pointer-events: auto;
+}
+
+/* 리사이즈 핸들 포털 사본 — 위치/크기는 인라인 portalHandleStyle(보드좌표 absolute). 포털이 pointer-events:none
+   이므로 auto 로 복구. 모양은 카드 안 .resize-handle 과 동일(투명, hover 시 어두운 띠). 클래스명을 .resize-handle
+   과 다르게 둔 이유: e2e 가 `.resize-handle--bottom` 을 카드 안에서 찾는데 같은 클래스가 포털에도 있으면 중복 매치. */
+.resize-handle-portal {
+  pointer-events: auto;
+  cursor: ns-resize;
+  background: transparent;
+
+  &:hover {
+    background: rgba(17, 17, 17, 0.4);
+  }
 }
 
 /* ⋮ 버튼: wrapper 내부 전체 크기 */

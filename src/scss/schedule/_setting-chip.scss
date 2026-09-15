@@ -1,0 +1,65 @@
+@use '../variables' as *;
+
+/* 운영일정 설정의 칩 기본형 — 부모 화면(SchedulerSettingsTreatmentSetting)과
+ * 휴무 컨트롤 자식(SchedulerSettingsOffDayControls)이 같은 칩을 그린다.
+ *
+ * 두 SFC 의 scoped 스타일은 서로 닿지 않아, mixin 으로 두지 않으면 같은 규칙을 두 벌 적게 된다.
+ * `&` 는 include 위치에서 풀리므로 **양쪽 모두 `.schedulerTreatmentSetting` 블록 안에서** include 한다.
+ * 모디파이어(--member/--inline·선택·드래그 상태)는 쓰는 쪽에만 있으므로 각자 갖는다. */
+@mixin scheduler-setting-chip-base {
+  /* 칩 형태 리스트 (반복 휴무, 특정일자, 의사) */
+  &__chipList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    align-content: flex-start;
+    gap: 4px;
+  }
+
+  /* 기본형 시각은 퍼블리싱(version2) 값 — 반복휴무·특정일자 칩의 살구색 배경. */
+  &__chip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    flex: 0 0 auto;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: $radius-2;
+    background: #fff4ed;
+    font-size: $font-size-14;
+    line-height: 16px;
+    color: $color-text-default;
+  }
+
+  /* ✕ 글리프는 ::before 로 그린다(퍼블리싱) — 버튼 텍스트 색은 투명으로 눌러 둔다. */
+  &__chipRemove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    color: transparent;
+    font-size: 0;
+    margin-left: auto;
+    padding: 0;
+    line-height: 1;
+
+    &::before {
+      content: '\2715';
+      color: #000;
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    &:hover { color: transparent; }
+  }
+}

@@ -10,7 +10,7 @@
 
 import type { DataType } from '@/constants/schedulerSearchFilter'
 
-export type CardMenuAction = 'EDIT' | 'COMPLETE' | 'NOSHOW' | 'CANCEL' | 'RESTORE' | 'DELETE'
+export type CardMenuAction = 'EDIT' | 'WAITING' | 'COMPLETE' | 'NOSHOW' | 'CANCEL' | 'RESTORE' | 'DELETE'
 
 /** 상태 변경 API 로 나가는 액션. EDIT(팝업)·DELETE(삭제 API)는 경로가 달라 제외한다. */
 export type CardStateAction = Exclude<CardMenuAction, 'EDIT' | 'DELETE'>
@@ -36,15 +36,17 @@ export function buildCardMenu(dataType: DataType, status: string): CardMenuButto
   if (dataType === 'APPOINTMENT') {
     return [
       { value: 'EDIT', displayLabel: '변경' },
-      { value: 'CANCEL', displayLabel: '예약 취소' },
+      { value: 'CANCEL', displayLabel: '취소' },
       restoreButton(status),
       { value: 'DELETE', displayLabel: '예약 삭제' },
     ]
   }
   return [
+    // 접수대기: 카드 hover 퀵액션 [접수]와 같은 동작(상태 05). 이미 05 면 할 일이 없다.
+    { value: 'WAITING', displayLabel: '접수대기', disabled: status === '05' },
     { value: 'COMPLETE', displayLabel: '완료' },
     { value: 'NOSHOW', displayLabel: '미이행' },
-    { value: 'CANCEL', displayLabel: '예약 취소' },
+    { value: 'CANCEL', displayLabel: '취소' },
     restoreButton(status),
     { value: 'DELETE', displayLabel: '진료 삭제' },
   ]

@@ -96,8 +96,9 @@ export function useSchedulerReschedule(deps: RescheduleDeps): UseSchedulerResche
       newEndMinute,
       toSubColIndex: 0,
     }
-    // 먼저 모드 종료(배너/lock 해제) 후 저장 — 저장 리프레시 동안 변경 UI 잔존 방지.
-    cancel()
+    // 여기서 모드를 끝내지 않는다 — 커밋이 확인창 '아니오' 등으로 중단되면 배너가 살아 있어야
+    // 사용자가 곧바로 다른 자리를 고를 수 있다. 배너/lock 해제는 저장을 실제로 보내기 직전에
+    // onCommit 쪽이 cancel() 로 한다(저장 리프레시 동안 변경 UI 잔존 방지는 그대로 지켜진다).
     void deps.onCommit(result)
   }
 

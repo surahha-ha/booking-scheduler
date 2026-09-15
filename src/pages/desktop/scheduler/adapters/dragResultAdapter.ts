@@ -52,6 +52,23 @@ function copyPatientFields(original: SchedulerAppointment): Pick<
   }
 }
 
+/**
+ * 진료항목(그룹·항목)을 원본에서 그대로 복사.
+ *
+ * 이동·길이조절은 진료항목을 바꾸지 않지만 반드시 실어 보내야 한다.
+ * 서버는 진료항목이 없는 요청을 '해제'로 읽으므로(BookLockService.modifyWithLock),
+ * 빠뜨리면 예약을 한 칸 옮기는 것만으로 진료항목이 지워진다.
+ */
+function copyTreatmentItemFields(original: SchedulerAppointment): Pick<
+  BookItemRequest,
+  'serviceGroupId' | 'serviceItemId'
+> {
+  return {
+    serviceGroupId: original.serviceGroupId ?? null,
+    serviceItemId: original.serviceItemId ?? null,
+  }
+}
+
 // ═══════════════════════════════════════════════════════════
 // Drag Drop → BookItemRequest
 // ═══════════════════════════════════════════════════════════
@@ -84,6 +101,7 @@ export function dragResultToBookItemRequest(
 
   return {
     ...copyPatientFields(original),
+    ...copyTreatmentItemFields(original),
     startDate: minuteToISODateTime(result.toDate, result.newStartMinute),
     endDate: minuteToISODateTime(result.toDate, result.newEndMinute),
     externalStaffNo: doctorName as unknown as number, // V1 호환: 서버가 이름→SNO 변환
@@ -113,6 +131,7 @@ export function resizeResultToBookItemRequest(
 
   return {
     ...copyPatientFields(original),
+    ...copyTreatmentItemFields(original),
     startDate: minuteToISODateTime(date, result.newStartMinute),
     endDate: minuteToISODateTime(date, result.newEndMinute),
     externalStaffNo: doctorName as unknown as number, // V1 호환: 서버가 이름→SNO 변환

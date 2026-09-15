@@ -130,13 +130,16 @@ describe('UiStatusFilter — 선택 규약 (빈 배열 = 전체)', () => {
     expect(store.searchVersion).toBe(before)
   })
 
-  it('선택이 바뀌면 재조회 신호(searchVersion)가 올라간다', async () => {
+  // 기대값 출처: setStatusKeys 주석 — 상태 필터는 조회 payload 에 없다(목록은 모든 상태를 받고 화면에서 거른다).
+  // 재조회를 걸면 같은 목록을 한 번 더 받는 것뿐이고, 숫자(boardStatistics)는 스토어 status 를 보고 즉시 바뀐다.
+  it('선택이 바뀌어도 재조회 신호(searchVersion)는 올라가지 않는다 — 스토어 status 만 바뀐다', async () => {
     const wrapper = mountFilter()
     const before = store.searchVersion
 
     await click(wrapper, '예약대기')
 
-    expect(store.searchVersion).toBe(before + 1)
+    expect(store.status).toEqual(['REQUEST'])
+    expect(store.searchVersion).toBe(before)
   })
 })
 

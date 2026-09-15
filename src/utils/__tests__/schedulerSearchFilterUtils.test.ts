@@ -1,5 +1,29 @@
 import {describe, expect, it} from 'vitest';
-import {normalizeName, normalizeTeamName, resolveStatisticsDoctorNames, resolveVisibleDoctors} from '@/utils/schedulerSearchFilterUtils';
+import {normalizeName, normalizeTeamName, resolveVisibleDoctors, toDisplayStatus, toStatusCodes, toStatusLabel} from '@/utils/schedulerSearchFilterUtils';
+
+describe('toDisplayStatus (화면별 상태 표시 코드 — 예약 화면은 00·03 만 구분)', () => {
+    it('예약 화면: 예약(00)·취소(03)는 그대로', () => {
+        expect(toDisplayStatus('00', 'APPOINTMENT')).toBe('00');
+        expect(toDisplayStatus('03', 'APPOINTMENT')).toBe('03');
+    });
+
+    it('예약 화면: 진료완료(01)·미이행(02)·접수대기(05)는 예약(00)으로 표기', () => {
+        expect(toDisplayStatus('01', 'APPOINTMENT')).toBe('00');
+        expect(toDisplayStatus('02', 'APPOINTMENT')).toBe('00');
+        expect(toDisplayStatus('05', 'APPOINTMENT')).toBe('00');
+    });
+
+    it('예약 화면: 상태 미지정(undefined/빈값)도 예약(00)으로 표기', () => {
+        expect(toDisplayStatus(undefined, 'APPOINTMENT')).toBe('00');
+        expect(toDisplayStatus('', 'APPOINTMENT')).toBe('00');
+    });
+
+    it('진료 화면: 실제 상태를 그대로 쓴다', () => {
+        for (const s of ['00', '01', '02', '03', '05']) {
+            expect(toDisplayStatus(s, 'TREATMENT')).toBe(s);
+        }
+    });
+});
 
 describe('normalizeName (이름 키 정규화)', () => {
     it('특수문자 제거 + trim', () => {
@@ -95,32 +119,30 @@ describe('resolveVisibleDoctors (진료 팀 표시 필터 — 이름 통일 key)
     });
 });
 
-describe('resolveStatisticsDoctorNames (통계 doctorName = 화면 표시 의사 정합)', () => {
-    const doctors = [
-        {id: '김의사', text: '김의사'},
-        {id: '최의사', text: '최의사'},
-        {id: '이의사', text: '이의사'},
-        {id: '박직원', text: '박직원'},
-    ];
-    const teams = [
-        {id: 1, name: '보철팀', doctors: [{staffName: '김의사'}, {staffName: '최의사'}]},
-        {id: 2, name: '교정팀', doctors: [{staffName: '이의사'}]},
-    ];
+// 기대값 출처: 상수 APPOINTMENT/TREATMENT_STATUS_TYPE 의 주석(예약 00 · 취소 03 · 접수대기 05 · 진료완료 01 · 미이행 02).
+describe('toStatusCodes (상태 필터 키 → 코드 목록, 빈 선택 = 전체)', () => {
+    it('키를 코드로 바꾸고 중복은 한 번만', () => {
+        expect(toStatusCodes(['APPOINTMENT', 'CANCEL', 'CANCEL'])).toEqual(['00', '03']);
+    });
+    it('빈 선택은 빈 배열 — 호출자가 "거르지 않음"으로 읽는다', () => {
+        expect(toStatusCodes([])).toEqual([]);
+    });
+});
 
-    it('개별 의사 선택 有 → 그대로 (팀 무관)', () => {
-        expect(resolveStatisticsDoctorNames(['최의사'], '보철팀', doctors, teams)).toEqual(['최의사']);
+describe('toStatusLabel (표시 상태 코드 → 그 장부의 칩 라벨)', () => {
+    it('예약장부: 00 → 예약, 03 → 취소', () => {
+        expect(toStatusLabel('00', 'APPOINTMENT')).toBe('예약');
+        expect(toStatusLabel('03', 'APPOINTMENT')).toBe('취소');
     });
-    it('"전체"(빈 배열) + 특정 팀 → 그 팀멤버로 좁힘 (화면 컬럼과 동일)', () => {
-        expect(resolveStatisticsDoctorNames([], '보철팀', doctors, teams)).toEqual(['김의사', '최의사']);
+    // 라벨은 용어 사전(src/messages/ko.json terms.status)의 값 — 05 대기 · 01 완료
+    it('진료장부: 05 → 대기, 01 → 완료, 02 → 미이행, 03 → 취소', () => {
+        expect(toStatusLabel('05', 'TREATMENT')).toBe('대기');
+        expect(toStatusLabel('01', 'TREATMENT')).toBe('완료');
+        expect(toStatusLabel('02', 'TREATMENT')).toBe('미이행');
+        expect(toStatusLabel('03', 'TREATMENT')).toBe('취소');
     });
-    it('"전체"(빈 배열) + 미지정 → 팀 미소속으로 좁힘', () => {
-        expect(resolveStatisticsDoctorNames([], null, doctors, teams)).toEqual(['박직원']);
-    });
-    it('팀 미설정 병원(teams 빈) + 미지정 → 전체 의사 (화면도 전체)', () => {
-        expect(resolveStatisticsDoctorNames([], null, doctors, [])).toEqual(['김의사', '최의사', '이의사', '박직원']);
-    });
-    it('⚠️ 의사 0명 팀 → 빈 배열 (BE size()>0 가드 false → 전체 집계 폴백)', () => {
-        const emptyTeam = [{id: 1, name: '빈팀', doctors: []}];
-        expect(resolveStatisticsDoctorNames([], '빈팀', doctors, emptyTeam)).toEqual([]);
+    it('그 장부에 칩이 없는 코드는 null — 진료장부의 00(예약), 예약장부의 01(진료완료)', () => {
+        expect(toStatusLabel('00', 'TREATMENT')).toBeNull();
+        expect(toStatusLabel('01', 'APPOINTMENT')).toBeNull();
     });
 });

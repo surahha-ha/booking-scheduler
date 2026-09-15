@@ -92,14 +92,6 @@ describe('mock adapter × 공통 인터셉터 end-to-end', () => {
         expect(res.data.payload).toHaveProperty('overrides');
     });
 
-    it('통계 2종은 배열(FE reduce 대상)', async () => {
-        const api = buildApiLikeDnsCore();
-        const m: any = await api.get('/api/booking/statistics/member');
-        const s: any = await api.get('/api/booking/statistics/state');
-        expect(Array.isArray(m.data.payload)).toBe(true);
-        expect(Array.isArray(s.data.payload)).toBe(true);
-    });
-
     it('사업장 설정 운영중 상태 — boolean payload', async () => {
         const api = buildApiLikeDnsCore();
         const res: any = await api.get('/api/booking/v1/work-state');

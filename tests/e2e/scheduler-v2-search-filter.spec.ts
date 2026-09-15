@@ -51,7 +51,14 @@ test.describe('SchedulerV2 - 검색 필터', () => {
 
     /* 로컬 백엔드는 axios adapter 층에서 응답해 실제 네트워크 요청이 나가지 않는다.
      * → 요청 캡처 대신 "결과가 화면에 나타나는가"로 검증한다. */
-    const cardsBefore = await page.locator('.appointment-card').count();
+    // 진입 직후엔 담당자·설정·예약이 순차로 도착해 카드가 늘어나는 중이다 — 수가 멈춘 뒤를 기준으로 삼는다.
+    let cardsBefore = -1;
+    await expect.poll(async () => {
+      const now = await page.locator('.appointment-card').count();
+      const stable = now > 0 && now === cardsBefore;
+      cardsBefore = now;
+      return stable;
+    }, { timeout: 15_000, intervals: [500] }).toBe(true);
 
     // 시드 고객명은 생성 가명 — 흔한 성으로 후보를 띄운다.
     await input.fill('한');

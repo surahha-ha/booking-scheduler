@@ -83,8 +83,15 @@ function dropdownRows() {
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(NOW)
+  // 데모용 성별·나이 보정은 기본으로 꺼 둔다. 아래 대부분의 케이스가 검증하는 것은
+  // "ITF 값이 없으면 칸을 비운다"는 실제 배포 경로이고, 보정은 그 위에 얹는 별개 계약이다.
+  // 보정 자체는 파일 말미의 전용 describe 에서 켜고 본다.
+  vi.stubEnv('VITE_DEMO_DEMOGRAPHICS', 'false')
   setActivePinia(createPinia())
   store = useSchedulerFilterStore()
+  // 이 스펙은 방문(TREATMENT) 장부를 기본으로 전제한다 — 상태 뱃지가 01/02/05 를 접지 않고 그대로 보여야
+  // 상태별 표기를 검증할 수 있다. 스토어 기본값은 예약(APPOINTMENT) 장부라 여기서 명시한다.
+  store.setDataType('TREATMENT', false)
   mocks.getRecent.mockReset()
   mocks.getRecent.mockResolvedValue({ data: { payload: [] } })
 })
@@ -95,6 +102,7 @@ afterEach(() => {
   document.body.innerHTML = ''
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 // ============================================================================
@@ -316,7 +324,8 @@ describe('UiSearchInput — recent 모드: 결과 표시', () => {
     expect(text('.recentRow__name')).toBe('김고객')
     expect(text('.recentRow__ageGender')).toBe('35세/남') // 생일 전이라 만 35세
     expect(text('.recentRow__phone')).toBe('010-1234-5678')
-    expect(text('.recentRow__datetime')).toBe('2026-03-10 14:30')
+    // 화면정의서 §5-1 표기 — yy.mm.dd hh:mm (정의서 예시 데이터 기준)
+    expect(text('.recentRow__datetime')).toBe('26.03.10 14:30')
     expect(text('.recentRow__doctor')).toBe('홍의사')
     expect(text('.recentRow__status')).toBe('완료')
   })
@@ -351,6 +360,67 @@ describe('UiSearchInput — recent 모드: 결과 표시', () => {
     await typeAndSettle(w, '김')
 
     expect(dropdownRows()[0].querySelector('.recentRow__status')?.textContent?.trim()).toBe('99')
+  })
+
+  // 기대값 출처: 정책 결정(2026-09-07, "카드와 동일하게, 글자도") — 규칙 SSOT 는 카드가 쓰는 toDisplayStatus.
+  it('예약장부에서는 뱃지를 카드와 같이 00·03 만 구분한다 — 01/02/05 는 색도 글자도 "예약"', async () => {
+    store.setDataType('APPOINTMENT', false)
+    mocks.getRecent.mockResolvedValue({
+      data: {
+        payload: ['00', '01', '02', '03', '05'].map(code => recentItem({ statusCode: code })),
+      },
+    })
+    const w = mountInput({ recent: true })
+    await typeAndSettle(w, '김')
+
+    const badges = dropdownRows().map(r => r.querySelector('.recentRow__status'))
+    expect(badges.map(b => b?.className.includes('recentRow__status--00')))
+      .toEqual([true, true, true, false, true])
+    expect(badges[3]?.className).toContain('recentRow__status--03')
+    expect(badges.map(b => b?.textContent?.trim())).toEqual(['예약', '예약', '예약', '취소', '예약'])
+  })
+
+  it('진료장부에서는 상태마다 제 색을 쓴다', async () => {
+    store.setDataType('TREATMENT', false)
+    mocks.getRecent.mockResolvedValue({
+      data: { payload: ['01', '05'].map(code => recentItem({ statusCode: code })) },
+    })
+    const w = mountInput({ recent: true })
+    await typeAndSettle(w, '김')
+
+    const classes = dropdownRows().map(r => r.querySelector('.recentRow__status')?.className ?? '')
+    expect(classes[0]).toContain('recentRow__status--01')
+    expect(classes[1]).toContain('recentRow__status--05')
+  })
+
+  // 기대값 출처: 정책 결정(2026-09-07, "상태 필터가 초기화되듯 고객명 검색도 초기화").
+  it('🔑 장부를 전환하면 입력칸과 드롭다운이 비워진다', async () => {
+    store.setDataType('APPOINTMENT', false)
+    mocks.getRecent.mockResolvedValue({ data: { payload: [recentItem()] } })
+    const w = mountInput({ recent: true })
+    await typeAndSettle(w, '김')
+    expect(dropdownRows().length).toBe(1)
+
+    store.setDataType('TREATMENT', false)
+    await w.vm.$nextTick()
+
+    expect((w.find('.patientAutocomplete__input').element as HTMLInputElement).value).toBe('')
+    expect(dropdownRows().length).toBe(0)
+  })
+
+  it('pick 으로 날짜를 옮긴 뒤 장부를 전환하면 x 도 사라진다 — 되돌릴 검색이 없다', async () => {
+    store.setDataType('APPOINTMENT', false)
+    mocks.getRecent.mockResolvedValue({ data: { payload: [recentItem()] } })
+    const w = mountInput({ recent: true })
+    await typeAndSettle(w, '김')
+    dropdownRows()[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await w.vm.$nextTick()
+    expect(w.find('.scheduleSearchInput__clearBtn').exists()).toBe(true)
+
+    store.setDataType('TREATMENT', false)
+    await w.vm.$nextTick()
+
+    expect(w.find('.scheduleSearchInput__clearBtn').exists()).toBe(false)
   })
 
   it('통합회원이 아니면 나이/성별 칸 자체가 없다', async () => {
@@ -520,5 +590,93 @@ describe('UiSearchInput — recent 모드: 조회 실패', () => {
     await typeAndSettle(w, '김고객')
 
     expect(dropdownRows()).toHaveLength(1)
+  })
+})
+
+// ============================================================================
+/**
+ * 검색 해제(x) — 화면정의서(OSP_MD_APB01 §5) "x버튼 누르면 검색이 풀리며 오늘 날짜로 이동".
+ *
+ * ★x 는 항상 떠 있는 버튼이 아니다. "지울 것이 있을 때"만 나온다 —
+ *   입력 중이거나(localKeyword), 최근검색 pick 으로 날짜가 옮겨진 뒤(movedByRecentPick).
+ * ★오늘 복귀는 pick 으로 날짜가 옮겨졌을 때만 한다. 줄달력으로만 날짜를 옮긴 사용자가
+ *   x 를 눌렀다고 보던 날짜가 튕기면 안 되기 때문이다.
+ */
+describe('UiSearchInput — recent 모드: 검색 해제(x)', () => {
+  const clearBtn = (w: any) => w.find('.scheduleSearchInput__clearBtn')
+
+  it('기본 모드에는 x 가 아예 없다', () => {
+    expect(clearBtn(mountInput()).exists()).toBe(false)
+  })
+
+  it('recent 모드라도 입력이 비어 있고 검색한 적 없으면 x 가 없다', () => {
+    expect(clearBtn(mountInput({ recent: true })).exists()).toBe(false)
+  })
+
+  it('입력하면 x 가 나오고, 지우면 다시 사라진다', async () => {
+    const w = mountInput({ recent: true })
+
+    await typeAndSettle(w, '김')
+    expect(clearBtn(w).exists()).toBe(true)
+
+    await typeAndSettle(w, '')
+    expect(clearBtn(w).exists()).toBe(false)
+  })
+
+  it('pick 뒤에는 입력칸이 비어도 x 가 남는다 (오늘로 되돌릴 거리가 남아 있다)', async () => {
+    mocks.getRecent.mockResolvedValue({ data: { payload: [recentItem()] } })
+    const w = mountInput({ recent: true })
+    await typeAndSettle(w, '김')
+
+    dropdownRows()[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await w.vm.$nextTick()
+
+    expect((w.find('.patientAutocomplete__input').element as HTMLInputElement).value).toBe('')
+    expect(clearBtn(w).exists()).toBe(true)
+  })
+
+  it('pick 으로 날짜가 옮겨진 뒤 x 를 누르면 오늘로 돌아오고 x 도 사라진다', async () => {
+    mocks.getRecent.mockResolvedValue({ data: { payload: [recentItem()] } })
+    const w = mountInput({ recent: true })
+    await typeAndSettle(w, '김')
+    dropdownRows()[0].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await w.vm.$nextTick()
+
+    // 부모가 옮겨 놓은 상황을 재현 — pick 은 날짜 이동을 emit 으로만 알린다
+    store.setPeriodDate(new Date(2026, 0, 5))
+    const spy = vi.spyOn(store, 'setPeriodDate')
+
+    await clearBtn(w).trigger('click')
+
+    // 시각이 아니라 "오늘"이면 된다 — 디바운스로 흘려보낸 시간만큼 ms 는 어긋난다
+    expect(spy).toHaveBeenCalledTimes(1)
+    const movedTo = spy.mock.calls[0][0]
+    expect([movedTo.getFullYear(), movedTo.getMonth(), movedTo.getDate()])
+      .toEqual([NOW.getFullYear(), NOW.getMonth(), NOW.getDate()])
+    expect(clearBtn(w).exists()).toBe(false)
+  })
+
+  it('★pick 없이 입력만 했다면 x 를 눌러도 날짜는 그대로다 (줄달력으로 옮긴 날짜를 튕기지 않는다)', async () => {
+    const w = mountInput({ recent: true })
+    await typeAndSettle(w, '김')
+
+    const spy = vi.spyOn(store, 'setPeriodDate')
+    await clearBtn(w).trigger('click')
+
+    expect(spy).not.toHaveBeenCalled()
+    expect((w.find('.patientAutocomplete__input').element as HTMLInputElement).value).toBe('')
+    expect(clearBtn(w).exists()).toBe(false)
+  })
+
+  it('x 를 누르면 드롭다운과 목록도 함께 닫힌다', async () => {
+    mocks.getRecent.mockResolvedValue({ data: { payload: [recentItem()] } })
+    const w = mountInput({ recent: true })
+    await typeAndSettle(w, '김')
+    expect(dropdownRows().length).toBeGreaterThan(0)
+
+    await clearBtn(w).trigger('click')
+    await w.vm.$nextTick()
+
+    expect(dropdownRows()).toHaveLength(0)
   })
 })

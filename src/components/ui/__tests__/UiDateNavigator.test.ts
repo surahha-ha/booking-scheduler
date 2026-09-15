@@ -288,4 +288,42 @@ describe('UiDateNavigator', () => {
       expect(wrapper.find('.scheduleDatePopup').exists()).toBe(true) // 닫히지도 않는다
     })
   })
+
+  /**
+   * 팝업은 position:fixed 라 화면이 스크롤되면 트리거와 어긋난다 → 스크롤에 닫는다.
+   * 그런데 VueDatePicker 는 헤더의 연도를 누르면 연도 목록 오버레이를 열면서 선택 연도가 가운데 오도록
+   * 목록 컨테이너의 scrollTop 을 세팅한다(21개 연도라 목록이 달력보다 길다). 그 scroll 이벤트를
+   * 화면 스크롤로 오인해 팝업이 닫혔다 — 연도를 누르는 순간 달력 전체가 사라지는 결함.
+   * 월 오버레이(12칸)는 스크롤이 생기지 않아 멀쩡했다.
+   *
+   * scroll 은 버블링하지 않으므로 window 리스너는 캡처로 걸려 있고, 그래서 dispatch 대상이
+   * document 에 붙어 있어야 window 까지 전파된다 → attachTo 로 마운트한다.
+   */
+  describe('스크롤과 달력', () => {
+    function mountAttached() {
+      return mount(UiDateNavigator, { attachTo: document.body })
+    }
+
+    it('달력 안쪽 스크롤(연도 목록 정렬)에는 닫히지 않는다', async () => {
+      const wrapper = mountAttached()
+      await openCalendar(wrapper)
+
+      wrapper.find('.datePickerStub').element.dispatchEvent(new Event('scroll'))
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('.scheduleDatePopup').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('달력 바깥 화면 스크롤에는 닫힌다 — fixed 팝업이 트리거와 어긋나기 때문', async () => {
+      const wrapper = mountAttached()
+      await openCalendar(wrapper)
+
+      document.dispatchEvent(new Event('scroll'))
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('.scheduleDatePopup').exists()).toBe(false)
+      wrapper.unmount()
+    })
+  })
 })

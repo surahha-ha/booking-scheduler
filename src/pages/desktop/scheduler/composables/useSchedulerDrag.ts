@@ -22,12 +22,13 @@
  *
  * drag 중 가변:
  *   - 대상 column (날짜 + 리소스)
- *   - startMinute (snap 적용)
+ *   - startMinute (snap 적용 — 등록/수정과 같은 예약 단위 격자에만 놓인다.
+ *     Shift 세밀 snap 은 쓰지 않는다: 등록/수정으로는 만들 수 없는 시각이 생긴다)
  */
 
 import { ref, readonly, type Ref, type DeepReadonly } from 'vue'
 import { hitTest, minuteToBandTopPx, isValidMinute } from '@/scheduler-engine/schedulerHitTest'
-import { snapMinute, DEFAULT_SNAP_CONFIG } from '@/scheduler-engine/schedulerSnapGrid'
+import { snapMinute, normalizeRangeToGrid, DEFAULT_SNAP_CONFIG } from '@/scheduler-engine/schedulerSnapGrid'
 import type {
   FlatColumn,
   BandCompatible,
@@ -131,6 +132,18 @@ export interface UseSchedulerDragReturn {
 // Composable 본체
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * 드래그 중 미리보기가 쓰는 예약 길이 — **저장될 길이**와 같아야 한다.
+ *
+ * 격자 밖 예약(외부 유입, 예: 09:40~10:20)을 옮기면 저장 경로가 예약 단위 격자로 보정한다
+ * (`normalizeRangeToGrid`: 09:30~10:00). 원본 길이(40분)를 그대로 미리보기에 쓰면 놓기 전엔 10:10
+ * 까지 보이다가 저장되면 10:00 으로 줄어 카드가 놓은 자리와 달라진다. 그래서 길이도 같은 보정을 지난다.
+ */
+export function bookingDurationOf(startMinute: number, endMinute: number, step: number): number {
+  const range = normalizeRangeToGrid(startMinute, endMinute, step)
+  return range.endMinute - range.startMinute
+}
+
 export function useSchedulerDrag(
   options: UseSchedulerDragOptions
 ): UseSchedulerDragReturn {
@@ -162,7 +175,6 @@ export function useSchedulerDrag(
   let _duration = 0         // 불변: endMinute - startMinute
   let _grabOffsetX = 0      // 카드 내 클릭 X offset (px)
   let _grabOffsetY = 0      // 카드 내 클릭 Y offset (px)
-  let _isFineSnap = false   // Shift 키 상태
 
   // ── drag 시작 threshold (클릭 vs drag 구분) ──
   const DRAG_THRESHOLD = 5   // px
@@ -209,13 +221,10 @@ export function useSchedulerDrag(
       _grabOffsetY = 0
     }
 
-    _isFineSnap = e.shiftKey
-
     // document 리스너 등록 (threshold 판정용)
     document.addEventListener('mousemove', onDragMove)
     document.addEventListener('mouseup', onDragEnd)
     document.addEventListener('keydown', onKeyDown)
-    document.addEventListener('keyup', onKeyUp)
 
     return true
   }
@@ -247,7 +256,7 @@ export function useSchedulerDrag(
 
     if (!hit.columnKey || !isValidMinute(hit.minute)) return
 
-    const snappedStart = snapMinute(hit.minute, snapConfig, _isFineSnap)
+    const snappedStart = snapMinute(hit.minute, snapConfig)
     const snappedEnd = snappedStart + _duration
 
     let isValid = true
@@ -268,7 +277,8 @@ export function useSchedulerDrag(
     }
 
     const column = hit.column!
-    const subColWidth = column.widthPx / N
+    // 레인폭은 컬럼별 레인 수 기준(모델 A). 전역 N 으로 나누면 프리뷰가 카드 격자와 어긋난다.
+    const subColWidth = column.widthPx / Math.max(1, column.slots ?? N)
     const topPx = minuteToBandTopPx(snappedStart, bandInfos.value)
     const originalHeight = _dragState.value.previewRect.height
 
@@ -303,8 +313,6 @@ export function useSchedulerDrag(
   // ═══════════════════════════════════════════════════════════
 
   function onDragMove(e: MouseEvent): void {
-    _isFineSnap = e.shiftKey
-
     // ── threshold 대기 중: 5px 이동 여부 판정 ──
     if (_pendingDrag) {
       const dx = e.clientX - _startClientX
@@ -340,7 +348,7 @@ export function useSchedulerDrag(
     if (!handle) return false
 
     _lockHandle = handle
-    _duration = info.endMinute - info.startMinute
+    _duration = bookingDurationOf(info.startMinute, info.endMinute, snapConfig.intervalMinutes)
     document.body.classList.add('is-dragging-active')
 
     _dragState.value = {
@@ -419,7 +427,6 @@ export function useSchedulerDrag(
     document.removeEventListener('mousemove', onDragMove)
     document.removeEventListener('mouseup', onDragEnd)
     document.removeEventListener('keydown', onKeyDown)
-    document.removeEventListener('keyup', onKeyUp)
 
     // 상태 초기화
     _dragState.value = null
@@ -427,7 +434,6 @@ export function useSchedulerDrag(
     _duration = 0
     _grabOffsetX = 0
     _grabOffsetY = 0
-    _isFineSnap = false
     _pendingDrag = false
     _pendingInfo = null
     _startClientX = 0
@@ -449,15 +455,6 @@ export function useSchedulerDrag(
   function onKeyDown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       cancelDrag()
-    }
-    if (e.key === 'Shift') {
-      _isFineSnap = true
-    }
-  }
-
-  function onKeyUp(e: KeyboardEvent): void {
-    if (e.key === 'Shift') {
-      _isFineSnap = false
     }
   }
 

@@ -38,6 +38,13 @@ export function useQueryString() {
 
         if (!nextDataType && !nextViewMode) return;
 
+        // query 값이 store 와 이미 같으면 재조회하지 않는다.
+        // 진입 시 기본 query 를 주입(router.replace)하는 왕복에서 같은 payload 조회가 한 번 더 나가던 경로.
+        // (최초 조회는 bookStore 의 searchVersion watch{immediate} 가 이미 담당한다.)
+        const changed = (!!nextDataType && nextDataType !== filterStore.dataType)
+            || (!!nextViewMode && nextViewMode !== filterStore.viewMode);
+        if (!changed) return;
+
         syncingFromRoute = true;
         try {
             if (nextDataType) filterStore.setDataType(nextDataType, false);

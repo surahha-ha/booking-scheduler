@@ -1,5 +1,13 @@
 import dayjs from 'dayjs';
-import {AppointmentStatusType, TreatmentStatusType, DataType, MemberType, ViewMode} from '@/constants/schedulerSearchFilter';
+import {
+    APPOINTMENT_STATUS_TYPE,
+    AppointmentStatusType,
+    TREATMENT_STATUS_TYPE,
+    TreatmentStatusType,
+    DataType,
+    MemberType,
+    ViewMode,
+} from '@/constants/schedulerSearchFilter';
 
 // DataType -> API type
 const DATA_TYPE_TO_API: Record<DataType, string> = {
@@ -73,9 +81,37 @@ export function toIsMember(memberType: MemberType) {
  * 스케줄러의 appointmentStatusType value 를 Api Parameter status value 로 변경
  * @param appointmentStatusType
  */
-export function toStatus(statusKeys: (AppointmentStatusType | TreatmentStatusType)[]) {
+/** 상태 필터 키 → 상태 코드 목록. 빈 배열 = 전체(거르지 않음). */
+export function toStatusCodes(statusKeys: (AppointmentStatusType | TreatmentStatusType)[]): string[] {
     const uniq = Array.from(new Set(statusKeys));
-    return uniq.map(s => STATUS_TO_API[s]).filter(Boolean).join(',');
+    return uniq.map(s => STATUS_TO_API[s]).filter(Boolean);
+}
+
+/**
+ * 표시 상태 코드 → 그 장부의 상태 칩 라벨('예약'·'취소'·'접수대기'…). 칩이 없는 코드는 null.
+ * 화면 통계가 카드를 칩별로 세는 키 — 칩 라벨과 통계 키가 같은 상수(APPOINTMENT/TREATMENT_STATUS_TYPE)에서 나온다.
+ */
+export function toStatusLabel(displayStatus: string, dataType: DataType): string | null {
+    const labels: Record<string, string> = dataType === 'TREATMENT' ? TREATMENT_STATUS_TYPE : APPOINTMENT_STATUS_TYPE;
+    const key = (Object.keys(labels) as (AppointmentStatusType | TreatmentStatusType)[])
+        .find(k => STATUS_TO_API[k] === displayStatus);
+    return key ? labels[key] : null;
+}
+
+/** 예약 화면이 상태로 구분해 보여주는 코드. 그 외(진료완료·미이행·접수대기)는 예약(00)처럼 그린다. */
+const APPOINTMENT_DISPLAY_STATUSES = new Set(['00', '03']);
+
+/**
+ * 화면에 표시할 상태 코드.
+ * 예약 화면(APPOINTMENT)은 예약(00)·취소(03)만 색/라벨로 구분하고, 나머지 상태는 예약(00)으로 표기한다.
+ * 진료 화면(TREATMENT)은 실제 상태를 그대로 쓴다. 데이터(실제 status)는 바꾸지 않는다 — 표시 전용.
+ */
+export function toDisplayStatus(status: string | undefined, dataType: DataType): string {
+    const s = status ?? '';
+    if (dataType === 'APPOINTMENT' && !APPOINTMENT_DISPLAY_STATUSES.has(s)) {
+        return '00';
+    }
+    return s;
 }
 
 export function toStatusClassName(status: string) {
@@ -152,23 +188,4 @@ export function resolveVisibleDoctors<T extends VisibleDoctorSource>(
     // t.doctors 널가드(line 134 와 대칭) — BE 팀 응답에 doctors 누락 팀(빈 팀/재등록 과도기) 유입 대비.
     const teamMemberNames = new Set(teams.flatMap(t => (t.doctors ?? []).map(d => normalizeName(d.staffName))));
     return doctors.filter(d => !teamMemberNames.has(normalizeName(d.id)));
-}
-
-/**
- * 통계(상태/회원) 조회용 의사 이름 집합 — 화면 표시 의사와 정합.
- * 통계는 BE 가 COUNT 로 집계해 내려주므로 FE 에서 못 거른다 → doctorName 파라미터로 좁혀야
- * 카드 표시(resolveVisibleDoctors 로 거른 화면 컬럼)와 통계 수치가 일치한다.
- * - 개별 의사 선택 有(selectedDoctors 비어있지 않음) → 그대로 (이미 visible 의 부분집합).
- * - "전체"(빈 배열) → 현재 팀/미지정의 화면 표시 의사 집합(resolveVisibleDoctors)으로 좁힘.
- *   (특정 팀 = 그 팀멤버 / 미지정 = 팀 미소속, 화면 컬럼과 동일.)
- * ⚠️ 결과가 빈 배열(의사 0명 팀)이면 doctorName 미적용(size()>0 가드 false) → BE 전체 집계로 폴백(드문 엣지).
- */
-export function resolveStatisticsDoctorNames<T extends VisibleDoctorSource>(
-    selectedDoctors: string[],
-    teamName: string | null,
-    doctors: T[],
-    teams: TeamSource[],
-): string[] {
-    if (selectedDoctors.length > 0) return selectedDoctors;
-    return resolveVisibleDoctors(teamName, doctors, teams).map(d => d.id);
 }

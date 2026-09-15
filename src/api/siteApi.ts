@@ -125,9 +125,27 @@ export type StaffWorkHoursResponse = {
         staffId: number;
         staffName: string;
         times: WorkHoursRow[];           // 정해진 요일 행만. 빈 배열 = 한 번도 정하지 않음(미설정)
+        monthlyOffRules: StaffMonthlyOffRule[];
+        holidayOpenYn: StaffHolidayOpenYn;
     }>;
     overrides: WorkHoursOverride[];
 };
+
+/* 담당자 "매월 N번째 O요일" 휴무 1건. 목록에 있는 조합이 곧 휴무가고, 해제는 목록에서 빠지는 것이다.
+ * ⚠️ 사업장의 RecurringOffRule 과 별개 타입이다 — 담당자의 "매주" 휴무는 times(시분 null)가 담당해서
+ *    한 목록에 두 표현을 섞으면 어느 쪽이 소유자인지 모호해진다. */
+export type StaffMonthlyOffRule = {
+    dayCd: number;                      // 0=일 ~ 6=토
+    monthlyNth: number;                  // 1~5 (매월 N번째)
+};
+
+/* 담당자 공휴일 진료여부. 'N'=휴무 / 'Y'=진료. 원천 컬럼이 NOT NULL 이라 조회 응답은 항상 둘 중 하나다.
+ * 사업장 규칙 "상속"은 값이 아니라 진료팀 배치 시점의 복사로 해결한다(화면정의서 APB032 §4). */
+export type StaffHolidayOpenYn = 'Y' | 'N';
+
+/* 저장 요청 전용 — null 은 "이 담당자의 공휴일 값은 건드리지 않는다"는 뜻이다(미설정으로 되돌리는 것이 아니다).
+ * 운영시간·매월 휴무는 전체 치환이라 빠지면 사라지지만, 공휴일만은 NOT NULL 이라 지울 수가 없다. */
+export type StaffHolidayOpenYnInput = StaffHolidayOpenYn | null;
 
 export type WorkingHoursPayload = {
     /* 사업장 운영시간(site)은 여기 없다 — TreatmentSettingsPayload.site 로 함께 저장한다 */
@@ -136,6 +154,10 @@ export type WorkingHoursPayload = {
         /* 정한 요일 행만 보낸다. 빈 배열 = 미설정 유지(그 담당자의 행을 남기지 않는다).
          * 전체 치환이므로 여기 없는 요일은 저장 후 미설정이 된다. */
         times: WorkHoursRow[];
+        /* 매월 N번째 요일 휴무. times 와 마찬가지로 전체 치환이라 여기 없는 조합은 저장 후 사라진다. */
+        monthlyOffRules: StaffMonthlyOffRule[];
+        /* 공휴일 진료여부. null 을 보내면 서버가 그 담당자의 기존 값을 그대로 둔다(§StaffHolidayOpenYnInput). */
+        holidayOpenYn: StaffHolidayOpenYnInput;
     }>;
     /* 캘린더 셀에서 직원별로 편집한 날짜 override 들 — weekly 보다 우선 */
     overrides: WorkHoursOverride[];
@@ -185,7 +207,9 @@ export type TreatmentSettingsSaveResult = {
 };
 
 /**
- * 운영일정 보기 — 팀/소속 담당자 조회
+ * 팀/소속 담당자 조회 — 운영일정 보기·운영일정 설정 공용. 자체 DB 만 읽는다(외부 원천 없음).
+ * 설정 화면의 팀은 반드시 이걸로 읽는다 — getTreatmentSettings 는 휴무 규칙(원천 외부 시스템)과 번들이라
+ * 외부 시스템 장애 시 팀 응답까지 같이 늦어진다.
  */
 export function getTeams() {
     return api.get<ApiResponse<{ teams: DoctorTeam[] }>>(
