@@ -45,8 +45,27 @@ function toPx(value) {
 </template>
 
 <style lang="scss" scoped>
+/* 자체 완결 스위치 — 클래스명(form-check / form-switch / form-check-input)은 Bootstrap 시절 이름을
+ * 그대로 두었다(테스트·호출처가 참조). 예전엔 Bootstrap 이 주던 base 규칙(appearance·테두리·pill)을
+ * 여기서 직접 정의하므로 외부 CSS 없이 동작한다. */
 .custom-switch-main {
+  display: block;
+  min-height: 1.5rem;
+  margin-bottom: .125rem;
+  padding: 0;
+
   .form-check-input {
+    appearance: none;
+    -webkit-appearance: none;
+    display: block;
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--switch-off);
+    border-radius: 2em;
+    vertical-align: top;
+    print-color-adjust: exact;
+
     width: var(--switch-width);
     height: var(--switch-height);
     cursor: pointer;
@@ -56,7 +75,7 @@ function toPx(value) {
     background-color: var(--switch-off);
     border-color: var(--switch-off);
 
-    // bootstrap 스위치 thumb (흰 동그라미)
+    // 스위치 thumb (흰 동그라미)
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23fff'/%3e%3c/svg%3e");
     background-repeat: no-repeat;
     background-size: var(--switch-dot-size) var(--switch-dot-size);

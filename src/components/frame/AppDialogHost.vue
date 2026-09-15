@@ -116,6 +116,6 @@ watch(() => state.open, (open) => {
 
 .app-dialog__btn--primary {
   color: #fff;
-  background: var(--bs-primary, #2f6fed);
+  background: var(--brand-primary, #2f6fed);
 }
 </style>

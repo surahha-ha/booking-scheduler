@@ -23,15 +23,6 @@ importers:
       axios:
         specifier: ^1.11.0
         version: 1.19.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
-      bootstrap:
-        specifier: ^5.3.8
-        version: 5.3.8(@popperjs/core@2.11.8)
-      bootstrap-icons:
-        specifier: ^1.11.3
-        version: 1.13.1
-      bootstrap-vue-next:
-        specifier: ^0.24.23
-        version: 0.24.23(vue@3.5.41(typescript@6.0.3))
       date-fns:
         specifier: ^4.1.0
         version: 4.4.0
@@ -545,9 +536,6 @@ packages:
     resolution: {integrity: sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ==}
     engines: {node: '>=20'}
     hasBin: true
-
-  '@popperjs/core@2.11.8':
-    resolution: {integrity: sha512-P1st0aksCrn9sGZhp8GMYwBnQsbvAWsZAX44oXNNvLHGqAOcoVxmjZiohstwQ7SqKnbR47akdNi+uleWD8+g6A==}
 
   '@rollup/pluginutils@5.4.0':
     resolution: {integrity: sha512-MfPp06CjRLfXQ3wY0R8vJDYBy/MvVcc9OulEfR0B8Iv9ko+GCNaRZ+EpJYFl27LhKsZK0o420sYCRHCjfCgeUg==}
@@ -1149,19 +1137,6 @@ packages:
 
   boolbase@1.0.0:
     resolution: {integrity: sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww==}
-
-  bootstrap-icons@1.13.1:
-    resolution: {integrity: sha512-ijombt4v6bv5CLeXvRWKy7CuM3TRTuPEuGaGKvTV5cz65rQSY8RQ2JcHt6b90cBBAC7s8fsf2EkQDldzCoXUjw==}
-
-  bootstrap-vue-next@0.24.23:
-    resolution: {integrity: sha512-oUxe4nfQjgcznsQKVCiRzYmvi8dEBq6FZSvnNDAqRvL/O8G8FcW0Lnzg2fAItKX4/kZzgiffO+el2qDfVKmXDg==}
-    peerDependencies:
-      vue: ^3.5.3
-
-  bootstrap@5.3.8:
-    resolution: {integrity: sha512-HP1SZDqaLDPwsNiqRqi5NcP0SSXciX2s9E+RyqJIIqGo+vJeN5AJVM98CXmW/Wux0nQ5L7jeWUdplCEf0Ee+tg==}
-    peerDependencies:
-      '@popperjs/core': ^2.11.8
 
   brace-expansion@1.1.18:
     resolution: {integrity: sha512-Edep/X9fGqVNmzKBVsDYIOtD+z1tuezV70LBjdCst9Tqu76lsnvRiZ6oTic1n+/BIwX6QDGAO94PN4N2SADvtw==}
@@ -3232,8 +3207,6 @@ snapshots:
     dependencies:
       playwright: 1.62.1
 
-  '@popperjs/core@2.11.8': {}
-
   '@rollup/pluginutils@5.4.0(rollup@4.62.4)':
     dependencies:
       '@types/estree': 1.0.9
@@ -3763,16 +3736,6 @@ snapshots:
   binary-extensions@2.3.0: {}
 
   boolbase@1.0.0: {}
-
-  bootstrap-icons@1.13.1: {}
-
-  bootstrap-vue-next@0.24.23(vue@3.5.41(typescript@6.0.3)):
-    dependencies:
-      vue: 3.5.41(typescript@6.0.3)
-
-  bootstrap@5.3.8(@popperjs/core@2.11.8):
-    dependencies:
-      '@popperjs/core': 2.11.8
 
   brace-expansion@1.1.18:
     dependencies:

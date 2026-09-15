@@ -14,7 +14,7 @@
 
 ## 기술 스택
 
-Vue 3 (`<script setup>`) · Vite 5 · Pinia · Vue Router · Vue I18n · Bootstrap 5 / BootstrapVueNext
+Vue 3 (`<script setup>`) · Vite 5 · Pinia · Vue Router · Vue I18n · 자체 SCSS(외부 CSS 프레임워크 없음)
 테스트: Vitest + happy-dom, Playwright(e2e)
 
 ## 시작하기

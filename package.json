@@ -21,9 +21,9 @@
     "@vueuse/integrations": "^11.1.0",
     "@vueuse/router": "^11.1.0",
     "axios": "^1.11.0",
-    "bootstrap": "^5.3.8",
-    "bootstrap-icons": "^1.11.3",
-    "bootstrap-vue-next": "^0.24.23",
+    
+    
+    
     "date-fns": "^4.1.0",
     "dayjs": "^1.11.13",
     "js-cookie": "^3.0.5",

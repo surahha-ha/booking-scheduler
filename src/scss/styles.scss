@@ -1,10 +1,11 @@
 /* src/scss/styles.scss
  * ======================================================================
  * 앱 자체(전역) 스타일 진입점
- * - main.js 는 vendors.scss(서드파티) 다음에 이 파일을 로드한다
- * - 상단은 @use 로 모듈 로드(Sass 규칙상 @use 는 최상단), 하단에서
+ * - main.js 는 서드파티 CSS(datepicker·notivue) 다음에 이 파일을 로드한다
+ * - reboot(최소 리셋) → theme → 나머지 순. 상단은 @use 로 모듈 로드(Sass 규칙상 @use 는 최상단), 하단에서
  *   우리 notivue 테마를 마지막에 @import (toast 가 가장 늦게 얹혀야 함)
  * ====================================================================== */
+@use './reboot';
 @use './theme';
 @use './variables' as *;
 @use './utilities';

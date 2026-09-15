@@ -1,7 +1,8 @@
 /* src/scss/_theme.scss
  * ======================================================================
  * 전역 테마 토큰 + 기본 레이아웃.
- * Bootstrap 의 CSS 변수를 여기서 재정의한다 — 브랜드 색을 바꾸려면 --bs-primary 하나만 고치면 된다.
+ * 브랜드 색의 CSS 변수 원천 — 바꾸려면 --brand-primary 하나만 고친다(SCSS 쪽 원천은 _variables.scss 의 $color-primary).
+ * 스케줄러 전용 토큰은 schedule/v3/_tokens.scss 에 있다.
  * ====================================================================== */
 
 /* 본문 폰트. styles.scss 가 font-family 로 Pretendard 를 지정하므로 로더가 반드시 있어야 한다.
@@ -10,26 +11,7 @@
 
 :root {
   /* ── 브랜드 ── */
-  --bs-primary: #2f6fed;
-
-  /* ── 타이포 ── */
-  --bs-font-sans-serif: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-    "Segoe UI Symbol", "Noto Color Emoji";
-  --bs-font-monospace: "Pretendard Variable", Pretendard, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
-
-  /* ── 모서리: 각진 UI(스케줄러 그리드와 톤을 맞춘다) ── */
-  --bs-border-radius: 0;
-  --bs-border-radius-sm: var(--bs-border-radius);
-  --bs-border-radius-lg: var(--bs-border-radius);
-  --bs-border-radius-xl: var(--bs-border-radius);
-  --bs-border-radius-xxl: var(--bs-border-radius);
-
-  /* ── 링크 ── */
-  --bs-link-color: var(--bs-dark);
-  --bs-link-color-rgb: var(--bs-dark);
-  --bs-link-hover-color: var(--bs-primary);
+  --brand-primary: #2f6fed;
 }
 
 #app {
@@ -39,8 +21,8 @@
 }
 
 ::selection {
-  color: var(--bs-light);
-  background-color: var(--bs-primary);
+  color: #f8f9fa;
+  background-color: var(--brand-primary);
 }
 
 /* 스크롤바 (WebKit 계열) */
