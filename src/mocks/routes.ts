@@ -106,7 +106,12 @@ export const routes: MockRoute[] = [
             const label = byLabel[r.statusCode] ?? '예약';
             acc.set(label, (acc.get(label) ?? 0) + 1);
         }
-        return [...acc.entries()].map(([name, cnt]) => ({name, cnt}));
+        // 서버 계약은 상태별 행 앞에 합계 행 '전체' 를 함께 내려준다.
+        // 상태 필터 배지가 '전체' 키를 직접 읽으므로 이 행이 빠지면 합계가 0 으로 보인다.
+        return [
+            {name: '전체', cnt: live.length},
+            ...[...acc.entries()].map(([name, cnt]) => ({name, cnt})),
+        ];
     }},
     {method: 'GET', pattern: '/api/booking/v2/schedule/unassigned-reservations', handle: () => ({assignable: false})},
     {method: 'POST', pattern: '/api/booking/v2/schedule/assign-unassigned', handle: () => ({updated: 0})},
@@ -148,6 +153,22 @@ export const routes: MockRoute[] = [
     {method: 'GET', pattern: '/api/booking/v2/schedule/work-hours/site', handle: () => db.siteWorkHours},
     {method: 'GET', pattern: '/api/booking/v2/schedule/work-hours/staff', handle: () => db.staffWorkHours},
     {method: 'GET', pattern: '/api/booking/v2/schedule/teams', handle: () => ({teams: db.teams})},
+
+    /* 담당자 순서 변경 전용 저장 — 팀 구성원 정렬순서만 바꾼다.
+     * 전체 치환(settings/save)과 달리 팀·운영시간·사업장은 건드리지 않는다. */
+    {method: 'POST', pattern: '/api/booking/v2/schedule/teams/member-order', handle: ({body}) => {
+        const rows: Array<{teamId: number; orderedStaffIds: number[]}> = body?.teams ?? [];
+        for (const {teamId, orderedStaffIds} of rows) {
+            const team = db.teams.find(t => t.id === teamId);
+            if (!team || !Array.isArray(orderedStaffIds)) continue;
+            // 요청 순서대로 재배열. 목록에 없는 멤버는 뒤에 원래 순서로 남긴다.
+            const byId = new Map(team.doctors.map(d => [d.staffId, d]));
+            const ordered = orderedStaffIds.map(id => byId.get(id)).filter(Boolean) as typeof team.doctors;
+            const rest = team.doctors.filter(d => !orderedStaffIds.includes(d.staffId));
+            team.doctors = [...ordered, ...rest];
+        }
+        return null;
+    }},
     {method: 'GET', pattern: '/api/booking/v2/schedule/settings', handle: () => db.treatmentSettings},
     {method: 'POST', pattern: '/api/booking/v2/schedule/settings/save', handle: ({body}) => {
         /* settings/save 는 파트 3축이다(BE 계약 2026-07). 필드 미전송(null) = 그 파트를 아예 손대지 않음.

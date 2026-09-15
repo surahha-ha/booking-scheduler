@@ -22,7 +22,7 @@ export default defineConfig({
     },
     test        : {
         // Playwright e2e(tests/e2e/**)는 Vitest 대상에서 제외
-        exclude: ['**/node_modules/**', '**/dist/**', '**/tests/e2e/**'],
+        exclude: ['**/node_modules/**', '**/dist/**', '**/tests/e2e/**', '**/.harness/**'],
     },
     server      : {
         host      : 'localhost',

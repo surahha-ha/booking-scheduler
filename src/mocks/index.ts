@@ -58,9 +58,22 @@ export function mockEnvelope(payload: any) {
     return {code: SUCCEED, message: 'OK', payload};
 }
 
+/**
+ * ⚠️ 응답 payload 는 반드시 db 저장분과 "다른 객체"여야 한다.
+ *    핸들러가 db 의 배열·객체를 그대로 반환하면 store 가 그 원본을 참조하게 되고,
+ *    이후 쓰기 핸들러의 push/splice 가 store 참조를 in-place 로 바꿔버린다.
+ *    → Vue 는 트리거를 못 받아 computed(캐시)와 구독 컴포넌트가 낡은 값에 고착된다
+ *      (재조회해도 화면 일부만 갱신되는 유령 증상).
+ *    실제 네트워크는 JSON 직렬화를 거쳐 항상 새 객체를 주므로, 같은 경계를 여기서 재현한다.
+ */
+function detach(payload: any) {
+    if (payload == null || typeof payload !== 'object') return payload;
+    return JSON.parse(JSON.stringify(payload));
+}
+
 function buildResponse(config: any, payload: any) {
     return {
-        data: mockEnvelope(payload),
+        data: mockEnvelope(detach(payload)),
         status: 200,
         statusText: 'OK',
         headers: {},

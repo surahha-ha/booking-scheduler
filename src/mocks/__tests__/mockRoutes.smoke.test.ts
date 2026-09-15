@@ -123,8 +123,12 @@ describe('mock routes smoke', () => {
         expect(member.find((r: any) => r.memberYn === 'Y').cnt)
             .toBe(boardItems.filter((it: any) => it.memberYn === 'Y').length);
 
+        // 서버 계약: 상태별 행 + 합계 행 '전체'. 합계 행은 상태별 합과 같아야 하고, 상태별 합에 섞여 들어가면 안 된다.
         const state = call('GET', '/api/booking/statistics/state', {params});
-        expect(state.reduce((a: number, r: any) => a + r.cnt, 0)).toBe(boardItems.length);
+        const total = state.find((r: any) => r.name === '전체');
+        expect(total?.cnt).toBe(boardItems.length);
+        const byStatus = state.filter((r: any) => r.name !== '전체');
+        expect(byStatus.reduce((a: number, r: any) => a + r.cnt, 0)).toBe(boardItems.length);
     });
 
     it('통계는 의사 필터를 반영한다 (보드 컬럼과 정합)', () => {

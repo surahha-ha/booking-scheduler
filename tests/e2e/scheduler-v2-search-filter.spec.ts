@@ -49,31 +49,20 @@ test.describe('SchedulerV2 - 검색 필터', () => {
     const input = page.locator('.patientAutocomplete__input');
     await expect(input).toBeVisible();
 
-    // getRecent(GET /api/booking/recent?keyword=) 호출 캡처
-    const recentReqPromise = page.waitForRequest(
-      (req) =>
-        /\/api\/booking\/recent(?:\?.*)?$/.test(req.url()) &&
-        req.method() === 'GET' &&
-        /keyword=/.test(req.url()),
-      { timeout: 8_000 }
-    );
-    // 동시에 보드 keyword 재조회(GET /book?keyword=)는 발생하지 않아야 함(의도된 변경)
-    let boardKeywordSearch = false;
-    page.on('request', (req) => {
-      if (/\/api\/booking(?:\?.*)?$/.test(req.url()) && /keyword=/.test(req.url())) {
-        boardKeywordSearch = true;
-      }
-    });
+    /* 로컬 백엔드는 axios adapter 층에서 응답해 실제 네트워크 요청이 나가지 않는다.
+     * → 요청 캡처 대신 "결과가 화면에 나타나는가"로 검증한다. */
+    const cardsBefore = await page.locator('.appointment-card').count();
 
-    await input.fill('홍길동');
+    // 시드 고객명은 생성 가명 — 흔한 성으로 후보를 띄운다.
+    await input.fill('한');
 
-    const recentReq = await recentReqPromise.catch(() => null);
-    expect(recentReq).not.toBeNull();
+    // 최근예약 드롭다운 행 노출 = getRecent 가 동작했다는 뜻
+    await expect(page.locator('.recentRow').first()).toBeVisible({ timeout: 8_000 });
 
-    // 최근예약 드롭다운 행 노출(mock 매칭 1건)
-    await expect(page.locator('.recentRow').first()).toBeVisible({ timeout: 5_000 });
-    // 보드 예약목록은 이 고객로 filter 되지 않음(localKeyword 라 filterStore.keyword 미접촉)
-    expect(boardKeywordSearch).toBe(false);
+    /* 보드 예약목록은 이 키워드로 filter 되지 않는다(localKeyword 라 filterStore.keyword 미접촉).
+     * → 카드 수가 그대로여야 한다. */
+    await expect.poll(() => page.locator('.appointment-card').count(), { timeout: 3_000 })
+      .toBe(cardsBefore);
 
     await input.fill('');
   });

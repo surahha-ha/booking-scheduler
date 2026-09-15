@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures/testBase';
+import { openAddReservationPopup } from './fixtures/board';
 import type { Page } from '@playwright/test';
 
 /**
@@ -25,42 +26,46 @@ async function navigateToScheduler(page: Page) {
   await page.waitForTimeout(500);
 }
 
+/**
+ * 설정 popup 좌측(그룹) 열의 행.
+ * ⚠️ `.tisp-row` 는 좌측 그룹 행과 우측 항목 행이 공용으로 쓰는 클래스라
+ *   전체에서 이름으로 찾으면 항목 행까지 걸린다('상담' → 초회/정기/방문 상담).
+ */
+function groupRow(page: Page, name: string) {
+  return page.locator('.tisp-root').locator('.tisp-col').first().locator('.tisp-row', { hasText: name });
+}
+
+/**
+ * 설정 popup 에서 새 그룹을 만든다.
+ * 시드에 "항목이 비어있는 일반 그룹"이 없으므로, 그런 상태가 필요한 테스트는
+ * 시드에 기대지 않고 여기서 직접 만들어 쓴다.
+ */
+async function addGroup(page: Page, name: string) {
+  const settingRoot = page.locator('.tisp-root');
+  // "+ 추가" 는 capture phase mousedown listener 와 충돌 → native click 으로 우회
+  await page.evaluate(() => {
+    const btn = document.querySelector('.tisp-root .tisp-addBtn') as HTMLButtonElement | null;
+    btn?.click();
+  });
+  const newInput = settingRoot.locator('input[placeholder="그룹명 입력 + Enter"]');
+  await expect(newInput).toBeVisible({ timeout: 5_000 });
+  await newInput.fill(name);
+  await newInput.press('Enter');
+  const row = groupRow(page, name);
+  await expect(row).toBeVisible({ timeout: 3_000 });
+  return row;
+}
+
 async function openReservationPopup(page: Page) {
-  // 빈 시간대 셀 클릭으로 ADD 모드 ReservationPopup 오픈
-  const emptyAddCells = page.locator('.grid-cell.is-empty-add');
-  const total = await emptyAddCells.count();
+  // 빈 시간대 셀 클릭으로 ADD 모드 ReservationPopup 오픈.
+  // 셀이 이웃 카드에 덮여 있으면 수정 팝업이 열리므로 가려지지 않은 셀만 고른다(board.ts).
+  const total = await page.locator('.grid-cell.is-empty-add').count();
   test.skip(total === 0, '빈 셀 없음 (모든 시간대 카드 점유)');
-
-  const viewport = page.viewportSize();
-  const vh = viewport?.height ?? 720;
-  const cells = await emptyAddCells.all();
-  let targetBox: { x: number; y: number; width: number; height: number } | null = null;
-  for (const cell of cells) {
-    const box = await cell.boundingBox();
-    if (!box) continue;
-    if (box.y >= 0 && box.y + box.height <= vh) {
-      targetBox = box;
-      break;
-    }
-  }
-  if (!targetBox) {
-    const first = emptyAddCells.first();
-    await first.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
-    targetBox = await first.boundingBox();
-  }
-  expect(targetBox).not.toBeNull();
-  const cx = targetBox!.x + targetBox!.width / 2;
-  const cy = targetBox!.y + targetBox!.height / 2;
-  await page.mouse.click(cx, cy, { delay: 50 });
-
-  const popup = page.locator('.schedulePopup').first();
-  await expect(popup).toBeVisible({ timeout: 8_000 });
-  return popup;
+  return openAddReservationPopup(page);
 }
 
 test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
-  test('T1. ReservationPopup 서비스 내용에 그룹 칩 노출 (검진 및 상담, 임플란트)', async ({
+  test('T1. ReservationPopup 서비스 내용에 그룹 칩 노출 (시드 그룹 순서대로)', async ({
     authedPage: page,
   }) => {
     await navigateToScheduler(page);
@@ -70,12 +75,13 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     const selector = popup.locator('.treatmentContentSelector');
     await expect(selector).toBeVisible({ timeout: 5_000 });
 
-    // 그룹 칩들 — 로컬 저장소 시드 기준: 검진 및 상담, 임플란트 (직접입력 그룹 폐기)
+    // 그룹 칩들 — 시드 기준: 상담 · 점검 · 관리 + 직접입력(항목 없는 특수 그룹)
     const chips = selector.locator('.tcs-groupChip');
-    await expect(chips).toHaveCount(2);
+    await expect(chips).toHaveCount(4);
 
-    await expect(chips.nth(0)).toHaveText(/검진 및 상담/);
-    await expect(chips.nth(1)).toHaveText(/임플란트/);
+    await expect(chips.nth(0)).toHaveText(/상담/);
+    await expect(chips.nth(1)).toHaveText(/점검/);
+    await expect(chips.nth(2)).toHaveText(/관리/);
 
     // ADD 진입 시 첫 그룹이 기본 선택됨 (default-first-group)
     await expect(chips.nth(0)).toHaveClass(/is-active/);
@@ -120,7 +126,7 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     // 설정 popup 내부 여러 영역 클릭 — body 로 propagate 되어
     // 모달의 hide-on-outside-click 이 트리거되면 안 됨.
     // 1) 그룹 row 클릭
-    await settingRoot.locator('.tisp-row', { hasText: '검진 및 상담' }).click();
+    await groupRow(page, '상담').first().click();
     await page.waitForTimeout(200);
     await expect(popup).toBeVisible();
     await expect(settingRoot).toBeVisible();
@@ -162,7 +168,7 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     await newInput.press('Enter');
 
     // 신규 그룹이 좌측 리스트에 반영됨
-    await expect(settingRoot.locator('.tisp-row', { hasText: 'E2E 신규 그룹' })).toBeVisible({
+    await expect(groupRow(page, 'E2E 신규 그룹')).toBeVisible({
       timeout: 3_000,
     });
 
@@ -181,13 +187,13 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     await navigateToScheduler(page);
     const popup = await openReservationPopup(page);
 
-    // 설정 popup 으로 임플란트 그룹에 9개 항목 추가 (시드 2개 그룹 중 비어있는 임플란트 활용)
+    // 빈 그룹을 만들어 9개 항목을 채운다 (시드에는 비어있는 일반 그룹이 없다)
     await popup.locator('.tcs-settingBtn').click();
     const settingRoot = page.locator('.tisp-root');
     await expect(settingRoot).toBeVisible({ timeout: 5_000 });
 
-    // 임플란트 그룹 선택
-    await settingRoot.locator('.tisp-row', { hasText: '임플란트' }).click();
+    const GROUP = 'E2E 페이저';
+    await (await addGroup(page, GROUP)).click();
 
     // 항목 9개 추가
     // auto-grow: 입력 시 빈 draft 행이 뒤에 추가되어 input 이 2개가 되므로 첫 행(입력 중인 행)을 특정.
@@ -202,8 +208,8 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     await settingRoot.locator('button:has-text("저장")').click();
     await expect(settingRoot).toBeHidden({ timeout: 3_000 });
 
-    // 임플란트 칩 선택
-    await popup.locator('.tcs-groupChip', { hasText: '임플란트' }).click();
+    // 방금 만든 그룹 칩 선택
+    await popup.locator('.tcs-groupChip', { hasText: GROUP }).click();
 
     // 페이저 < > 노출
     const pagers = popup.locator('.tcs-itemPager');
@@ -238,22 +244,22 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
 
     const saveBtn = settingRoot.locator('button:has-text("저장")');
 
-    // 진입 시 첫 일반 그룹 "검진 및 상담"(항목 2개)이 선택됨 → 활성
+    // 진입 시 첫 일반 그룹 "상담"(항목 있음)이 선택됨 → 활성
     await expect(saveBtn).toBeEnabled();
 
-    // 임플란트 그룹(항목 0개) 선택 → 비활성
-    await settingRoot.locator('.tisp-row', { hasText: '임플란트' }).click();
+    // 항목 0개인 그룹을 새로 만들어 선택 → 비활성
+    await (await addGroup(page, 'E2E 빈그룹')).click();
     await expect(saveBtn).toBeDisabled();
 
-    // 임플란트에 항목 1개 추가 → 활성으로 복귀
+    // 항목 1개 추가 → 활성으로 복귀
     // auto-grow: 입력 시 빈 draft 행이 뒤에 추가되어 input 이 2개가 되므로 첫 행(입력 중인 행)을 특정.
     const itemInput = settingRoot.locator('input[placeholder="서비스 항목 입력"]').first();
-    await itemInput.fill('임플란트 상담');
+    await itemInput.fill('신규 항목');
     await itemInput.press('Enter');
     await expect(saveBtn).toBeEnabled({ timeout: 3_000 });
 
-    // 검진 및 상담 그룹 재선택 → 여전히 활성 (다른 그룹 항목 추가와 무관)
-    await settingRoot.locator('.tisp-row', { hasText: '검진 및 상담' }).click();
+    // 상담 그룹 재선택 → 여전히 활성 (다른 그룹 항목 추가와 무관)
+    await groupRow(page, '상담').first().click();
     await expect(saveBtn).toBeEnabled();
   });
 
@@ -297,22 +303,21 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     await expect(patientInput).toBeVisible();
 
     await patientInput.click();
-    await patientInput.fill('고객');
+    // 시드 고객명은 생성 가명이라 특정 이름을 못 박지 않는다 — 흔한 성으로 후보를 띄운다.
+    await patientInput.fill('한');
 
-    // mock 은 customerName.includes('고객') 매칭으로 3건 반환 (고객A/B/C)
     const dropdown = popup.locator('.patientAutocomplete__list');
     await expect(dropdown).toBeVisible({ timeout: 5_000 });
     const rows = popup.locator('.patientAutocomplete__row');
-    await expect(rows).toHaveCount(3);
-    await expect(rows.first()).toContainText('고객A');
+    await expect.poll(() => rows.count(), { timeout: 5_000 }).toBeGreaterThan(0);
 
     // Tab → 첫 후보 자동 선택
     await patientInput.press('Tab');
 
-    // form 값 채워짐 (formatPhoneNumber: 01010000001 → 010-1000-0001)
-    await expect(patientInput).toHaveValue('고객A');
+    // 후보가 채워졌는지는 값의 "형태"로 본다(시드 이름 고정 금지)
+    await expect(patientInput).toHaveValue(/^한.+/);
     const phoneInput = popup.locator('input[data-field="patientPhone"]');
-    await expect(phoneInput).toHaveValue('010-1000-0001');
+    await expect(phoneInput).toHaveValue(/^\d{3}-\d{3,4}-\d{4}$/);
 
     // dropdown 닫힘 + 다음 input(전화번호)에 focus
     await expect(dropdown).toBeHidden();
@@ -330,11 +335,11 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
 
     // pick (Tab) → phone 자동 채워짐 + phone readonly
     await patientInput.click();
-    await patientInput.fill('고객');
+    await patientInput.fill('한');
     await expect(popup.locator('.patientAutocomplete__list')).toBeVisible({ timeout: 5_000 });
     await patientInput.press('Tab');
-    await expect(patientInput).toHaveValue('고객A');
-    await expect(phoneInput).toHaveValue('010-1000-0001');
+    await expect(patientInput).toHaveValue(/^한.+/);
+    await expect(phoneInput).toHaveValue(/^\d{3}-\d{3,4}-\d{4}$/);
 
     // pick 후 고객명을 추가 입력 (= 다른 고객로 변경 의도)
     //  - patientPhone 이 empty 로 비워져야 함 (사양)
@@ -356,18 +361,21 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     const patientInput = popup.locator('input[data-field="patientName"]');
     const dropdown = popup.locator('.patientAutocomplete__list');
 
-    // "고객" 입력 → dropdown 노출 + 3건
+    // 검색어 입력 → dropdown 노출 + 후보 1건 이상
     await patientInput.click();
-    await patientInput.fill('고객');
+    await patientInput.fill('한');
     await expect(dropdown).toBeVisible({ timeout: 5_000 });
-    await expect(popup.locator('.patientAutocomplete__row')).toHaveCount(3);
+    await expect.poll(
+      () => popup.locator('.patientAutocomplete__row').count(),
+      { timeout: 5_000 }
+    ).toBeGreaterThan(0);
 
     // 고객명 전체 삭제 → dropdown 닫힘
     await patientInput.fill('');
     await expect(dropdown).toBeHidden();
 
     // 다시 입력 시 dropdown 재노출되어야 — 정상 흐름 보장
-    await patientInput.fill('고객');
+    await patientInput.fill('한');
     await expect(dropdown).toBeVisible({ timeout: 5_000 });
   });
 
@@ -379,8 +387,10 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     const settingRoot = page.locator('.tisp-root');
     await expect(settingRoot).toBeVisible({ timeout: 5_000 });
 
-    // 시드: "검진 및 상담" 그룹 이미 존재
-    const existingRow = settingRoot.locator('.tisp-row', { hasText: '검진 및 상담' });
+    // 시드: "상담" 그룹 이미 존재
+    // ⚠️ `.tisp-row` 는 좌측 그룹 행과 우측 항목 행이 공용으로 쓰는 클래스다.
+    //   전체에서 찾으면 항목 '초회/정기/방문 상담' 까지 걸려 4건이 된다 → 좌측 열로 한정.
+    const existingRow = groupRow(page, '상담');
     await expect(existingRow).toHaveCount(1);
 
     // + 추가 → whitespace 변형 입력
@@ -391,16 +401,16 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     const newInput = settingRoot.locator('input[placeholder="그룹명 입력 + Enter"]');
     await expect(newInput).toBeVisible({ timeout: 3_000 });
 
-    // '  검진  및  상담  ' → normalize 후 '검진및상담' === 기존 '검진 및 상담' 의 정규화 결과
-    await newInput.fill('  검진  및  상담  ');
+    // '  상  담  ' → normalize 후 '상담' === 기존 '상담' 의 정규화 결과
+    await newInput.fill('  상  담  ');
     await newInput.press('Enter');
 
     // toast 노출 (notivue) — 모달 위에 노출
     const toast = page.locator('.Notivue__notification', { hasText: '이미 동일한 이름의 그룹이 존재합니다' });
     await expect(toast).toBeVisible({ timeout: 3_000 });
 
-    // 그룹 추가 안 됨 — ReservationPopup 의 그룹 칩 수가 시드 그대로 (2개: 검진 및 상담, 임플란트)
-    await expect(popup.locator('.tcs-groupChip')).toHaveCount(2);
+    // 그룹 추가 안 됨 — ReservationPopup 의 그룹 칩 수가 시드 그대로 (상담·점검·관리·직접입력)
+    await expect(popup.locator('.tcs-groupChip')).toHaveCount(4);
   });
 
   test('T12. 서비스 항목 그룹↔상세 필수 쌍 + memo 독립 + 그룹 토글오프', async ({
@@ -417,18 +427,18 @@ test.describe('SchedulerV2 - 서비스 항목 마스터', () => {
     await expect(memo).toBeVisible();
     await expect(memo).not.toHaveAttribute('readonly', /.*/);
 
-    // (1) ADD 진입 시 첫 그룹(검진 및 상담)+첫 항목(구강검진) 자동 선택 — 그룹↔항목 필수 쌍
-    const groupChip = selector.locator('.tcs-groupChip', { hasText: '검진 및 상담' });
+    // (1) ADD 진입 시 첫 그룹(상담)+첫 항목(초회 상담) 자동 선택 — 그룹↔항목 필수 쌍
+    const groupChip = selector.locator('.tcs-groupChip', { hasText: '상담' }).first();
     await expect(groupChip).toHaveClass(/is-active/);
-    const firstItem = selector.locator('.tcs-itemChip', { hasText: '구강검진' });
+    const firstItem = selector.locator('.tcs-itemChip', { hasText: '초회 상담' });
     await expect(firstItem).toHaveClass(/is-active/);
 
     // (2) memo 입력 → 값 유지
     await memo.fill('고객 요청사항');
     await expect(memo).toHaveValue('고객 요청사항');
 
-    // (3) 다른 항목(스케일링) 클릭 → 선택 이동. memo 무관(자동기입/덮어쓰기 없음)
-    const item2 = selector.locator('.tcs-itemChip', { hasText: '스케일링' });
+    // (3) 다른 항목(정기 상담) 클릭 → 선택 이동. memo 무관(자동기입/덮어쓰기 없음)
+    const item2 = selector.locator('.tcs-itemChip', { hasText: '정기 상담' });
     await item2.click();
     await expect(item2).toHaveClass(/is-active/);
     await expect(firstItem).not.toHaveClass(/is-active/);

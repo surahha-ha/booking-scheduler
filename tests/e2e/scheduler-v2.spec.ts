@@ -107,17 +107,26 @@ test.describe('SchedulerV2 - 그리드 / 카드', () => {
 });
 
 test.describe('SchedulerV2 - 데이터 적재', () => {
-  test('9. 예약 조회 API가 정상 응답한다', async ({ authedPage: page }) => {
-    const bookReqPromise = page.waitForResponse(
-      (res) => /\/api\/booking(?:\?.*)?$/.test(res.url()) && res.request().method() === 'GET',
-      { timeout: 15_000 }
-    );
+  test('9. 예약 조회 결과가 보드에 적재된다', async ({ authedPage: page }) => {
+    /* 로컬 백엔드는 axios adapter 층에서 응답해 실제 네트워크 요청이 나가지 않는다.
+     * → 응답을 가로채는 대신 "조회 결과가 보드에 실렸는가"로 검증한다. */
     await page.goto('/book');
-    const res = await bookReqPromise;
-    expect(res.ok()).toBe(true);
-    const body = await res.json();
-    // 응답 코드가 성공 (was: 'succeed', mock: 'SUCCESS')
-    expect(['succeed', 'SUCCESS', 'Success']).toContain(body.code);
+    await expect(page.locator('.scheduler-grid')).toBeVisible();
+
+    // 시드는 오늘 근처로 전개되므로 진입 직후 카드가 있어야 한다
+    await expect.poll(
+      () => page.locator('.appointment-card').count(),
+      { timeout: 15_000 }
+    ).toBeGreaterThan(0);
+
+    // 상단 상태별 집계도 함께 채워진다(조회 응답이 store 까지 도달했다는 뜻).
+    // 건수 배지가 0 이 아닌 값을 가져야 "적재"가 확인된다 — 존재만으로는 부족하다.
+    const totalCount = page.locator('.scheduleStatusChecks__count').first();
+    await expect(totalCount).toBeVisible({ timeout: 5_000 });
+    await expect.poll(
+      async () => Number((await totalCount.textContent())?.replace(/[^\d]/g, '') || '0'),
+      { timeout: 10_000 }
+    ).toBeGreaterThan(0);
   });
 
   test('9-b. 4월 30일 cell 클릭 시 카드 화면 렌더', async ({ authedPage: page }) => {

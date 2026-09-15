@@ -29,17 +29,27 @@ export const useServiceItemStore = defineStore('serviceItemStore', () => {
     /** 사용자 그룹 전체. (직접입력 그룹 개념 제거 — 전부 일반 그룹) */
     const userGroups = computed<ServiceGroupTree[]>(() => groups.value);
 
-    async function load(force = false) {
-        if (loaded.value && !force) return;
-        if (loading.value) return;
+    // 진행 중인 조회. 동시 호출자는 이 약속을 함께 기다린다.
+    //  - 예약 팝업(TreatmentContentSelector)과 설정 팝업이 거의 동시에 load 를 부르는데,
+    //    "로딩 중이면 즉시 반환"이면 뒤에 온 쪽이 빈 그룹으로 초기 선택을 실행해
+    //    첫 그룹이 안 잡히고 저장이 비활성으로 고착된다(타이밍에 따라 간헐 재현).
+    let inflight: Promise<void> | null = null;
+
+    function load(force = false): Promise<void> {
+        if (loaded.value && !force) return Promise.resolve();
+        if (inflight) return inflight;
         loading.value = true;
-        try {
-            const res = await apiGetGroups();
-            groups.value = res?.data?.payload ?? [];
-            loaded.value = true;
-        } finally {
-            loading.value = false;
-        }
+        inflight = (async () => {
+            try {
+                const res = await apiGetGroups();
+                groups.value = res?.data?.payload ?? [];
+                loaded.value = true;
+            } finally {
+                loading.value = false;
+                inflight = null;
+            }
+        })();
+        return inflight;
     }
 
     function invalidate() {
