@@ -5,8 +5,8 @@
  *
  * pick 은 "그 카드를 화면에 데려온다" 한 동작인데 출발 상태에 따라 하는 일이 갈린다:
  *   ① 이미 그려진 카드 → 날짜·팀·재조회 없이 강조만
- *   ② 다른 날짜 → 날짜 이동(재조회 1회) + 의사 컬럼 정합(팀 전환·의사 필터 해제)
- *   ③ 진료장부에서 미래 항목 → 예약장부로 전환(진료장부는 과거~오늘만 표기)
+ *   ② 다른 날짜 → 날짜 이동(재조회 1회) + 담당자 컬럼 정합(팀 전환·담당자 필터 해제)
+ *   ③ 방문장부에서 미래 항목 → 예약장부로 전환(방문장부는 과거~오늘만 표기)
  *   ④ 카드가 끝내 안 나타나면 5초 뒤 포기하고 그때부터 강조 5초
  *   ⑤ 기다리는 동안 사용자가 wheel 하면 즉시 포기(보고 있는 자리를 뺏지 않는다)
  * 세로 스크롤 계산 자체는 searchScrollFocus.test 가, 페이지 경계 밖 담당자 재고정(focusDoctorColumn)은
@@ -28,7 +28,7 @@ import { useSchedulerFilterStore } from '@/stores/useSchedulerFilterStore'
 import { useStaffStore } from '@/stores/staffStore'
 
 const TODAY = '2030-03-06'
-const DOCTOR = '김원장'
+const DOCTOR = '김대표'
 const APPT_ID = 501
 
 function bookItem(id: number, ymd: string, staffName = DOCTOR) {
@@ -116,13 +116,13 @@ describe('SchedulerV3Page — 검색 pick', () => {
 
     expect(dayjs(filter.periodDate).format('YYYY-MM-DD')).toBe(target)
     expect(filter.searchVersion).toBe(before + 1)
-    expect(filter.doctors, '의사 개별 필터는 전체로').toEqual([])
+    expect(filter.doctors, '담당자 개별 필터는 전체로').toEqual([])
     expect(highlightOf(wrapper)).toBe('777')
   })
 
   it('② 팀 소속 담당자의 항목이면 그 팀으로 전환한다(미소속이면 미지정 null)', async () => {
     api.getTeams.mockResolvedValue({ data: { code: 'succeed', payload: { teams: [
-      { id: 1, name: '교정팀', doctors: [{ staffId: 1, staffName: DOCTOR }] },
+      { id: 1, name: '점검팀', doctors: [{ staffId: 1, staffName: DOCTOR }] },
     ] } } })
     const wrapper = await mountPage()
     await advance(200)
@@ -132,14 +132,14 @@ describe('SchedulerV3Page — 검색 pick', () => {
 
     pick(wrapper, recentItem(777, target, DOCTOR))
     await advance(200)
-    expect(filter.selectedTeamName).toBe('교정팀')
+    expect(filter.selectedTeamName).toBe('점검팀')
 
-    pick(wrapper, recentItem(778, target, '박원장'))
+    pick(wrapper, recentItem(778, target, '박대표'))
     await advance(200)
     expect(filter.selectedTeamName, '어느 팀에도 없으면 미지정').toBeNull()
   })
 
-  it('③ 진료장부에서 미래 항목을 고르면 예약장부로 전환한다', async () => {
+  it('③ 방문장부에서 미래 항목을 고르면 예약장부로 전환한다', async () => {
     const wrapper = await mountPage()
     await advance(200)
     const filter = useSchedulerFilterStore()
@@ -151,7 +151,7 @@ describe('SchedulerV3Page — 검색 pick', () => {
     expect(filter.dataType).toBe('APPOINTMENT')
   })
 
-  it('③ 진료장부에서 과거 항목은 진료장부에 머문다', async () => {
+  it('③ 방문장부에서 과거 항목은 방문장부에 머문다', async () => {
     const wrapper = await mountPage()
     await advance(200)
     const filter = useSchedulerFilterStore()

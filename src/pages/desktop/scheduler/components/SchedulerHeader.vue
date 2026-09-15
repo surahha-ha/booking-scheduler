@@ -1,10 +1,10 @@
 <template>
   <!--
     SchedulerHeader: 다중 행 헤더
-    - depth별 row (날짜 > 의사)
+    - depth별 row (날짜 > 담당자)
     - 날짜 행: < > 항상 표시 (±1일)
-    - 의사 행: < > 조건부 (canPrevDoctor / canNextDoctor)
-    - 의사 1명이면 doctor 행 제거
+    - 담당자 행: < > 조건부 (canPrevDoctor / canNextDoctor)
+    - 담당자 1명이면 doctor 행 제거
   -->
   <div class="scheduler-header">
     <div
@@ -22,7 +22,7 @@
         @click="emit('prev-day')"
       >‹</button>
 
-      <!-- 의사 행: 왼쪽 < 버튼 (첫 번째 의사가 아닐 때만) -->
+      <!-- 담당자 행: 왼쪽 < 버튼 (첫 번째 담당자가 아닐 때만) -->
       <button
         v-if="isDoctorRow(row) && canPrevDoctor"
         class="header-nav header-nav--left"
@@ -62,7 +62,7 @@
         @click="emit('next-day')"
       >›</button>
 
-      <!-- 의사 행: 오른쪽 > 버튼 (마지막 의사가 아닐 때만) -->
+      <!-- 담당자 행: 오른쪽 > 버튼 (마지막 담당자가 아닐 때만) -->
       <button
         v-if="isDoctorRow(row) && canNextDoctor"
         class="header-nav header-nav--right"
@@ -86,8 +86,8 @@ const props = defineProps({
   canNextDay: { type: Boolean, default: true },
   // 날짜축 이전 페이징 가능 여부. 기본 true = 무조건 표시.
   canPrevDay: { type: Boolean, default: true },
-  // 의사 1명이어도 doctor 행 유지(이름 표기 + 페이징 < > 노출). 기본 false = 1명이면 제거.
-  // 한 페이지에 1명만 표시될 때 의사행째 사라져 < > 까지 갇히는 것 방지용.
+  // 담당자 1명이어도 doctor 행 유지(이름 표기 + 페이징 < > 노출). 기본 false = 1명이면 제거.
+  // 한 페이지에 1명만 표시될 때 담당자행째 사라져 < > 까지 갇히는 것 방지용.
   keepDoctorRow: { type: Boolean, default: false },
 })
 
@@ -104,7 +104,7 @@ const headerRows = computed(() => {
   if (!props.headerTree.length) return []
   const rows = flattenHeaderByDepth(props.headerTree)
 
-  // 의사 1명이면 doctor 행 제거 (단 keepDoctorRow 면 1명이어도 유지 — 이름 표기 + 페이징 < > 노출)
+  // 담당자 1명이면 doctor 행 제거 (단 keepDoctorRow 면 1명이어도 유지 — 이름 표기 + 페이징 < > 노출)
   if (!props.keepDoctorRow && rows.length >= 2) {
     const lastRow = rows[rows.length - 1]
     const uniqueResources = new Set(lastRow.map(n => n.leafMeta?.resourceId).filter(Boolean))
@@ -157,7 +157,7 @@ function getCellWidth(node) {
 
 // ── 셀 class ──
 function getCellClass(node) {
-  // leaf(의사 행): doctor/hospital closed 모두 반영
+  // leaf(담당자 행): doctor/hospital closed 모두 반영
   if (node.leafMeta) {
     const closed = props.closedDayMap[node.key]
     return {
@@ -176,7 +176,7 @@ function getCellClass(node) {
 }
 
 // 날짜(non-leaf) 노드의 사업장 전체 휴무 여부 — 그 날짜 첫 column의 dateClosed(담당자 무관 순수 판정) 검사.
-// hospitalClosed 는 "그 담당자 칸에 적용되는 사업장 휴무"이라 첫 담당자가 진료로 정한 날엔 false 가 되므로
+// hospitalClosed 는 "그 담당자 칸에 적용되는 사업장 휴무"이라 첫 담당자가 운영으로 정한 날엔 false 가 되므로
 // 날짜 행에는 쓰지 않는다(구 맵 호환으로 dateClosed 가 없으면 hospitalClosed 로 폴백).
 // 참고: schedulerHeaderBuilder의 date 노드는 key=d.date (YYYY-MM-DD)이고 date 필드는 없음
 //       따라서 node.key를 날짜로 사용
@@ -190,7 +190,7 @@ function isDateHospitalClosed(node) {
 
 // ── 뱃지 ──
 function showBadge(node) {
-  // 의사(leaf): doctor 휴무 또는 hospital 휴무
+  // 담당자(leaf): doctor 휴무 또는 hospital 휴무
   if (node.leafMeta) {
     const closed = props.closedDayMap[node.key]
     return !!(closed?.hospitalClosed || closed?.doctorClosed)
@@ -246,7 +246,7 @@ function getBadgeText(node) {
   }
 }
 
-/* 의사/날짜 페이징 < > — absolute overlay(header cell이 0px부터 그려져 body column과 정렬 일치). */
+/* 담당자/날짜 페이징 < > — absolute overlay(header cell이 0px부터 그려져 body column과 정렬 일치). */
 .header-nav {
   flex-shrink: 0;
   width: 32px;

@@ -36,7 +36,7 @@ export type Doctor = {
     staffId?: number;       // 신규 API의 담당자 PK (staff_id로 백엔드 저장 시 사용)
     externalStaffNo?: number;
     externalStaffName?: string;
-    openYn?: 'Y' | 'N';    // 공개여부 — 'N'(비공개) 의사도 목록에 포함(#1), 검색필터·헤더에 '비공개' 뱃지
+    openYn?: 'Y' | 'N';    // 공개여부 — 'N'(비공개) 담당자도 목록에 포함(#1), 검색필터·헤더에 '비공개' 뱃지
 };
 
 type HHMM = string;
@@ -71,25 +71,25 @@ export type SchedulerRuleSet = {
     closedWeekdays?: Set<number> | number[] | null;
     /**
      * 요일별 운영시간. 키 없음 = **미설정**(상위 fallback), `null` = **명시적 휴무**(fallback 금지).
-     * 담당자는 이 셋이 모두 나타난다 — 저장 규약이 `행 없음=미설정 / 행+시각=진료 / 행+시각 null=휴무`.
+     * 담당자는 이 셋이 모두 나타난다 — 저장 규약이 `행 없음=미설정 / 행+시각=운영 / 행+시각 null=휴무`.
      */
     weekly?: Partial<Record<Weekday, DailySchedule | null>> | null;
     /** 공휴일에 적용할 운영시간 — 사업장당 한 세트(요일 축 없음). 원천 = 사업장 설정 공휴일 운영시간 테이블.
      *  undefined = 미설정(공휴일 휴무와 다르다). 휴무 여부는 holidayClosedYn → closedDates 로 이미 갈린다. */
     holiday?: DailySchedule | null;
-    /** 공휴일이면서 최종적으로 진료하는 날("YYYY-MM-DD"). = 공휴일 − closedDates(최종).
-     *  이 날의 진료 시작·종료는 **담당자 설정이 먼저**고(정해 뒀으면 진료든 휴무가든 그 값),
+    /** 공휴일이면서 최종적으로 운영하는 날("YYYY-MM-DD"). = 공휴일 − closedDates(최종).
+     *  이 날의 운영 시작·종료는 **담당자 설정이 먼저**고(정해 뒀으면 운영든 휴무가든 그 값),
      *  미설정일 때만 holiday 운영시간을 쓴다. 단 휴게는 사업장만 소유하므로 담당자 값을 쓸 때도
      *  이 날짜의 기관 휴게(= 공휴일 휴게)로 간다 — pickDailySchedule·resolveUnitHours 같은 규칙. */
     holidayOpenDates?: Set<string> | string[] | null;
     /** 날짜("YYYY-MM-DD") → 그 날짜에 **실제로 저장된** 운영시간.
-     *  - 사업장 축: 원천 = 사업장 설정 일자별 운영시간. 지정일자(임시진료)의 시간이며, 없으면 그 날짜는 종전대로 종일 열림으로 본다.
-     *  - 담당자 축: 원천 = 자체 특정일자 진료(override, 시분 있음). 기관 휴게를 얹어 담는다(staffOverridesToDailyMap).
+     *  - 사업장 축: 원천 = 사업장 설정 일자별 운영시간. 지정일자(임시운영)의 시간이며, 없으면 그 날짜는 종전대로 종일 열림으로 본다.
+     *  - 담당자 축: 원천 = 자체 특정일자 운영(override, 시분 있음). 기관 휴게를 얹어 담는다(staffOverridesToDailyMap).
      *  ★요일·공휴일보다 우선한다 — 날짜를 콕 집어 정한 값이라 의도가 가장 구체적이다
      *  (BE 운영중 판정도 "일자별 → 공휴일 → 요일별" 순서다). 담당자 것은 사업장 것보다도 먼저다(§3-1-1). */
     dailyByDate?: Record<string, DailySchedule> | null;
-    /** 이 담당자가 **진료로 정한** 날짜·요일 — 사업장 휴무를 덮는다(R11: 담당자 우선).
-     *  사업장 축에는 쓰지 않는다. 기관의 임시진료 지정일은 종전대로 holidayWorkDates 다.
+    /** 이 담당자가 **운영으로 정한** 날짜·요일 — 사업장 휴무를 덮는다(R11: 담당자 우선).
+     *  사업장 축에는 쓰지 않는다. 기관의 임시운영 지정일은 종전대로 holidayWorkDates 다.
      *  ★자기 휴무(closedDates·closedWeekdays)이 먼저다 — 담당자 축 안에서는 일자 > 요일. */
     workDates?: Set<string> | string[] | null;
     workWeekdays?: Set<number> | number[] | null;
@@ -102,7 +102,7 @@ export type SchedulerRuleSet = {
      *  공휴일 축은 여기 없다 — `HOLIDAY_OPEN_YN` 이 NOT NULL 2상태라 늘 자기 값이고, 상속은 런타임이 아니라
      *  팀 배치 시점 복사로 끝난다(§3-2).
      *  화면(SchedulerSettingsTreatmentSetting.inheritedInstitutionOff)과 같은 규칙이어야 한다 —
-     *  갈리면 설정에서 진료로 보이는 날에 보드가 예약을 막는다. */
+     *  갈리면 설정에서 운영으로 보이는 날에 보드가 예약을 막는다. */
     inheritsHospitalDateOff?: boolean;
     inheritsHospitalWeekdayOff?: boolean;
 };
@@ -208,7 +208,7 @@ export function workHoursRowToDailySchedule(
 }
 
 /**
- * 담당자 특정일자 진료 목록 → 날짜("YYYY-MM-DD") → DailySchedule Map.
+ * 담당자 특정일자 운영 목록 → 날짜("YYYY-MM-DD") → DailySchedule Map.
  *
  * 시분이 있는 override 만 담는다. 시분 없는 override 는 "그 날짜만 휴무" 이라 closedDates 가 이미 갖고 있다.
  * 휴게는 담당자가 소유하지 않으므로 **그 날짜의 기관 휴게**(institutionDailyByDate — 기관 지정일자)를,
@@ -238,7 +238,7 @@ export function staffOverridesToDailyMap(
 
 /**
  * 사업장 운영시간 1행(요일) → DailySchedule | undefined.
- * - 진료는 시작~종료 단일 구간이다. 시작/종료가 없으면 그 요일은 진료하지 않는다
+ * - 운영은 시작~종료 단일 구간이다. 시작/종료가 없으면 그 요일은 운영하지 않는다
  *   → undefined (weekly 에서 생략 → 상위 fallback).
  * - 휴게(점심·저녁)는 운영시간 안을 비우는 구간으로 그린다.
  */
@@ -254,7 +254,7 @@ export function institutionRowToDailySchedule(row: SiteHolidayHours): DailySched
  * 공휴일 운영시간(사업장 한 세트) → DailySchedule | undefined.
  * 요일 행과 모양이 같아 변환은 그대로 재사용한다. 시작/종료가 없으면 undefined = **미설정**
  * — '공휴일 휴무'이 아니다(휴무는 holidayClosedYn 이 closedDates 로 만든다). 미설정이면 그 공휴일은
- * 시간 제한 없이 진료하는 것으로 본다(useSchedulerRules 의 isWorkOverride 경로).
+ * 시간 제한 없이 운영하는 것으로 본다(useSchedulerRules 의 isWorkOverride 경로).
  */
 export function holidayHoursToDailySchedule(holiday: SiteHolidayHours | null | undefined): DailySchedule | undefined {
     if (!holiday) return undefined;
@@ -285,7 +285,7 @@ export function dateTimesToDailyMap(rows: SiteDateHours[] | null | undefined): R
  * 사업장 운영시간(요일별 N행) → weekly DailySchedule 맵.
  * 원천은 사업장 설정이며 요일마다 운영시간·휴게시간이 다를 수 있다.
  * 목록에 없는 요일, 또는 활성 세션이 0인 요일은 weekly 에서 생략된다
- * (→ 의사설정 > 기관 > 일반 fallback 체인의 다음 단계로 넘어감).
+ * (→ 담당자설정 > 기관 > 일반 fallback 체인의 다음 단계로 넘어감).
  * 빈 배열(한 번도 등록 안 함) → {} (operatingRange 09~18 fallback, 기존 동작 유지).
  */
 export function institutionToWeekly(rows: SiteDayHours[] | null | undefined): Partial<Record<Weekday, DailySchedule>> {
@@ -331,8 +331,8 @@ export type HolidayClosure = {
  * - MONTHLY(매월 N번째 요일, occurrence=ceil(date/7)) → [startYmd,endYmd] horizon 구체 날짜 expand → closedDates
  * - closedDates = offDates ∪ MONTHLY expand ∪ (includePublicHolidays ? publicHolidays : []) − workDates(rescue)
  * - holidayWorkDates = workDates (useSchedulerRules isWorkOverride 가 closedWeekday/dayOff 무시)
- * - holidayOpenDates = publicHolidays − closedDates(최종) = "공휴일인데 진료하는 날".
- *   holidayClosedYn=N(공휴일 진료)이면 전부, holidayClosedYn=Y 여도 workDates 로 구제한 공휴일은 여기 들어온다
+ * - holidayOpenDates = publicHolidays − closedDates(최종) = "공휴일인데 운영하는 날".
+ *   holidayClosedYn=N(공휴일 운영)이면 전부, holidayClosedYn=Y 여도 workDates 로 구제한 공휴일은 여기 들어온다
  *   — 경로와 무관하게 "공휴일 ∧ ¬휴무"이면 공휴일 운영시간을 적용한다는 한 줄 규칙.
  *   매주 휴무 요일과 겹쳐도 공휴일 판정이 이긴다(공휴일이면 holidayClosedYn 만 본다 — BE isClosedToday 와 같은 규칙).
  * ⚠️ 순수함수(now 미참조) — horizon 은 호출측이 dayjs() 로 산출해 전달. closedDates 소비는 기존 파이프 그대로(엔진/rules 무변경).
@@ -421,9 +421,9 @@ export type StaffOffSource = {
  * 합성은 `buildHolidayClosure` 하나로 유지한다.
  *
  * - 매주 휴무(times 시분 null) → WEEKLY 규칙. weekly[wd]=null 과 **중복 표현이지만 가산이다** —
- *   차단 사유가 `휴무` 대신 `휴무요일(월)` 로 정확해지고, 공휴일 진료일에는 closedWeekdays 검사가
+ *   차단 사유가 `휴무` 대신 `휴무요일(월)` 로 정확해지고, 공휴일 운영일에는 closedWeekdays 검사가
  *   건너뛰어지므로 weekly=null 쪽이 여전히 담당자 휴무를 지킨다.
- * - 특정일자 휴무(override 시분 null) → offDates / 특정일자 진료(시분 있음) → workDates(rescue).
+ * - 특정일자 휴무(override 시분 null) → offDates / 특정일자 운영(시분 있음) → workDates(rescue).
  * - 공휴일: `'N'` 만 휴무로 본다. `null`(미설정)은 사업장 판정 상속이고, `'Y'` 는 사업장이
  *   공휴일 휴무일 때 그것을 뒤집어야 하는데 **현행 엔진은 그 경로가 없다**(§4-2 각주 · R6).
  */
@@ -435,7 +435,7 @@ export function staffOffSettingsInput(
 
     for (const row of staff.times ?? []) {
         if (row.dayCd < 0 || row.dayCd > 6) continue;
-        if (row.staffOpenHm || row.staffCloseHm) continue;   // 시각이 있으면 진료 요일
+        if (row.staffOpenHm || row.staffCloseHm) continue;   // 시각이 있으면 운영 요일
         recurringOffRules.push({dayCd: row.dayCd, repeatTy: 'WEEKLY', monthlyNth: null});
     }
     for (const rule of staff.monthlyOffRules ?? []) {
@@ -473,12 +473,12 @@ export const useStaffStore = defineStore('staffStore', () => {
 
     const pending = ref(false);
     const doctors = ref<Doctor[]>([]);
-    // 진료 팀/직원 필터용 팀 마스터 (가산 — SF-3a). 검색필터 셀렉트박스 + ReservationPopup 담당의사 공유.
+    // 팀/직원 필터용 팀 마스터 (가산 — SF-3a). 검색필터 셀렉트박스 + ReservationPopup 담당자 공유.
     const teams = ref<DoctorTeam[]>([]);
     const treatmentMinHour = ref<number | null>(null);
     const treatmentMaxHour = ref<number | null>(null);
 
-    /** 병원 공통 룰 */
+    /** 사업장 공통 룰 */
     const hospitalRules = ref<SchedulerRuleSet>({
         closedDates: new Set(),
         holidayWorkDates: new Set(),
@@ -488,13 +488,13 @@ export const useStaffStore = defineStore('staffStore', () => {
         holiday: null,
     });
 
-    /** 의사별 룰 */
+    /** 담당자별 룰 */
     const doctorRules = ref<DoctorRuleMap>({});
 
     /** 운영시간 조회 실패 표면화(보드 배너용) — fallback 렌더가 실패를 "미설정"처럼 위장하지 않게 원천별로 기록한다. */
     const workTimeLoadFailed = ref<{ site: boolean; staff: boolean }>({site: false, staff: false});
 
-    /** 진료최소시작시간, 진료최대종료시간 */
+    /** 운영최소시작시간, 운영최대종료시간 */
     const schedulerDayRange = computed(() => {
         const fallback = {startDayHour: DEFAULT_START, endDayHour: DEFAULT_END};
         const min = treatmentMinHour.value;
@@ -540,18 +540,18 @@ export const useStaffStore = defineStore('staffStore', () => {
         }
     }
 
-    // 진료 팀/직원 조회 (가산). 팀 미설정이면 빈 배열 → 검색필터 셀렉트박스 숨김(AS-IS 전체).
+    // 팀/직원 조회 (가산). 팀 미설정이면 빈 배열 → 검색필터 셀렉트박스 숨김(AS-IS 전체).
     async function loadTeams() {
         try {
             const res = await getTeams();
             const body = unwrapBody<{ teams: DoctorTeam[] }>(res);
             teams.value = body.payload?.teams ?? [];
         } catch (e) {
-            console.error('[진료 팀 > 조회] 실패', e);
+            console.error('[팀 > 조회] 실패', e);
         }
     }
 
-    // 담당자 추가(addDoctorName)는 제거했다 — 담당자 원장의 원천이 사업장 설정로 넘어가
+    // 담당자 추가(addDoctorName)는 제거했다 — 담당자 대표의 원천이 사업장 설정로 넘어가
     // 등록·수정을 마이페이지가 소유한다. BE 의 담당자 등록 API 도 함께 제거됐다.
 
     /**
@@ -629,16 +629,16 @@ export const useStaffStore = defineStore('staffStore', () => {
      * - getSiteWorkHours: 사업장(site, 원천 사업장 설정) 요일별 → institutionToWeekly → hospitalRules.weekly (+ min/max)
      * - getStaffWorkHours: 담당자(staff, 자체 TB) times[] → doctorRules[정규화이름].weekly (설정 요일만, 미설정=기관 fallback)
      * 키 = replaceDoctorName(staffName) — V3 unit.doctorId·loadDoctor 키와 정합.
-     * useSchedulerRules priority=DOCTOR_FIRST → 의사 운영시간 > 기관 site > 일반(09~18).
+     * useSchedulerRules priority=DOCTOR_FIRST → 담당자 운영시간 > 기관 site > 일반(09~18).
      *
      * 휴게(점심·저녁)는 기관만 소유하므로, 담당자 weekly 에도 **같은 요일의 기관 휴게를 넣어 준다**
-     * — 의사 컬럼에도 휴게 음영이 그려져야 그 시간에 예약이 잡히지 않는다.
+     * — 담당자 컬럼에도 휴게 음영이 그려져야 그 시간에 예약이 잡히지 않는다.
      * (여기는 보드 표시용 조회다. 저장 게이트는 설정 화면(SchedulerSettingsTreatmentSetting)의 몫.)
      *
      * ★실패 판정은 원천별 독립(allSettled) + 부분 적용은 한 방향만:
      *  - staff 실패 → 성공한 site 만 반영. doctorRules 는 마지막 성공값 유지(첫 로드면 빈 상태 → 기관 fallback).
-     *  - site 실패 → 둘 다 보류. 의사 weekly 는 기관 휴게(breaksByWeekday)를 병합해 만들므로
-     *    site 없이 staff 만 반영하면 휴게 음영 없는 의사 컬럼이 그려진다(휴게시간에 예약 가능).
+     *  - site 실패 → 둘 다 보류. 담당자 weekly 는 기관 휴게(breaksByWeekday)를 병합해 만들므로
+     *    site 없이 staff 만 반영하면 휴게 음영 없는 담당자 컬럼이 그려진다(휴게시간에 예약 가능).
      *  어느 쪽이든 workTimeLoadFailed 에 기록해 보드가 배너로 표면화한다 — 무음 fallback 은
      *  실패를 "미설정"과 같은 화면으로 위장시켜 무엇이 고장인지 알 수 없게 하기 때문.
      */
@@ -727,7 +727,7 @@ export const useStaffStore = defineStore('staffStore', () => {
                 /* times 에는 **정한 요일만** 실려 온다(미설정 요일은 행 자체가 없다).
                  * 그래서 여기 온 행 중 시각이 없는 것은 미설정이 아니라 **명시적 휴무**이다.
                  * null 로 담아야 pickDailySchedule 이 "휴무"으로 읽고 기관 fallback 을 막는다
-                 * — 버리면(키 없음) 미설정과 구분이 사라져 쉬는 의사 컬럼이 기관 시간으로 열린다. */
+                 * — 버리면(키 없음) 미설정과 구분이 사라져 쉬는 담당자 컬럼이 기관 시간으로 열린다. */
                 const docWeekly: Partial<Record<Weekday, DailySchedule | null>> = {};
                 for (const row of m.times ?? []) {
                     const wd = row.dayCd;
@@ -738,7 +738,7 @@ export const useStaffStore = defineStore('staffStore', () => {
                 /* holidayOpenDates·holidayWorkDates 는 담지 않는다 — isHolidayOpenDate·isHolidayWorkDate 가
                  * hospitalRules 만 읽어(useSchedulerRules) 담당자 값은 어디서도 소비되지 않는다.
                  * 담아 두면 "설정했는데 안 먹는다" 를 코드가 스스로 감춘다.
-                 * 담당자가 **진료로 정한** 축은 별도 필드(workDates·workWeekdays)로 넘긴다 — R11. */
+                 * 담당자가 **운영으로 정한** 축은 별도 필드(workDates·workWeekdays)로 넘긴다 — R11. */
                 const offInput = staffOffSettingsInput(m, overridesByStaffNo.get(m.staffId) ?? []);
                 const {closedDates, closedWeekdays} = buildHolidayClosure(
                     offInput,
@@ -747,11 +747,11 @@ export const useStaffStore = defineStore('staffStore', () => {
                     endYmd,
                 );
 
-                /* 진료로 정한 날짜 = 특정일자 진료. 진료로 정한 요일 = 운영시간을 가진 요일.
+                /* 운영으로 정한 날짜 = 특정일자 운영. 운영으로 정한 요일 = 운영시간을 가진 요일.
                  * 둘 다 사업장 휴무를 덮는 근거다.
                  *
-                 * ★공휴일 진료 'Y' 를 여기 담지 않는다. 담으면 그 날짜가 통째로 "담당자가 진료로 정한 날"이
-                 *  되어 **사업장이 콕 집어 지정한 임시휴무까지** 덮었다(보드는 진료 / 설정·뷰어는 휴무).
+                 * ★공휴일 운영 'Y' 를 여기 담지 않는다. 담으면 그 날짜가 통째로 "담당자가 운영으로 정한 날"이
+                 *  되어 **사업장이 콕 집어 지정한 임시휴무까지** 덮었다(보드는 운영 / 설정·뷰어는 휴무).
                  *  'Y' 는 "공휴일이라는 이유로는 쉬지 않는다"는 뜻일 뿐이고, 사업장의 공휴일 휴무는
                  *  애초에 담당자에게 상속되지 않는다 — 공휴일은 담당자 자기 축이다(§4-2 2단계). */
                 const workDates = new Set(offInput.workDates ?? []);
@@ -760,7 +760,7 @@ export const useStaffStore = defineStore('staffStore', () => {
                     if (daily) workWeekdays.add(Number(wd));
                 }
 
-                /* 특정일자 진료의 **시각** → dailyByDate. workDates 는 "그날 진료한다"는 사실만 담고
+                /* 특정일자 운영의 **시각** → dailyByDate. workDates 는 "그날 운영한다"는 사실만 담고
                  * 값은 버리므로, 이것이 없으면 보드가 그날을 요일 시각(또는 기관 폴백)으로 열어
                  * 저장한 시간 밖에도 예약을 받는다. 휴게는 담당자가 소유하지 않으므로 그 날짜의
                  * 기관 값(dailyByDate)을, 없으면 그 요일의 기관 휴게를 얹는다 — 요일 행과 같은 규칙. */
@@ -770,10 +770,10 @@ export const useStaffStore = defineStore('staffStore', () => {
                     breaksByWeekday,
                 );
 
-                /* ★공휴일 진료 'Y' 라고 해서 매주 휴무 요일을 열지 않는다 — 'Y' 는 "공휴일이라는 이유로는
+                /* ★공휴일 운영 'Y' 라고 해서 매주 휴무 요일을 열지 않는다 — 'Y' 는 "공휴일이라는 이유로는
                  * 쉬지 않는다"는 뜻일 뿐 요일 판정을 덮지 않는다(§4-2 2단계). 종전에는 여기서 기관 공휴일
                  * 시간·요일 시간을 dailyByDate 에 채워 그날을 열었는데, 매주 금요일 쉬는 담당자가 금요일
-                 * 공휴일에 진료로 뜨는 결론이 됐다. */
+                 * 공휴일에 운영으로 뜨는 결론이 됐다. */
 
                 map[key] = {
                     weekly: docWeekly,

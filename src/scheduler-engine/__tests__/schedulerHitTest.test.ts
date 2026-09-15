@@ -15,10 +15,10 @@ const BANDS: BandCompatible[] = [
 
 function column(overrides: Partial<FlatColumn> = {}): FlatColumn {
   return {
-    key: '2026-06-05__김원장',
+    key: '2026-06-05__김대표',
     date: '2026-06-05',
-    resourceId: '김원장',
-    resourceLabel: '김원장',
+    resourceId: '김대표',
+    resourceLabel: '김대표',
     ancestors: [],
     index: 0,
     leftPx: 0,

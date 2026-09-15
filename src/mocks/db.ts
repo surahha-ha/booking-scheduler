@@ -65,7 +65,7 @@ export const nextNo = () => nextReservationId++;
 
 // ─────────────────────────── 조회 헬퍼 ───────────────────────────
 /**
- * 목록·통계 공통 필터 (날짜/의사/키워드) — BE bookSearchFilterCondition 대응.
+ * 목록·통계 공통 필터 (날짜/담당자/키워드) — BE bookSearchFilterCondition 대응.
  * 통계가 이 필터를 거치지 않으면 보드에 없는 예약까지 세어 카드 수와 어긋난다.
  */
 export function selectBooks(params: Record<string, any> = {}): BookItem[] {
@@ -116,15 +116,15 @@ export function selectNationalHolidays(year: number): NationalHoliday[] {
 
 // ─────────────────────────── 운영시간 (getSiteWorkHours / getStaffWorkHours) ───────────────────────────
 // BE 계약 전환(2026-07): 번들 all → 원천 분리 2조회.
-//  - site(사업장, 원천 사업장 설정): 요일별 진료 시작~종료 + 휴게(lunch/dinner) + 휴무 규칙 strict 번들.
-//  - staff(담당자, 자체 TB): 요일별 진료 시작~종료(휴게 없음) + 일자 override.
-// 진료는 시작~종료 단일 구간이다. USE_YN 계열 필드는 없다 — 진료 안 하는 요일 = 시작·종료 null.
+//  - site(사업장, 원천 사업장 설정): 요일별 운영 시작~종료 + 휴게(lunch/dinner) + 휴무 규칙 strict 번들.
+//  - staff(담당자, 자체 TB): 요일별 운영 시작~종료(휴게 없음) + 일자 override.
+// 운영은 시작~종료 단일 구간이다. USE_YN 계열 필드는 없다 — 운영 안 하는 요일 = 시작·종료 null.
 const hhmm = (h: number, m: number) => `${pad(h)}${pad(m)}`;
 
-/* 담당자 요일별 진료 패턴 — 의사마다 다르게 두어 "기관과 다른 담당자" 케이스가 화면에 보이게 한다.
+/* 담당자 요일별 운영 패턴 — 담당자마다 다르게 두어 "기관과 다른 담당자" 케이스가 화면에 보이게 한다.
  *  0: 기관과 동일 (평일 09~18, 토 09~13)
  *  1: 늦게 시작 (평일 10~17, 토 휴무)
- *  2: 오전 진료만 (평일 09~13)  → 기관 휴게(13~14)가 운영시간 밖이라 잘려 사라진다 */
+ *  2: 오전 운영만 (평일 09~13)  → 기관 휴게(13~14)가 운영시간 밖이라 잘려 사라진다 */
 const STAFF_PATTERNS: { weekday: [number, number] | null; saturday: [number, number] | null }[] = [
     {weekday: [900, 1800], saturday: [900, 1300]},
     {weekday: [1000, 1700], saturday: null},
@@ -134,11 +134,11 @@ const STAFF_PATTERNS: { weekday: [number, number] | null; saturday: [number, num
 const toHm = (v: number) => hhmm(Math.floor(v / 100), v % 100);
 
 /* 한 담당자의 요일 행 목록 — ★정한 요일만 담는다. 7행으로 채우지 않는다.
- *   행 없음 = 미설정(사업장 운영시간을 따른다) / 행 + 시각 = 진료 / 행 + null = 명시적 휴무
+ *   행 없음 = 미설정(사업장 운영시간을 따른다) / 행 + 시각 = 운영 / 행 + null = 명시적 휴무
  * 세 상태가 화면에 모두 나타나도록 패턴마다 주말을 다르게 둔다:
- *  0: 평일·토 진료 + 일요일을 휴무로 명시
- *  1: 평일 진료 + 토요일을 휴무로 명시, 일요일은 미설정
- *  2: 평일 진료만 — 주말 두 요일 모두 미설정 */
+ *  0: 평일·토 운영 + 일요일을 휴무로 명시
+ *  1: 평일 운영 + 토요일을 휴무로 명시, 일요일은 미설정
+ *  2: 평일 운영만 — 주말 두 요일 모두 미설정 */
 function staffWeekRows(patternIdx: number): WorkHoursRow[] {
     const idx = patternIdx % STAFF_PATTERNS.length;
     const pattern = STAFF_PATTERNS[idx]!;
@@ -180,7 +180,7 @@ export const institutionHolidayTime: SiteHolidayHours = {
 };
 
 /* 사업장(site) strict 번들 — GET /work-hours/site. 운영시간 + 휴무 규칙을 함께 내린다.
- * 일요일(0)은 매주 휴무 → site 진료행에는 없고(institutionTimes 는 1~6), recurringOffRules WEEKLY 로 표현. */
+ * 일요일(0)은 매주 휴무 → site 운영행에는 없고(institutionTimes 는 1~6), recurringOffRules WEEKLY 로 표현. */
 export const siteWorkHours: SiteWorkHoursResponse = {
     site: institutionTimes,
     holidayHours: institutionHolidayTime,
@@ -200,7 +200,7 @@ export const staffWorkHours: StaffWorkHoursResponse = {
         staffName: d.staffName,
         times: staffWeekRows(i),
         /* 휴무일 탭에서 정하는 두 축. 매월 N번째 휴무는 없는 상태로 두고,
-         * 공휴일은 NOT NULL 2상태라 서버와 같이 기본값 'Y'(진료)로 채운다. */
+         * 공휴일은 NOT NULL 2상태라 서버와 같이 기본값 'Y'(운영)로 채운다. */
         monthlyOffRules: [],
         holidayOpenYn: 'Y',
     })),
@@ -208,7 +208,7 @@ export const staffWorkHours: StaffWorkHoursResponse = {
 };
 
 // ─────────────────────────── 팀 / 운영일정 설정 ───────────────────────────
-// 팀 = CSV 의사를 앞에서부터 구역별로 분배(2명씩). 운영일정 보기 셀렉트박스용.
+// 팀 = CSV 담당자를 앞에서부터 구역별로 분배(2명씩). 운영일정 보기 셀렉트박스용.
 export const teams: DoctorTeam[] = (() => {
     const perTeam = 2;
     const out: DoctorTeam[] = [];

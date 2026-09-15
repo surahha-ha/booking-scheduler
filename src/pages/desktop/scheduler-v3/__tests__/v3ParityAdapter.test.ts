@@ -42,13 +42,13 @@ describe('v3ParityAdapter — toV2Bands', () => {
 
 describe('v3ParityAdapter — toV2Columns', () => {
   it('ResolvedColumn → FlatColumn (key=unit.key, resourceId=doctorId)', () => {
-    const cols = [col(0, '2026-06-05', '김원장', '김원장', 0, 120), col(1, '2026-06-05', '이원장', '이원장', 120, 120)]
+    const cols = [col(0, '2026-06-05', '김대표', '김대표', 0, 120), col(1, '2026-06-05', '이대표', '이대표', 120, 120)]
     const out = toV2Columns(cols)
     expect(out[0]).toMatchObject({
-      key: '2026-06-05__김원장',
+      key: '2026-06-05__김대표',
       date: '2026-06-05',
-      resourceId: '김원장',
-      resourceLabel: '김원장',
+      resourceId: '김대표',
+      resourceLabel: '김대표',
       index: 0,
       leftPx: 0,
       widthPx: 120,
@@ -59,20 +59,20 @@ describe('v3ParityAdapter — toV2Columns', () => {
 })
 
 describe('v3ParityAdapter — toV2HeaderTree', () => {
-  it('날짜 > 의사 트리, leaf.key=unit.key=FlatColumn.key 통일', () => {
-    const cols = [col(0, '2026-06-05', '김원장', '김원장'), col(1, '2026-06-05', '이원장', '이원장')]
+  it('날짜 > 담당자 트리, leaf.key=unit.key=FlatColumn.key 통일', () => {
+    const cols = [col(0, '2026-06-05', '김대표', '김대표'), col(1, '2026-06-05', '이대표', '이대표')]
     const tree = toV2HeaderTree(cols)
     expect(tree).toHaveLength(1) // 날짜 1개
     expect(tree[0]).toMatchObject({ key: '2026-06-05', type: 'date', colSpan: 2, depth: 0 })
     expect(tree[0].children).toHaveLength(2)
     const leaf = tree[0].children![0]
-    expect(leaf).toMatchObject({ key: '2026-06-05__김원장', type: 'doctor', colSpan: 1, depth: 1 })
-    expect(leaf.leafMeta).toMatchObject({ date: '2026-06-05', resourceId: '김원장', resourceLabel: '김원장' })
+    expect(leaf).toMatchObject({ key: '2026-06-05__김대표', type: 'doctor', colSpan: 1, depth: 1 })
+    expect(leaf.leafMeta).toMatchObject({ date: '2026-06-05', resourceId: '김대표', resourceLabel: '김대표' })
     // leaf.key 와 toV2Columns 의 key 가 동일해야 Header/Grid 매칭
     expect(leaf.key).toBe(toV2Columns(cols)[0].key)
   })
 
-  it('여러 날짜: 날짜 순서 보존 + 날짜별 의사 그룹핑', () => {
+  it('여러 날짜: 날짜 순서 보존 + 날짜별 담당자 그룹핑', () => {
     const cols = [
       col(0, '2026-06-05', 'A', 'A'),
       col(1, '2026-06-05', 'B', 'B'),
@@ -86,7 +86,7 @@ describe('v3ParityAdapter — toV2HeaderTree', () => {
 })
 
 describe('v3ParityAdapter — toV2Rects', () => {
-  const cols = [col(0, '2026-06-05', '김원장', '김원장'), col(1, '2026-06-05', '이원장', '이원장')]
+  const cols = [col(0, '2026-06-05', '김대표', '김대표'), col(1, '2026-06-05', '이대표', '이대표')]
   const rects: Rect[] = [
     { id: 'appt-1', columnIndex: 0, top: 0, left: 4, width: 96, height: 38, z: 0, isFloating: false, isLayered: false, isLayerBase: true, layerDepth: 0 },
     { id: 'appt-2', columnIndex: 1, top: 38, left: 124, width: 86, height: 38, z: 10, isFloating: true, isLayered: true, isLayerBase: false, layerDepth: 1 },
@@ -95,7 +95,7 @@ describe('v3ParityAdapter — toV2Rects', () => {
     const out = toV2Rects(rects, cols)
     expect(out[0]).toMatchObject({
       appointmentId: 'appt-1',
-      columnKey: '2026-06-05__김원장',
+      columnKey: '2026-06-05__김대표',
       top: 0,
       left: 4,
       width: 96,
@@ -103,7 +103,7 @@ describe('v3ParityAdapter — toV2Rects', () => {
       zIndex: 0,
       cardDisplayTier: 'standard',
     })
-    expect(out[1]).toMatchObject({ appointmentId: 'appt-2', columnKey: '2026-06-05__이원장', zIndex: 10 })
+    expect(out[1]).toMatchObject({ appointmentId: 'appt-2', columnKey: '2026-06-05__이대표', zIndex: 10 })
   })
   it('isLayered / isLayerBase / layerDepth 는 그대로 전달(카드 그림자·좌측 마커 토글·농도 소스)', () => {
     const out = toV2Rects(rects, cols)

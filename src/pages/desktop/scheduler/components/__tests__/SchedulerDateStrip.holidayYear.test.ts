@@ -90,14 +90,14 @@ describe('줄달력 — 연도 라벨', () => {
     expect(yearToNextLabel(wrapper)).toEqual([['2027', '1월']])
   })
 
-  it('진료 모드: 1월이 보이지 않는 창에는 연도 라벨이 없다', () => {
+  it('방문 모드: 1월이 보이지 않는 창에는 연도 라벨이 없다', () => {
     const wrapper = mountStrip({
       selectedDate: '2026-09-03', stripWindowStart: '2026-08-05', maxDate: '2026-09-03',
     })
     expect(yearLabels(wrapper)).toEqual([])
   })
 
-  it('진료 모드: 왼쪽 월 버튼에 1월이 있으면 그 앞에 붙는다', () => {
+  it('방문 모드: 왼쪽 월 버튼에 1월이 있으면 그 앞에 붙는다', () => {
     const wrapper = mountStrip({
       selectedDate: '2027-02-03', stripWindowStart: '2027-01-05', maxDate: '2027-02-03',
     })

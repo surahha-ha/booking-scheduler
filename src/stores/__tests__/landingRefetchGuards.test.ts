@@ -4,7 +4,7 @@
  * 배경 — `/book` 랜딩 1회에 같은 payload 의 장부 조회가 5~6회 나가고 있었다.
  *   ① loadDoctor 가 응답이 같아도 doctors 배열을 매번 교체 → 하위 computed(컬럼→조회 윈도우) 재평가 →
  *      윈도우가 흔들리면 searchVersion 이 다시 올라 loadDoctor 가 또 불리는 되먹임.
- *   ② 팀 선택은 의사 선택이 비어 있으면 재조회를 생략한다 — 장부 조회 payload 에 팀이 없다(표시 오버레이).
+ *   ② 팀 선택은 담당자 선택이 비어 있으면 재조회를 생략한다 — 장부 조회 payload 에 팀이 없다(표시 오버레이).
  *      한동안 통계 조회의 doctorName 이 팀에서 파생된다는 이유로 재조회를 걸었는데, 상태·회원 카운트가
  *      화면 카드에서 세는 방식(boardStatistics)으로 바뀌어 그 이유가 사라졌다.
  *   ③ 겹친 조회의 응답 순서가 뒤바뀌면 늦게 온 옛 응답이 최신 화면을 덮었다(upsert 는 전량 교체).
@@ -43,8 +43,8 @@ function doctorsResp(list: Array<{ staffName: string; staffId: number; openYn: '
 }
 
 const BASE = [
-    {staffName: '김의사', staffId: 1, openYn: 'Y' as const},
-    {staffName: '이의사', staffId: 2, openYn: 'N' as const},
+    {staffName: '김담당', staffId: 1, openYn: 'Y' as const},
+    {staffName: '이담당', staffId: 2, openYn: 'N' as const},
 ];
 
 describe('staffStore.loadDoctor — 무변경 응답은 배열을 교체하지 않는다(되먹임 차단)', () => {
@@ -91,7 +91,7 @@ describe('staffStore.loadDoctor — 무변경 응답은 배열을 교체하지 �
         mockGetDoctors.mockResolvedValue(doctorsResp([BASE[1], BASE[0]]));
         await store.loadDoctor();
 
-        expect(store.doctors.map(d => d.text)).toEqual(['이의사', '김의사']);
+        expect(store.doctors.map(d => d.text)).toEqual(['이담당', '김담당']);
     });
 
     it('추가/삭제는 당연히 교체한다', async () => {
@@ -125,14 +125,14 @@ describe('useSchedulerFilterStore.setTeam — 팀은 표시 오버레이라 payl
 
     // 기대값 출처: setTeam 주석. 종전 "오른다" 단언의 근거(통계 doctorName 이 팀에서 파생)는 카운트를 화면
     // 카드에서 세게 되면서(boardStatistics) 없어졌다 — 팀 전환은 컬럼만 바꾸고 숫자는 컬럼을 따라간다.
-    it('의사 선택이 비어 있으면 팀이 바뀌어도 searchVersion 은 그대로다 — 장부 payload 가 같다', () => {
+    it('담당자 선택이 비어 있으면 팀이 바뀌어도 searchVersion 은 그대로다 — 장부 payload 가 같다', () => {
         const filter = useSchedulerFilterStore();
         const before = filter.searchVersion;
         const payloadBefore = toBookApiParams(filter.$state);
 
-        filter.setTeam('교정팀');
+        filter.setTeam('점검팀');
 
-        expect(filter.selectedTeamName).toBe('교정팀');
+        expect(filter.selectedTeamName).toBe('점검팀');
         expect(toBookApiParams(filter.$state)).toEqual(payloadBefore);
         expect(filter.searchVersion).toBe(before);
     });
@@ -141,33 +141,33 @@ describe('useSchedulerFilterStore.setTeam — 팀은 표시 오버레이라 payl
         const filter = useSchedulerFilterStore();
         const before = filter.searchVersion;
 
-        filter.setTeam('교정팀');
-        filter.setTeam('보철팀');
+        filter.setTeam('점검팀');
+        filter.setTeam('관리팀');
         filter.setTeam(null);
 
         expect(filter.selectedTeamName).toBeNull();
         expect(filter.searchVersion).toBe(before);
     });
 
-    it('의사 선택이 있으면 초기화가 payload(doctorName) 를 바꾸므로 재조회한다', () => {
+    it('담당자 선택이 있으면 초기화가 payload(doctorName) 를 바꾸므로 재조회한다', () => {
         const filter = useSchedulerFilterStore();
-        filter.setDoctors(['김의사'], false);
+        filter.setDoctors(['김담당'], false);
         const before = filter.searchVersion;
         const payloadBefore = toBookApiParams(filter.$state);
 
-        filter.setTeam('교정팀');
+        filter.setTeam('점검팀');
 
         expect(filter.doctors).toEqual([]);
         expect(toBookApiParams(filter.$state)).not.toEqual(payloadBefore);
         expect(filter.searchVersion).toBe(before + 1);
     });
 
-    it('trigger=false 면 의사 선택이 있어도 재조회하지 않는다', () => {
+    it('trigger=false 면 담당자 선택이 있어도 재조회하지 않는다', () => {
         const filter = useSchedulerFilterStore();
-        filter.setDoctors(['김의사'], false);
+        filter.setDoctors(['김담당'], false);
         const before = filter.searchVersion;
 
-        filter.setTeam('교정팀', false);
+        filter.setTeam('점검팀', false);
 
         expect(filter.doctors).toEqual([]);
         expect(filter.searchVersion).toBe(before);
@@ -175,11 +175,11 @@ describe('useSchedulerFilterStore.setTeam — 팀은 표시 오버레이라 payl
 
     it('같은 팀 재선택은 아무 것도 하지 않는다', () => {
         const filter = useSchedulerFilterStore();
-        filter.setDoctors(['김의사'], false);
-        filter.setTeam('교정팀');
+        filter.setDoctors(['김담당'], false);
+        filter.setTeam('점검팀');
         const before = filter.searchVersion;
 
-        filter.setTeam('교정팀');
+        filter.setTeam('점검팀');
 
         expect(filter.searchVersion).toBe(before);
     });

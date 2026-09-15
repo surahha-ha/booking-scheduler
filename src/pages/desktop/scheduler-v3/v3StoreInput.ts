@@ -7,7 +7,7 @@
  *  - `bookStore.load()` 직접 호출 금지 — 페이지가 useBookStore() 인스턴스화 시
  *    searchVersion watch(immediate) 가 load 체인을 트리거한다(여기선 read 만).
  *  - 페이지(.vue)에 계산 로직을 두지 않기 위해 입력 조립을 이 .ts 로 분리.
- *  - 의사 그룹핑 키 = 이름(name 모드). 팀 셀렉트박스는 후속 필터단계.
+ *  - 담당자 그룹핑 키 = 이름(name 모드). 팀 셀렉트박스는 후속 필터단계.
  */
 
 import type {
@@ -47,7 +47,7 @@ export interface StoreInputParams {
   weekly: WeeklySource | null | undefined
   /** staffStore.hospitalRules.holiday — 기관 공휴일 운영시간(요일 축 없는 한 세트). */
   holiday?: DailyScheduleSource | null
-  /** staffStore.hospitalRules.holidayOpenDates — 공휴일이면서 진료하는 날. 그 날 밴드는 holiday 로 그린다. */
+  /** staffStore.hospitalRules.holidayOpenDates — 공휴일이면서 운영하는 날. 그 날 밴드는 holiday 로 그린다. */
   holidayDates?: string[]
   /** staffStore.hospitalRules.dailyByDate — 지정일자의 그 날짜 운영시간. 요일·공휴일보다 우선해 밴드를 그린다. */
   dailyByDate?: Record<string, DailyScheduleSource>
@@ -60,7 +60,7 @@ export interface StoreInputParams {
   /** 'YYYY-MM-DD' (페이지-로컬) */
   selectedDate: string
   viewState: ViewStateInput
-  /** filterStore.doctors — 선택된 의사 id(이름). 비어있으면 전체. 컬럼 필터 정합용. */
+  /** filterStore.doctors — 선택된 담당자 id(이름). 비어있으면 전체. 컬럼 필터 정합용. */
   selectedDoctorIds?: string[]
   /** 예약장부 설정 "전체 칸 개수"(reservationSettingStore). 미전달 시 DEFAULT(8). budget = totalColumns + 2×(3-viewStep). */
   totalColumns?: number
@@ -79,7 +79,7 @@ export interface StoreInputParams {
 
 export function buildStoreRunLayoutInput(p: StoreInputParams): RunLayoutInput {
   const env: EnvInput = { availableWidth: Math.max(1, p.availableWidth) }
-  // 검색필터에서 의사 선택 시 그 의사 컬럼만(전체=빈배열). name 모드라 id=이름 매칭.
+  // 검색필터에서 담당자 선택 시 그 담당자 컬럼만(전체=빈배열). name 모드라 id=이름 매칭.
   const selected = p.selectedDoctorIds ?? []
   const doctors = selected.length > 0
     ? p.doctors.filter(d => selected.includes(d.id))

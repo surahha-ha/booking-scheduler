@@ -54,14 +54,14 @@ export type SchedulerAppointment = {
     endMs: number;
 
     // UI용
-    uiDoctor1: string;        // 의사 1글자
+    uiDoctor1: string;        // 담당자 1글자
     uiPatient: string;        // 고객명(기본값 포함)
     uiPhone: string;          // 전화번호 포맷
     uiJoin: boolean;          // join 여부
     uiStatusClass: string;    // status class
-    isExternalSync: boolean;      // 외부 시스템 연동 여부 — 의사 뱃지 색상 분기에 사용
+    isExternalSync: boolean;      // 외부 시스템 연동 여부 — 담당자 뱃지 색상 분기에 사용
     createdAt?: Date;       // 예약 등록일시 — '당일'(오늘 등록) 뱃지 판정
-    isTreatmentRegistered: boolean; // 진료장부에서 등록된 건(RESERVATION_USE_TYPE='WORK') — '당일' 뱃지는 이 건에만
+    isTreatmentRegistered: boolean; // 방문장부에서 등록된 건(RESERVATION_USE_TYPE='WORK') — '당일' 뱃지는 이 건에만
 
     // 카드 표시정보(displayInfo) — 통합회원만 birth/sex, 비회원 빈값
     birthDate?: string | null;       // 생년월일 원본 'yyyy-MM-dd'
@@ -275,7 +275,7 @@ export const useBookStore = defineStore('bookStore', () => {
         }
     }
 
-    // 현재 화면 구분(reservation|treatment). 상태변경·삭제가 예약/진료 구분값을 뭉개지 않도록 함께 보낸다.
+    // 현재 화면 구분(reservation|treatment). 상태변경·삭제가 예약/방문 구분값을 뭉개지 않도록 함께 보낸다.
     function currentBookType() {
         return toType(schedulerFilterStore.dataType);
     }

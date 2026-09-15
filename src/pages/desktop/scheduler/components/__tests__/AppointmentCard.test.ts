@@ -71,7 +71,7 @@ function makeAppointment(overrides = {}) {
     id: 'appt-1',
     patientName: '홍길동',
     patientPhone: '010-1234-5678',
-    memo: '정기검진',
+    memo: '정기점검',
     status: '00',
     statusClass: 'is-waiting',
     isJoinMember: false,
@@ -134,8 +134,8 @@ describe('AppointmentCard - EXT 뱃지', () => {
   })
 })
 
-// '당일' 뱃지 — 진료 화면에서, 진료장부에서 등록한 건(isTreatmentRegistered) 중 오늘 등록한 건에만 붙는다.
-// 예약장부에서 등록한 건(CMM)은 진료 화면에 보여도 붙지 않는다(등록 화면 구분은 BE RESERVATION_USE_TYPE).
+// '당일' 뱃지 — 방문 화면에서, 방문장부에서 등록한 건(isTreatmentRegistered) 중 오늘 등록한 건에만 붙는다.
+// 예약장부에서 등록한 건(CMM)은 방문 화면에 보여도 붙지 않는다(등록 화면 구분은 BE RESERVATION_USE_TYPE).
 describe("AppointmentCard - '당일' 뱃지", () => {
   const today = new Date()
   const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000)
@@ -144,7 +144,7 @@ describe("AppointmentCard - '당일' 뱃지", () => {
     setActivePinia(createPinia())
   })
 
-  it('진료 화면 + 진료장부 등록건 + 오늘 등록 → .card-today-badge 노출', () => {
+  it('방문 화면 + 방문장부 등록건 + 오늘 등록 → .card-today-badge 노출', () => {
     useSchedulerFilterStore().dataType = 'TREATMENT'
     const wrapper = mountCard({ isTreatmentRegistered: true, createdAt: today })
     const badge = wrapper.find('.card-today-badge')
@@ -152,33 +152,33 @@ describe("AppointmentCard - '당일' 뱃지", () => {
     expect(badge.text()).toBe('당일')
   })
 
-  it('진료 화면 + 예약장부 등록건(isTreatmentRegistered=false) + 오늘 등록 → 뱃지 없음', () => {
+  it('방문 화면 + 예약장부 등록건(isTreatmentRegistered=false) + 오늘 등록 → 뱃지 없음', () => {
     useSchedulerFilterStore().dataType = 'TREATMENT'
     const wrapper = mountCard({ isTreatmentRegistered: false, createdAt: today })
     expect(wrapper.find('.card-today-badge').exists()).toBe(false)
   })
 
-  it('진료 화면 + isTreatmentRegistered 미정의 + 오늘 등록 → 뱃지 없음(기본값 제외)', () => {
+  it('방문 화면 + isTreatmentRegistered 미정의 + 오늘 등록 → 뱃지 없음(기본값 제외)', () => {
     useSchedulerFilterStore().dataType = 'TREATMENT'
     const wrapper = mountCard({ isTreatmentRegistered: undefined, createdAt: today })
     expect(wrapper.find('.card-today-badge').exists()).toBe(false)
   })
 
-  it('진료 화면 + 진료장부 등록건 + 어제 등록 → 뱃지 없음', () => {
+  it('방문 화면 + 방문장부 등록건 + 어제 등록 → 뱃지 없음', () => {
     useSchedulerFilterStore().dataType = 'TREATMENT'
     const wrapper = mountCard({ isTreatmentRegistered: true, createdAt: yesterday })
     expect(wrapper.find('.card-today-badge').exists()).toBe(false)
   })
 
-  it('예약 화면에서는 진료장부 등록건이라도 뱃지 없음', () => {
+  it('예약 화면에서는 방문장부 등록건이라도 뱃지 없음', () => {
     useSchedulerFilterStore().dataType = 'APPOINTMENT'
     const wrapper = mountCard({ isTreatmentRegistered: true, createdAt: today })
     expect(wrapper.find('.card-today-badge').exists()).toBe(false)
   })
 })
 
-// 예약 화면은 예약(00)·취소(03)만 상태 색으로 구분한다. 진료완료·미이행·접수대기 건은
-// 예약(00)처럼(상태 클래스 없이) 그린다. 진료 화면은 실제 상태 색을 그대로 쓴다.
+// 예약 화면은 예약(00)·취소(03)만 상태 색으로 구분한다. 완료·미이행·대기 건은
+// 예약(00)처럼(상태 클래스 없이) 그린다. 방문 화면은 실제 상태 색을 그대로 쓴다.
 describe('AppointmentCard - 화면별 상태 색 클래스', () => {
   const STATUS_CLASSES = ['status-done', 'status-undone', 'status-cancel', 'status-receipt']
 
@@ -212,7 +212,7 @@ describe('AppointmentCard - 화면별 상태 색 클래스', () => {
     ['02', 'is-undone', 'status-undone'],
     ['03', 'is-cancel', 'status-cancel'],
     ['05', 'is-receipt', 'status-receipt'],
-  ])('진료 화면: status %s 는 실제 상태 색(%s → %s)을 그대로 쓴다', (status, statusClass, expected) => {
+  ])('방문 화면: status %s 는 실제 상태 색(%s → %s)을 그대로 쓴다', (status, statusClass, expected) => {
     useSchedulerFilterStore().dataType = 'TREATMENT'
     const wrapper = mountCard({ status, statusClass })
     expect(statusClassOf(wrapper)).toEqual([expected])

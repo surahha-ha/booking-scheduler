@@ -41,7 +41,7 @@ export type DoctorTeam = {
 /* 운영시간 — 담당자 1명의 요일 1행 (staff 조회 응답 & save 요청 본문 공용 항목).
  * ★행이 있다는 것 자체가 "그 요일을 정했다"는 뜻이다. 요청·응답 모두 7개 요일을 채우지 않는다:
  *   행 없음 = 미설정 (아직 정하지 않음 → 사업장 운영시간을 따른다)
- *   행 + 시작·종료  = 진료
+ *   행 + 시작·종료  = 운영
  *   행 + null      = 휴무 (명시적으로 쉬기로 정함)
  * 7행으로 채우면 앞의 두 상태가 같은 모양이 되어 "안 정한 요일"이 "휴무"으로 굳는다.
  * WorkHoursOverride(일자 지정)가 쓰던 규약과 같다. */
@@ -61,8 +61,8 @@ export type WorkHoursOverride = {
 };
 
 /* 사업장(site) 운영시간 — 요일 1행. 조회 응답과 저장 요청에 함께 쓴다.
- * 원천은 사업장 설정. 진료 시작~종료 단일 구간 안에서 휴게(점심·저녁)를 비운다.
- * 진료하지 않는 요일은 시작/종료 시분이 null 이며, 저장 시엔 recurringOffRules 로 휴무를 표현한다.
+ * 원천은 사업장 설정. 운영 시작~종료 단일 구간 안에서 휴게(점심·저녁)를 비운다.
+ * 운영하지 않는 요일은 시작/종료 시분이 null 이며, 저장 시엔 recurringOffRules 로 휴무를 표현한다.
  * ⚠️ site(사업장, 사업장 설정 원천)와 staff(담당자, 자체DB)는 한 글자 차이다 — 혼동 금지. */
 export type SiteDayHours = {
     dayCd: number;                      // 0=일 ~ 6=토
@@ -76,8 +76,8 @@ export type SiteDayHours = {
 
 /* 사업장(site) 공휴일 운영시간 — 사업장당 한 세트. 요일 축이 없어 모든 공휴일에 공통 적용된다.
  * 원천은 사업장 설정 공휴일 운영시간 테이블.
- * ⚠️ 공휴일에 쉬는지는 여기가 아니라 holidayClosedYn 이 갖는다 — 이 타입은 "진료한다면 몇 시부터"만 담는다.
- * 휴무로 바꿔도 값은 보존된다(다시 진료로 되돌렸을 때 살아 있어야 한다). */
+ * ⚠️ 공휴일에 쉬는지는 여기가 아니라 holidayClosedYn 이 갖는다 — 이 타입은 "운영한다면 몇 시부터"만 담는다.
+ * 휴무로 바꿔도 값은 보존된다(다시 운영으로 되돌렸을 때 살아 있어야 한다). */
 export type SiteHolidayHours = {
     openHm: string | null;
     closeHm: string | null;
@@ -93,7 +93,7 @@ export type SiteHolidayHours = {
  * — 조회 실패(ApiResponse.code=failed) 시 저장을 차단한다(전체 치환 저장이 사업장 데이터를 통삭제하지 않게).
  * 미설정 거래처는 code=succeed + site=[] + 빈 규칙(장애와 명확히 구분). */
 export type SiteWorkHoursResponse = {
-    site: SiteDayHours[];                // 진료하는 요일 행만. 휴무 요일은 recurringOffRules 로 표현된다.
+    site: SiteDayHours[];                // 운영하는 요일 행만. 휴무 요일은 recurringOffRules 로 표현된다.
     holidayHours: SiteHolidayHours | null;      // 공휴일 운영시간. null = 미설정(공휴일 휴무와 다르다)
     dateTimes: SiteDateHours[];          // 지정일자의 그 날짜 운영시간 (workDates/offDates 는 날짜만 담는다)
     recurringOffRules: RecurringOffRule[];
@@ -102,8 +102,8 @@ export type SiteWorkHoursResponse = {
     holidayClosedYn: boolean;                    // 공휴일포함여부
 };
 
-/* 사업장 **일자별** 운영시간 — 지정일자(임시휴무/임시진료)의 그 날짜 시간. 원천은 사업장 설정.
- * ⚠️ 조회 전용이다. 저장 payload 에는 없다 — 이 앱에 일자별 시간 편집 UI 가 없고, 임시진료 지정일의
+/* 사업장 **일자별** 운영시간 — 지정일자(임시휴무/임시운영)의 그 날짜 시간. 원천은 사업장 설정.
+ * ⚠️ 조회 전용이다. 저장 payload 에는 없다 — 이 앱에 일자별 시간 편집 UI 가 없고, 임시운영 지정일의
  *    시간은 BE 가 저장 시점에 채운다(그 요일 기관 운영시간 → 없으면 09:00~18:00).
  * 이 값이 없으면 FE 는 지정일을 "종일 열림"으로 추정할 수밖에 없어, 저장된 시간 밖 예약을 받아
  * 사업장 설정·운영중 표시와 갈린다. */
@@ -139,8 +139,8 @@ export type StaffMonthlyOffRule = {
     monthlyNth: number;                  // 1~5 (매월 N번째)
 };
 
-/* 담당자 공휴일 진료여부. 'N'=휴무 / 'Y'=진료. 원천 컬럼이 NOT NULL 이라 조회 응답은 항상 둘 중 하나다.
- * 사업장 규칙 "상속"은 값이 아니라 진료팀 배치 시점의 복사로 해결한다(화면정의서 APB032 §4). */
+/* 담당자 공휴일 운영 여부. 'N'=휴무 / 'Y'=운영. 원천 컬럼이 NOT NULL 이라 조회 응답은 항상 둘 중 하나다.
+ * 사업장 규칙 "상속"은 값이 아니라 팀 배치 시점의 복사로 해결한다(화면정의서 APB032 §4). */
 export type StaffHolidayOpenYn = 'Y' | 'N';
 
 /* 저장 요청 전용 — null 은 "이 담당자의 공휴일 값은 건드리지 않는다"는 뜻이다(미설정으로 되돌리는 것이 아니다).
@@ -156,7 +156,7 @@ export type WorkingHoursPayload = {
         times: WorkHoursRow[];
         /* 매월 N번째 요일 휴무. times 와 마찬가지로 전체 치환이라 여기 없는 조합은 저장 후 사라진다. */
         monthlyOffRules: StaffMonthlyOffRule[];
-        /* 공휴일 진료여부. null 을 보내면 서버가 그 담당자의 기존 값을 그대로 둔다(§StaffHolidayOpenYnInput). */
+        /* 공휴일 운영 여부. null 을 보내면 서버가 그 담당자의 기존 값을 그대로 둔다(§StaffHolidayOpenYnInput). */
         holidayOpenYn: StaffHolidayOpenYnInput;
     }>;
     /* 캘린더 셀에서 직원별로 편집한 날짜 override 들 — weekly 보다 우선 */
@@ -165,7 +165,7 @@ export type WorkingHoursPayload = {
 
 /* 조회 응답 — 서버는 항상 전체를 채워 내려준다. */
 export type TreatmentSettingsPayload = {
-    /* 사업장(site) 요일별 운영시간 — 진료하는 요일 행만. 원천은 사업장 설정이며,
+    /* 사업장(site) 요일별 운영시간 — 운영하는 요일 행만. 원천은 사업장 설정이며,
      * BE 어댑터가 이 번들 1콜로 전체 치환 저장한다. 휴무 요일은 여기 넣지 말고 recurringOffRules 로. */
     site: SiteDayHours[];
     /* 공휴일 운영시간 — 요일별과 같이 전체 치환. null(미전송)이면 BE 가 baseline 을 보존하고,

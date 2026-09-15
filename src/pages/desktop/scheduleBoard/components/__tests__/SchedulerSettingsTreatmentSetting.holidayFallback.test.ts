@@ -61,7 +61,7 @@ import { useStaffStore } from '@/stores/staffStore'
 
 const TUESDAY = 2
 const DOC = 11
-const NAME = '공휴일진료'
+const NAME = '공휴일운영'
 
 /* 사업장 화요일 10:00~17:00 / 공휴일 09:00~13:00 — 일부러 다른 값이라 어느 쪽을 빌렸는지 드러난다. */
 const SITE_ROWS = [{
@@ -79,12 +79,12 @@ afterEach(() => {
   mounted.length = 0
 })
 
-/** holidayClosedYn=true = 사업장은 공휴일 휴무. 담당자는 holidayOpenYn='Y' 라 그날 진료한다(R11). */
+/** holidayClosedYn=true = 사업장은 공휴일 휴무. 담당자는 holidayOpenYn='Y' 라 그날 운영한다(R11). */
 function setupMocks(holidayHours: any, holidayClosedYn = true, dateTimes: any[] = []) {
   mocks.getTeams.mockResolvedValue({
     data: {
       code   : 'succeed',
-      payload: { teams: [{ id: '1', name: '1진료팀', doctors: [{ staffId: DOC, staffName: NAME }] }] },
+      payload: { teams: [{ id: '1', name: '1팀', doctors: [{ staffId: DOC, staffName: NAME }] }] },
     },
   })
   mocks.getSiteWorkHours.mockResolvedValue({
@@ -154,7 +154,7 @@ describe('공휴일 폴백 — 사업장 공휴일 운영시간이 요일 시간
     expect(labelOf(wrapper, HOLIDAY)).toBe(`${NAME} 10:00 ~ 17:00`)
   })
 
-  it('기관도 공휴일 진료(holidayClosedYn=false)면 같은 값을 빌린다 — 기관 휴무 여부와 무관한 표기다', async () => {
+  it('기관도 공휴일 운영(holidayClosedYn=false)면 같은 값을 빌린다 — 기관 휴무 여부와 무관한 표기다', async () => {
     setupMocks(HOLIDAY_TIME, false)
     const wrapper = await mountSetting()
 
@@ -185,7 +185,7 @@ describe('공휴일 폴백 — 사업장 공휴일 운영시간이 요일 시간
 /**
  * 일자별 폴백 (2026-09-02).
  *
- * 사업장이 임시진료로 지정한 날짜에는 그 날짜의 운영시간이 따로 저장된다(응답 dateTimes, 원천 외부 시스템).
+ * 사업장이 임시운영으로 지정한 날짜에는 그 날짜의 운영시간이 따로 저장된다(응답 dateTimes, 원천 외부 시스템).
  * 보드 예약검증(pickDailySchedule)·타임라인 밴드(resolveUnitHours)는 이 값을 요일·공휴일보다 먼저 쓰는데
  * 설정·보기 화면만 읽지 않아, 같은 날 같은 담당자의 시간이 화면마다 갈렸다.
  */

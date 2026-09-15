@@ -1,7 +1,7 @@
-// 이동·길이조절 요청이 진료항목을 그대로 실어 보내는지 검증.
+// 이동·길이조절 요청이 서비스 항목을 그대로 실어 보내는지 검증.
 //
-// 서버(BookLockService.modifyWithLock)는 진료항목이 없는 수정 요청을 '해제'로 읽는다.
-// 그래서 어댑터가 이 두 필드를 빠뜨리면 예약을 한 칸 옮기는 것만으로 진료항목이 지워진다.
+// 서버(BookLockService.modifyWithLock)는 서비스 항목이 없는 수정 요청을 '해제'로 읽는다.
+// 그래서 어댑터가 이 두 필드를 빠뜨리면 예약을 한 칸 옮기는 것만으로 서비스 항목이 지워진다.
 import { describe, expect, it } from 'vitest'
 import {
   dragResultToBookItemRequest,
@@ -14,7 +14,7 @@ const original: any = {
   patientPhone: '01012345678',
   customerRefId: null,
   memberNo: null,
-  memo: '임플란트 상담',
+  memo: '설치 상담',
   doctorName: '최교영',
   startDateTime: new Date('2026-06-22T10:30:00'),
   endDateTime: new Date('2026-06-22T11:00:00'),
@@ -38,20 +38,20 @@ const resizeResult: any = {
   newEndMinute: 720,
 }
 
-describe('dragResultAdapter — 진료항목 보존', () => {
-  it('이동 요청에 진료항목이 원본 그대로 실린다', () => {
+describe('dragResultAdapter — 서비스 항목 보존', () => {
+  it('이동 요청에 서비스 항목이 원본 그대로 실린다', () => {
     const req = dragResultToBookItemRequest(dropResult, original, (n: string) => n)
     expect(req?.serviceGroupId).toBe(10)
     expect(req?.serviceItemId).toBe(101)
   })
 
-  it('길이조절 요청에 진료항목이 원본 그대로 실린다', () => {
+  it('길이조절 요청에 서비스 항목이 원본 그대로 실린다', () => {
     const req = resizeResultToBookItemRequest(resizeResult, original)
     expect(req?.serviceGroupId).toBe(10)
     expect(req?.serviceItemId).toBe(101)
   })
 
-  it('진료항목이 없는 예약은 null 로 실린다 — undefined 로 빠지지 않는다', () => {
+  it('서비스 항목이 없는 예약은 null 로 실린다 — undefined 로 빠지지 않는다', () => {
     const noItem = { ...original, serviceGroupId: undefined, serviceItemId: undefined }
     const req = dragResultToBookItemRequest(dropResult, noItem, (n: string) => n)
     expect(req).toHaveProperty('serviceGroupId', null)

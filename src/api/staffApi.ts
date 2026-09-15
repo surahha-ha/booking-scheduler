@@ -59,7 +59,7 @@ export function syncDoctors() {
 }
 
 /**
- * 운영시간 > 의사별 조회
+ * 운영시간 > 담당자별 조회
  */
 export function getDoctorSchedule() {
     return null;

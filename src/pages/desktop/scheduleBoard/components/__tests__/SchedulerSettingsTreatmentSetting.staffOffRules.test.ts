@@ -15,7 +15,7 @@
  *     만지는 순간 'Y'/'N' 으로 확정된다.
  *
  *  4) 우측 뷰어는 선택한 대상으로 판정하고, **정하지 않은 날은 사업장 판정을 상속**한다.
- *     달력에서 "그 날짜 진료"로 뒤집으면 운영시간을 FE 가 채운다(빈 지정은 휴무와 구분되지 않는다).
+ *     달력에서 "그 날짜 운영"로 뒤집으면 운영시간을 FE 가 채운다(빈 지정은 휴무와 구분되지 않는다).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -88,7 +88,7 @@ function setupMocks(staff: any[] = [], offRulesPayload: any = {}) {
   mocks.getTeams.mockResolvedValue({
     data: {
       code   : 'succeed',
-      payload: { teams: [{ id: 1, name: '1진료팀', doctors: [{ staffId: DOC, staffName: '홍의사' }] }] },
+      payload: { teams: [{ id: 1, name: '1팀', doctors: [{ staffId: DOC, staffName: '홍담당' }] }] },
     },
   })
   mocks.getSiteWorkHours.mockResolvedValue({
@@ -126,7 +126,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   setActivePinia(createPinia())
   const staff = useStaffStore()
-  staff.doctors.push({ id: `${DOC}`, text: '홍의사', staffId: DOC } as any)
+  staff.doctors.push({ id: `${DOC}`, text: '홍담당', staffId: DOC } as any)
   setupMocks()
 })
 
@@ -229,7 +229,7 @@ describe('공휴일 — 체크박스 1개, 미설정은 사업장 값을 상속�
     expect(state.staffHolidayOff.get(OWNER)).toBe('N')
   })
 
-  it('사업장이 공휴일에 진료해도 담당자만 휴무로 정할 수 있다', async () => {
+  it('사업장이 공휴일에 운영해도 담당자만 휴무로 정할 수 있다', async () => {
     const wrapper = await mountSetting()
     const state = wrapper.vm.$.setupState
     state.setHolidayOffFor(OWNER, true)
@@ -260,15 +260,15 @@ describe('우측 뷰어 — 선택한 대상으로 판정하고 미설정은 사
   })
 
   /* S3 에서 확정된 판정이다(offDayRules §4-2 3단계): 담당자가 그 요일 운영시간을 갖고 있으면
-   *   '진료로 정한 것'으로 보아 상속 단계로 내려가지 않는다. 그래서 사업장이 임시휴무로
-   *   지정한 날에도 그 담당자는 진료로 표시된다.
+   *   '운영으로 정한 것'으로 보아 상속 단계로 내려가지 않는다. 그래서 사업장이 임시휴무로
+   *   지정한 날에도 그 담당자는 운영으로 표시된다.
    *   ✅R11 확정(2026-08-20) — **사업장이 휴무가어도 담당자가 휴무가 아니면 담당자를 따른다.**
    *   운영시간 탭 잠금(isWeekdayClosed)과 보드(useSchedulerRules)도 이 규칙으로 맞췄다. 셋이 같은 답을 낸다. */
   it('담당자가 그 요일 운영시간을 갖고 있으면 사업장 임시휴무를 상속하지 않는다 (S3 판정)', async () => {
     setupMocks(
       [{
         staffId : DOC,
-        staffName         : '홍의사',
+        staffName         : '홍담당',
         times          : [{ dayCd: MON, staffOpenHm: '1300', staffCloseHm: '1900' }],
         monthlyOffRules: [],
         holidayOpenYn     : null,
@@ -283,12 +283,12 @@ describe('우측 뷰어 — 선택한 대상으로 판정하고 미설정은 사
   })
 
   /* R11 — 운영시간 탭 잠금도 같은 규칙을 쓴다. 종전에는 사업장 매주 휴무를 전 담당자에게
-   * 무조건 상속시켜, 같은 요일이 이 탭에선 "휴무(잠김)" · 휴무일 탭 뷰어에선 "진료"로 갈렸다. */
+   * 무조건 상속시켜, 같은 요일이 이 탭에선 "휴무(잠김)" · 휴무일 탭 뷰어에선 "운영"로 갈렸다. */
   it('★사업장 매주 휴무 요일이어도 그 담당자가 운영시간을 정해 뒀으면 잠기지 않는다 (R11)', async () => {
     setupMocks(
       [{
         staffId : DOC,
-        staffName         : '홍의사',
+        staffName         : '홍담당',
         times          : [{ dayCd: MON, staffOpenHm: '1300', staffCloseHm: '1900' }],
         monthlyOffRules: [],
         holidayOpenYn     : null,
@@ -299,12 +299,12 @@ describe('우측 뷰어 — 선택한 대상으로 판정하고 미설정은 사
     const state = wrapper.vm.$.setupState
 
     expect(state.isWeekdayClosed(MON), '사업장 자신은 그 요일 휴무가다').toBe(true)
-    expect(state.isWeekdayClosed(MON, OWNER), '담당자는 진료로 정했으므로 잠기지 않는다').toBe(false)
+    expect(state.isWeekdayClosed(MON, OWNER), '담당자는 운영으로 정했으므로 잠기지 않는다').toBe(false)
   })
 
   it('사업장 매주 휴무 요일에 담당자가 미설정이면 그대로 상속해 잠근다', async () => {
     setupMocks(
-      [{ staffId: DOC, staffName: '홍의사', times: [], monthlyOffRules: [], holidayOpenYn: null }],
+      [{ staffId: DOC, staffName: '홍담당', times: [], monthlyOffRules: [], holidayOpenYn: null }],
       { recurringOffRules: [{ dayCd: MON, repeatTy: 'WEEKLY', monthlyNth: null }] },
     )
     const wrapper = await mountSetting()
@@ -320,7 +320,7 @@ describe('우측 뷰어 — 선택한 대상으로 판정하고 미설정은 사
     setupMocks(
       [{
         staffId : DOC,
-        staffName         : '홍의사',
+        staffName         : '홍담당',
         times          : [{ dayCd: THU, staffOpenHm: null, staffCloseHm: null }],   // 목요일 매주 휴무
         monthlyOffRules: [],
         holidayOpenYn     : null,
@@ -340,14 +340,14 @@ describe('우측 뷰어 — 선택한 대상으로 판정하고 미설정은 사
     expect(state.isWeekdayClosed(FRI, OWNER), '사업장 휴무요일은 상속하지 않는다').toBe(false)
     expect(state.isWeekdayClosed(SUN), '사업장 자신은 그대로 휴무가다').toBe(true)
     /* 우측 월 캘린더와 같은 답이어야 한다 — 2026-08-07 은 금요일 */
-    expect(state.isDisplayedOffFor(OWNER, dayjs('2026-08-07')), '달력도 그 금요일을 진료로 그린다').toBe(false)
+    expect(state.isDisplayedOffFor(OWNER, dayjs('2026-08-07')), '달력도 그 금요일을 운영으로 그린다').toBe(false)
   })
 
   it('매월 N번째 휴무만 정한 담당자도 사업장 휴무요일에서 벗어난다', async () => {
     setupMocks(
       [{
         staffId : DOC,
-        staffName         : '홍의사',
+        staffName         : '홍담당',
         times          : [],
         monthlyOffRules: [{ dayCd: WED, monthlyNth: 3 }],
         holidayOpenYn     : null,
@@ -388,7 +388,7 @@ describe('달력 드래그 — 담당자 일자 지정은 운영시간 override 
     expect(state.isDisplayedOffFor(OWNER, dayjs(MON_3RD))).toBe(true)
   })
 
-  it('★진료로 뒤집으면 운영시간이 채워진다 — 빈 지정은 휴무와 구분되지 않는다', async () => {
+  it('★운영으로 뒤집으면 운영시간이 채워진다 — 빈 지정은 휴무와 구분되지 않는다', async () => {
     setupMocks([], { offDates: [MON_1ST] })
     const wrapper = await mountSetting()
     const state = wrapper.vm.$.setupState
@@ -401,13 +401,13 @@ describe('달력 드래그 — 담당자 일자 지정은 운영시간 override 
   })
 
   it('채울 값은 담당자 자신의 그 요일 운영시간이 먼저다', async () => {
-    /* 공휴일 휴무 상태에서 진료로 뒤집는다 —
+    /* 공휴일 휴무 상태에서 운영으로 뒤집는다 —
      * 담당자가 그 요일(토) 운영시간을 갖고 있으므로 그 값이 채워져야 한다.
      * ★공휴일 휴무는 담당자 자신의 값('N')으로 만든다 — 사업장 공휴일 휴무는 상속되지 않는다(§4-2). */
     setupMocks(
       [{
         staffId : DOC,
-        staffName         : '홍의사',
+        staffName         : '홍담당',
         times          : [{ dayCd: SAT, staffOpenHm: '1300', staffCloseHm: '1900' }],
         monthlyOffRules: [],
         holidayOpenYn     : 'N',
@@ -446,7 +446,7 @@ describe('달력 드래그 — 담당자 일자 지정은 운영시간 override 
      * 지정을 만들지 않고 넘어간 날만 사업장 지정으로 되살아나 같은 드래그의 결과가 갈린다.
      * 지우는 조작은 칩의 × 하나로 둔다. */
     expect(state.workingHoursOverridesByOwner.get(OWNER).has(MON_3RD), '지정이 남는다').toBe(true)
-    expect(state.isDisplayedOffFor(OWNER, dayjs(MON_3RD)), '진료로 되돌아간다').toBe(false)
+    expect(state.isDisplayedOffFor(OWNER, dayjs(MON_3RD)), '운영으로 되돌아간다').toBe(false)
   })
 })
 
@@ -491,7 +491,7 @@ describe('조회 — 서버 값이 그대로 컨트롤 상태가 된다', () => 
     setupMocks([
       {
         staffId : DOC,
-        staffName         : '홍의사',
+        staffName         : '홍담당',
         times          : [],
         monthlyOffRules: [{ dayCd: MON, monthlyNth: 3 }, { dayCd: MON, monthlyNth: 1 }],
         holidayOpenYn     : 'N',
@@ -510,7 +510,7 @@ describe('조회 — 서버 값이 그대로 컨트롤 상태가 된다', () => 
     setupMocks([
       {
         staffId : DOC,
-        staffName         : '홍의사',
+        staffName         : '홍담당',
         times          : [],
         monthlyOffRules: [{ dayCd: MON, monthlyNth: 3 }],
         holidayOpenYn     : 'Y',
@@ -524,11 +524,11 @@ describe('조회 — 서버 값이 그대로 컨트롤 상태가 된다', () => 
 
 
 /* '매주'와 '매월 1~5번째 전부'는 같은 결과(쉬지 않는 주가 없다)라 화면이 같게 말해야 한다 — 사업장 축은
- * 표기·잠금·저장(진료행 제외)이 함께 가는 것을 dayState 테스트가 고정했다. 담당자 축은 잠금까지만 고정돼 있어
+ * 표기·잠금·저장(운영행 제외)이 함께 가는 것을 dayState 테스트가 고정했다. 담당자 축은 잠금까지만 고정돼 있어
  * 저장 표현을 여기서 잰다. 담당자의 "휴무"은 행 제외가 아니라 null 행이다(제외 = 미설정 = 기관 상속). */
 describe('담당자 — 매월 1~5번째 전부인 요일의 저장 표현', () => {
   const wedTimes = [{ dayCd: WED, staffOpenHm: '0900', staffCloseHm: '1300' }]
-  const staffWithWed = () => [{ staffId: DOC, staffName: '홍의사', times: wedTimes, monthlyOffRules: [], holidayOpenYn: null }]
+  const staffWithWed = () => [{ staffId: DOC, staffName: '홍담당', times: wedTimes, monthlyOffRules: [], holidayOpenYn: null }]
 
   // 기대값 출처: 잠금·규칙 5행은 isEveryWeekOff 정책(offDayRules) — 고른 대로 저장, 매주로 바꿔 쓰지 않는다.
   it('운영시간이 있는 요일에 다섯 개를 전부 걸면 잠기고, 규칙은 다섯 행 그대로 나간다', async () => {
@@ -544,10 +544,10 @@ describe('담당자 — 매월 1~5번째 전부인 요일의 저장 표현', () 
       .toEqual([1, 2, 3, 4, 5].map(monthlyNth => ({ dayCd: WED, monthlyNth })))
   })
 
-  // 기대값 출처: 정책 결정(2026-09-07) — 매주 휴무는 그 요일 진료행을 null 로, 매월 N번째 휴무는 다섯 개를
-  // 전부 골랐어도 진료행을 그대로 보낸다. 잠금·표기는 같지만 저장 표현은 다른 것이 맞다: 매월 규칙은
-  // 운영시간 위에 얹힌 휴무가라 규칙을 풀면 시간이 그대로 살아나야 하고, 매주는 그 요일 자체를 비운 것이다.
-  it('진료행은 시간을 실은 채 나간다 — 매주 경로(null 행)와 다르게 두는 것이 규칙이다', async () => {
+  // 기대값 출처: 정책 결정(2026-09-07) — 매주 휴무는 그 요일 운영행을 null 로, 매월 N번째 휴무는 다섯 개를
+  // 전부 골랐어도 운영행을 그대로 보낸다. 잠금·표기는 같지만 저장 표현은 다른 것이 맞다: 매월 규칙은
+  // 운영시간 위에 얹힌 휴무라 규칙을 풀면 시간이 그대로 살아나야 하고, 매주는 그 요일 자체를 비운 것이다.
+  it('운영행은 시간을 실은 채 나간다 — 매주 경로(null 행)와 다르게 두는 것이 규칙이다', async () => {
     setupMocks(staffWithWed())
     const wrapper = await mountSetting()
     const state = wrapper.vm.$.setupState

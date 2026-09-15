@@ -1,5 +1,5 @@
 /**
- * 커스텀 병원 스케줄러 - 핵심 타입 정의
+ * 커스텀 사업장 스케줄러 - 핵심 타입 정의
  *
  * 이 파일은 스케줄러 엔진의 모든 타입을 정의한다.
  * Layout 엔진, Interaction Layer, Composable 전체에서 공유된다.
@@ -67,7 +67,7 @@ export interface LayoutInput {
   availableWidth: number
   /** 조회 기간의 총 날짜 수 */
   dayCount: number
-  /** 하루당 leaf 컬럼 수 (필터된 의사 수 등) */
+  /** 하루당 leaf 컬럼 수 (필터된 담당자 수 등) */
   leafColumnCountPerDay: number
 }
 
@@ -88,10 +88,10 @@ export interface LayoutResult {
 }
 
 // ═══════════════════════════════════════════════════════════
-// 리소스 (의사, 체어 등)
+// 리소스 (담당자, 체어 등)
 // ═══════════════════════════════════════════════════════════
 
-/** 의사 */
+/** 담당자 */
 export interface DoctorResource {
   id: string
   name: string
@@ -139,7 +139,7 @@ export interface HeaderNode {
   leafMeta?: HeaderLeafMeta
   /**
    * 날짜(date) 노드 전용 — 공휴일 휴무 라벨('휴무'). 날짜 행에 빨간색으로 표기.
-   * 공휴일이면서 '공휴일 휴무' 설정(holidayClosedYn)이 켜진 날에만 채워진다 — 공휴일에도 진료하는 병원이 있다.
+   * 공휴일이면서 '공휴일 휴무' 설정(holidayClosedYn)이 켜진 날에만 채워진다 — 공휴일에도 운영하는 사업장이 있다.
    */
   holidayLabel?: string
 }
@@ -547,7 +547,7 @@ export interface BlockedRange {
   label: string
 }
 
-/** 의사 상태 */
+/** 담당자 상태 */
 export type DoctorStatus = 'working' | 'off' | 'vacation'
 
 /** 유효성 검증 입력 */

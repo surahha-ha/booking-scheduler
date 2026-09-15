@@ -8,7 +8,7 @@
  *
  * 고정하는 계약:
  *   ① 전체 숫자 = 그려진 카드(rects) 수. 창 안이지만 화면 밖 날짜의 예약은 세지 않는다
- *   ② 예약장부의 진료완료(01)는 카드가 '예약'으로 그려지므로 '예약' 숫자에 든다
+ *   ② 예약장부의 완료(01)는 카드가 '예약'으로 그려지므로 '예약' 숫자에 든다
  *   ③ 상태 필터는 재조회 없이 화면에서 걸리고, 켠 상태의 숫자 = 그려진 카드 수, 숨긴 상태의 숫자는 남는다
  *   ④ 날짜를 옮기면 목록·컬럼이 바뀌고 숫자도 그 화면의 카드로 바뀐다
  *   ⑤ 숫자는 검색필터 컴포넌트에 props 로 흘러간다
@@ -27,7 +27,7 @@ import SchedulerSearchFilter from '@/pages/desktop/scheduleBoard/components/Sche
 import { useSchedulerFilterStore } from '@/stores/useSchedulerFilterStore'
 
 const TODAY = '2030-03-06'
-const DOCTOR = '김원장'
+const DOCTOR = '김대표'
 const FAR = dayjs(TODAY).add(9, 'day').format('YYYY-MM-DD') // 창 안(담당자 1명이면 창은 전체칸+4 일 이상) · 화면 밖
 
 function bookItem(id: number, ymd: string, status: string, memberYn = 'N', hour = 10) {
@@ -54,7 +54,7 @@ function payloadOf(items: ReturnType<typeof bookItem>[]) {
 const ITEMS = [
   bookItem(1, TODAY, '00', 'Y', 10),
   bookItem(2, TODAY, '03', 'N', 11),
-  bookItem(3, TODAY, '01', 'N', 13), // 진료완료 — 예약장부에서는 '예약' 카드
+  bookItem(3, TODAY, '01', 'N', 13), // 완료 — 예약장부에서는 '예약' 카드
   bookItem(4, dayjs(TODAY).add(1, 'day').format('YYYY-MM-DD'), '00', 'N', 10),
   bookItem(5, FAR, '03', 'N', 10), // 창 안 · 화면 밖 — 신고의 주인공
   bookItem(6, TODAY, '03', 'N', 10), // 1번과 같은 시각에 겹치는 취소 — 칸이 2레인이 된다(③의 폭 고정 검증용)
@@ -73,7 +73,7 @@ async function advance(ms: number) {
 }
 
 async function mountPage() {
-  // 진료장부는 표시가 1일로 강제돼 창과 화면이 갈리지 않는다 — 여러 날을 그리는 예약장부에서 본다.
+  // 방문장부는 표시가 1일로 강제돼 창과 화면이 갈리지 않는다 — 여러 날을 그리는 예약장부에서 본다.
   useSchedulerFilterStore().setDataType('APPOINTMENT', false)
   const wrapper = shallowMount(SchedulerV3Page)
   await flushPromises()
@@ -115,7 +115,7 @@ describe('SchedulerV3Page — 숫자는 그려진 카드에서 센다', () => {
     expect(s.boardStatistics.state['취소']).toBe(2) // 화면 밖 9일 뒤 취소(5)는 빠진다 — 2·6 만
   })
 
-  it('② 예약장부의 진료완료 카드는 예약 숫자에 든다 · 회원 Y/N', async () => {
+  it('② 예약장부의 완료 카드는 예약 숫자에 든다 · 회원 Y/N', async () => {
     const wrapper = await mountPage()
     const s = setup(wrapper)
 

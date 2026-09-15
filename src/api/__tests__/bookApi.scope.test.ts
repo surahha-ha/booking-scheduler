@@ -1,6 +1,6 @@
 // 상태변경/삭제 요청에 화면 구분(type)이 실리는지에 대한 회귀 가드.
 // BE 는 type 을 못 받으면 RESERVATION_USE_TYPE 를 'CMM' 으로 덮어쓸 수 있어,
-// 진료 화면에서 등록한 예약이 상태 변경 후 예약 화면에도 나타났었다.
+// 방문 화면에서 등록한 예약이 상태 변경 후 예약 화면에도 나타났었다.
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 const hoisted = vi.hoisted(() => ({api: null as any}));

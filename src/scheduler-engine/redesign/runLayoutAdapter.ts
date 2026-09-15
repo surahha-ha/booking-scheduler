@@ -1,9 +1,9 @@
 /**
  * V2 스케줄러 엔진 재설계 — store/api shape → RunLayoutInput adapter (격리 모듈, 라이브 미배선)
  *
- * 설계 기준: src/scheduler-engine/REDESIGN.md + 의사 식별자 결정(2026-06-01).
+ * 설계 기준: src/scheduler-engine/REDESIGN.md + 담당자 식별자 결정(2026-06-01).
  * 핵심 결정:
- *  - 의사 그룹핑 키 = **이름**(안정 ID 부재 — 예약은 STAFF_NAME만, 외부 순번/로컬 STAFF_ID 모두 churn).
+ *  - 담당자 그룹핑 키 = **이름**(안정 ID 부재 — 예약은 STAFF_NAME만, 외부 순번/로컬 STAFF_ID 모두 churn).
  *  - 팀 선택 = **이름 필터 오버레이**(팀 멤버 이름집합으로 컬럼 필터, 컬럼식별자만 staffId, 미매칭 예약 숨김).
  *  - 조인 키는 `resolveDoctorKey()` 단일함수로 추상화 → 미래 안정 ID 전환 시 한 곳만 교체.
  *  - 운영시간: AS-IS = 기관 weekly(open 단일범위)를 휴게로 split, TO-BE = 담당자별 WorkHours(오전/오후/야간) 직매핑.
@@ -60,7 +60,7 @@ export interface DailyScheduleSource {
 export type WeeklySource = Partial<Record<number, DailyScheduleSource>>
 
 /** siteApi WorkHoursRow (B: 의료인주간, 시간 "HHmm", staff* 접두).
- *  진료는 시작~종료 단일 구간. 휴게는 담당자가 갖지 않고 같은 요일의 기관 휴게를 따른다. */
+ *  운영은 시작~종료 단일 구간. 휴게는 담당자가 갖지 않고 같은 요일의 기관 휴게를 따른다. */
 export interface WorkHoursRowSource {
   dayCd: number
   staffOpenHm: string | null
@@ -77,7 +77,7 @@ export interface BuildRunLayoutInputParams {
   settings: ReservationSettingsInput
   viewState: ViewStateInput
   env: EnvInput
-  /** name 모드 의사 소스 (staffStore.doctors) */
+  /** name 모드 담당자 소스 (staffStore.doctors) */
   doctors: DoctorSource[]
   appts: ApptSource[]
   /** AS-IS 기관 weekly 운영시간 */
@@ -86,7 +86,7 @@ export interface BuildRunLayoutInputParams {
   holiday?: DailyScheduleSource | null
   /** 날짜 → 그 날짜에 저장된 사업장 운영시간 (staffStore.hospitalRules.dailyByDate). */
   dailyByDate?: Record<string, DailyScheduleSource>
-  /** 공휴일이면서 진료하는 날 "YYYY-MM-DD" (staffStore.hospitalRules.holidayOpenDates). */
+  /** 공휴일이면서 운영하는 날 "YYYY-MM-DD" (staffStore.hospitalRules.holidayOpenDates). */
   holidayDates?: string[]
   /**
    * name 모드 담당자별 요일 운영시간(기관 휴게 얹힌 weekly). key = unit.doctorId(=replaceDoctorName(이름)).
@@ -201,7 +201,7 @@ export function dailyScheduleToUnitHours(day: DailyScheduleSource | undefined): 
 /**
  * 담당자 WorkHoursRow(시작~종료 단일구간) → UnitHours.
  * 담당자는 휴게를 소유하지 않으므로 **같은 요일의 기관 휴게**(institutionDay)를 빼서 세션을 나눈다
- * — 의사 컬럼에도 점심/저녁 음영이 그려진다.
+ * — 담당자 컬럼에도 점심/저녁 음영이 그려진다.
  */
 export function workRowToUnitHours(
   row: WorkHoursRowSource | undefined,

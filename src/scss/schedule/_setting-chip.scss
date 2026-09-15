@@ -7,7 +7,7 @@
  * `&` 는 include 위치에서 풀리므로 **양쪽 모두 `.schedulerTreatmentSetting` 블록 안에서** include 한다.
  * 모디파이어(--member/--inline·선택·드래그 상태)는 쓰는 쪽에만 있으므로 각자 갖는다. */
 @mixin scheduler-setting-chip-base {
-  /* 칩 형태 리스트 (반복 휴무, 특정일자, 의사) */
+  /* 칩 형태 리스트 (반복 휴무, 특정일자, 담당자) */
   &__chipList {
     list-style: none;
     margin: 0;

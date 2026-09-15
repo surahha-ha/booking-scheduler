@@ -27,7 +27,7 @@ const MEMBER_TYPE_TO_API: Record<MemberType, boolean> = {
     N: false,
 };
 
-// Status -> API code (예약 + 진료 필터 키 모두 포함)
+// Status -> API code (예약 + 방문 필터 키 모두 포함)
 const STATUS_TO_API: Record<AppointmentStatusType | TreatmentStatusType, string> = {
     APPOINTMENT: '00',
     CANCEL: '03',
@@ -88,7 +88,7 @@ export function toStatusCodes(statusKeys: (AppointmentStatusType | TreatmentStat
 }
 
 /**
- * 표시 상태 코드 → 그 장부의 상태 칩 라벨('예약'·'취소'·'접수대기'…). 칩이 없는 코드는 null.
+ * 표시 상태 코드 → 그 장부의 상태 칩 라벨('예약'·'취소'·'대기'…). 칩이 없는 코드는 null.
  * 화면 통계가 카드를 칩별로 세는 키 — 칩 라벨과 통계 키가 같은 상수(APPOINTMENT/TREATMENT_STATUS_TYPE)에서 나온다.
  */
 export function toStatusLabel(displayStatus: string, dataType: DataType): string | null {
@@ -98,13 +98,13 @@ export function toStatusLabel(displayStatus: string, dataType: DataType): string
     return key ? labels[key] : null;
 }
 
-/** 예약 화면이 상태로 구분해 보여주는 코드. 그 외(진료완료·미이행·접수대기)는 예약(00)처럼 그린다. */
+/** 예약 화면이 상태로 구분해 보여주는 코드. 그 외(완료·미이행·대기)는 예약(00)처럼 그린다. */
 const APPOINTMENT_DISPLAY_STATUSES = new Set(['00', '03']);
 
 /**
  * 화면에 표시할 상태 코드.
  * 예약 화면(APPOINTMENT)은 예약(00)·취소(03)만 색/라벨로 구분하고, 나머지 상태는 예약(00)으로 표기한다.
- * 진료 화면(TREATMENT)은 실제 상태를 그대로 쓴다. 데이터(실제 status)는 바꾸지 않는다 — 표시 전용.
+ * 방문 화면(TREATMENT)은 실제 상태를 그대로 쓴다. 데이터(실제 status)는 바꾸지 않는다 — 표시 전용.
  */
 export function toDisplayStatus(status: string | undefined, dataType: DataType): string {
     const s = status ?? '';
@@ -134,7 +134,7 @@ export function datePickerYearRange(start: number, end: number) {
     return [y - start, y + end];
 }
 
-/** 진료 팀 표시 필터용 의사 소스 (식별자 d.id = 이름). */
+/** 팀 표시 필터용 담당자 소스 (식별자 d.id = 이름). */
 export interface VisibleDoctorSource {
     id: string;
     text: string;
@@ -145,8 +145,8 @@ interface TeamSource {
 }
 
 /**
- * 의사 이름 키 정규화 — 특수문자·숫자 제거(staffStore replaceDoctorName 과 동일) + 공백 압축 + trim.
- * 의사 id(담당자명 정규화)와 팀멤버 staffName(raw)을 같은 기준으로 비교하기 위함.
+ * 담당자 이름 키 정규화 — 특수문자·숫자 제거(staffStore replaceDoctorName 과 동일) + 공백 압축 + trim.
+ * 담당자 id(담당자명 정규화)와 팀멤버 staffName(raw)을 같은 기준으로 비교하기 위함.
  * ⚠️ 숫자가 제거되므로 팀명 비교에는 쓰면 안 된다('1담당 팀'/'2담당 팀'이 '담당 팀'으로 충돌). → normalizeTeamName 사용.
  */
 export function normalizeName(s: string | null | undefined): string {
@@ -155,7 +155,7 @@ export function normalizeName(s: string | null | undefined): string {
 
 /**
  * 팀명 키 정규화 — 공백 압축 + trim 만(숫자·문자 보존).
- * 팀명은 숫자로만 구분되는 경우('1담당 팀'/'2담당 팀')가 흔해 의사용 normalizeName(숫자 제거)을 쓰면
+ * 팀명은 숫자로만 구분되는 경우('1담당 팀'/'2담당 팀')가 흔해 담당자용 normalizeName(숫자 제거)을 쓰면
  * 서로 다른 팀이 같은 키로 붕괴 → 첫 팀만 매칭되는 버그. 팀명은 셀렉트 옵션값(t.name)과 동일 출처라 보존 비교.
  */
 export function normalizeTeamName(s: string | null | undefined): string {
@@ -163,13 +163,13 @@ export function normalizeTeamName(s: string | null | undefined): string {
 }
 
 /**
- * 진료 팀 표시 필터 (이름 키 통일 — 팀 = 표시 오버레이, 데이터 KEY 아님).
+ * 팀 표시 필터 (이름 키 통일 — 팀 = 표시 오버레이, 데이터 KEY 아님).
  * 팀 id 도 저장마다 재발급(deactivate+insert)되어 불안정 → 팀명을 안정 키로 사용.
  * - teamName=null/''(미지정) → 담당자 − 모든 팀멤버 이름 (담당자 기본 순서 유지)
  * - teamName=특정팀 → 그 팀멤버를 **팀 설정 순서(SORT_ORD)** 대로 반환
  *     (team.doctors 는 BE 가 ORDER BY SORT_ORD 로 내려줌 → 검색필터·예약팝업·보드 헤더가 동일 순서).
  *     ⚠️ 담당자 배열 순서가 아니라 team.doctors 순서를 따라야 "담당자 순서 변경"이 화면에 반영됨.
- * 팀명은 normalizeTeamName(숫자 보존), 의사 이름은 normalizeName(숫자 제거)으로 매칭. 팀 변경은 예약 데이터에 무영향.
+ * 팀명은 normalizeTeamName(숫자 보존), 담당자 이름은 normalizeName(숫자 제거)으로 매칭. 팀 변경은 예약 데이터에 무영향.
  */
 export function resolveVisibleDoctors<T extends VisibleDoctorSource>(
     teamName: string | null,

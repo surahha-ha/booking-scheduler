@@ -20,7 +20,7 @@ export interface SessionRange {
   end: number
 }
 
-/** 한 (요일|의사) 의 운영시간 세션 + 휴게 */
+/** 한 (요일|담당자) 의 운영시간 세션 + 휴게 */
 export interface UnitHours {
   morning?: SessionRange
   afternoon?: SessionRange
@@ -36,7 +36,7 @@ export type DataType = 'APPOINTMENT' | 'TREATMENT'
 /**
  * 칸수배정 모델.
  * - 'A'(기본·라이브): 레인폭 = min(maxConcurrent, N). 동시겹침 수만큼 — 화면밀도↑, 겹침변동 시 밀림.
- * - 'B2'           : 레인폭 = N 고정(빈 의사도 N). 밀림 0·균등컬럼, 대신 빈 레인 상시·페이징 잦음.
+ * - 'B2'           : 레인폭 = N 고정(빈 담당자도 N). 밀림 0·균등컬럼, 대신 빈 레인 상시·페이징 잦음.
  */
 export type LayoutMode = 'A' | 'B2'
 
@@ -63,18 +63,18 @@ export interface ReservationSettingsInput {
 
 /** 운영일정 설정 (staffStore ← effective-rules + work-hours). */
 export interface SiteInput {
-  /** 의사별·요일별 운영시간. key = doctorId → weekday(0~6) → UnitHours (TO-BE WorkHours) */
+  /** 담당자별·요일별 운영시간. key = doctorId → weekday(0~6) → UnitHours (TO-BE WorkHours) */
   hoursByDoctor?: Record<string, Record<number, UnitHours>>
   /** 요일별 운영시간. key = 0(일)~6(토). hoursByDoctor 미존재 시 fallback (AS-IS 기관공통) */
   hoursByWeekday?: Record<number, UnitHours>
-  /** 공휴일 운영시간(사업장 한 세트, 요일 축 없음). holidayDates 인 날은 요일·의사 시간 대신 이걸 쓴다. */
+  /** 공휴일 운영시간(사업장 한 세트, 요일 축 없음). holidayDates 인 날은 요일·담당자 시간 대신 이걸 쓴다. */
   holidayHours?: UnitHours
   /** 날짜("YYYY-MM-DD") → 그 날짜에 저장된 사업장 운영시간(지정일자). 요일·공휴일보다 우선한다. */
   dateHours: Record<string, UnitHours>
-  /** 의사별 특정일자 운영시간. key = doctorId → 날짜("YYYY-MM-DD") → UnitHours.
+  /** 담당자별 특정일자 운영시간. key = doctorId → 날짜("YYYY-MM-DD") → UnitHours.
    *  담당자 축 안에서 일자 > 요일이고 담당자가 사업장보다 먼저라, 있으면 **모든 것보다 먼저** 쓴다. */
   dateHoursByDoctor?: Record<string, Record<string, UnitHours>>
-  /** 공휴일이면서 진료하는 날 "YYYY-MM-DD". 휴무 공휴일은 여기 없다. */
+  /** 공휴일이면서 운영하는 날 "YYYY-MM-DD". 휴무 공휴일은 여기 없다. */
   holidayDates?: string[]
   /** 휴무 규칙 (MR-1 범위 밖 — 구조만 보존) */
   closed?: {
@@ -95,7 +95,7 @@ export interface ViewStateInput {
   slotDivision: number
   /** 칸수조절 드래그 override (state-only). key = unit.key */
   customSlots?: Record<string, number>
-  /** 의사컬럼 페이지 인덱스 (구 모델 — 페이지 단위 선택). slotOffset 미전달 시 fallback. */
+  /** 담당자컬럼 페이지 인덱스 (구 모델 — 페이지 단위 선택). slotOffset 미전달 시 fallback. */
   doctorPageIdx?: number
   /**
    * 표시 윈도우 시작 sub-column offset (신 date-anchored 모델).
@@ -123,7 +123,7 @@ export interface EnvInput {
   availableWidth: number
 }
 
-/** 의사 목록 (active-doctors). buildUnitSequence 입력. */
+/** 담당자 목록 (active-doctors). buildUnitSequence 입력. */
 export interface DoctorInput {
   id: string
   name: string
@@ -145,11 +145,11 @@ export interface LayoutConfig {
   // ── 운영일정 설정 ──
   hoursByDoctor: Record<string, Record<number, UnitHours>>
   hoursByWeekday: Record<number, UnitHours>
-  /** 의사별 특정일자 운영시간(doctorId → 날짜 → UnitHours). resolveUnitHours 최우선. 미전달 시 {}. */
+  /** 담당자별 특정일자 운영시간(doctorId → 날짜 → UnitHours). resolveUnitHours 최우선. 미전달 시 {}. */
   dateHoursByDoctor?: Record<string, Record<string, UnitHours>>
   /** 공휴일 운영시간(한 세트). 미설정이면 {} → resolveUnitHours 가 요일 축으로 폴백. */
   holidayHours: UnitHours
-  /** 공휴일이면서 진료하는 날. 개수가 연 20건 남짓이라 배열 순회로 충분. */
+  /** 공휴일이면서 운영하는 날. 개수가 연 20건 남짓이라 배열 순회로 충분. */
   holidayDates: string[]
   closed: {
     offRules: unknown[]
@@ -182,7 +182,7 @@ export interface LayoutConfig {
 // Unit / Band / Rect — REDESIGN §4, §8
 // ════════════════════════════════════════════════════════════
 
-/** (날짜,의사) 단위. buildUnitSequence 출력. */
+/** (날짜,담당자) 단위. buildUnitSequence 출력. */
 export interface Unit {
   /** `${date}__${doctorId}` */
   key: string

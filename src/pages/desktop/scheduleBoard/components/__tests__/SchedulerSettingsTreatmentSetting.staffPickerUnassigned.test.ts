@@ -3,8 +3,8 @@
  *
  * 팀 + 구성원 설정 — 구성원 picker 에서 "미지정" 은 보이지 않는다 (2026-08-28).
  *
- * "미지정" 은 사람이 아니라 사업장 설정 경유 예약의 담당의 자리표시자이고, BE 가 병원마다 담당자 원장에 1회 선등록한다.
- * 팀 구성원으로 배정되면 "미지정 예약"(= 원장에는 있으나 팀 멤버가 아닌 건)이라는 정의가 무너져
+ * "미지정" 은 사람이 아니라 사업장 설정 경유 예약의 담당의 자리표시자이고, BE 가 사업장마다 담당자 대표에 1회 선등록한다.
+ * 팀 구성원으로 배정되면 "미지정 예약"(= 대표에는 있으나 팀 멤버가 아닌 건)이라는 정의가 무너져
  * 미지정 데이터 설정이 대상을 잃는다. 그래서 목록에서 감춘다.
  */
 
@@ -52,9 +52,9 @@ import SchedulerSettingsTreatmentSetting from '@/pages/desktop/scheduleBoard/com
 import { useStaffStore } from '@/stores/staffStore'
 
 // ── fixture ────────────────────────────────────────────────
-const A1 = 101          // 보철팀 구성원
+const A1 = 101          // 관리팀 구성원
 const C1 = 301          // 어느 팀에도 없는 담당자
-const UNASSIGNED = 999  // 원장에 선등록된 "미지정"
+const UNASSIGNED = 999  // 대표에 선등록된 "미지정"
 const TEAM_A = '1'
 
 async function mountSetting() {
@@ -72,7 +72,7 @@ beforeEach(() => {
 
   const staff = useStaffStore()
   staff.doctors.push(
-    { id: '김의사', text: '김의사', staffId: A1 } as any,
+    { id: '김담당', text: '김담당', staffId: A1 } as any,
     { id: '미지정', text: '미지정', staffId: UNASSIGNED } as any,
     { id: '신입일', text: '신입일', staffId: C1 } as any,
   )
@@ -83,8 +83,8 @@ beforeEach(() => {
       payload: {
         teams: [{
           id     : Number(TEAM_A),
-          name   : '보철팀',
-          doctors: [{ staffId: A1, staffName: '김의사' }],
+          name   : '관리팀',
+          doctors: [{ staffId: A1, staffName: '김담당' }],
         }],
       },
     },
@@ -112,10 +112,10 @@ describe('구성원 picker — "미지정" 제외', () => {
     await wrapper.vm.$nextTick()
 
     const labels = wrapper.findAll('.schedulerTreatmentSetting__staffOption').map(b => b.text())
-    expect(labels, '"미지정" 만 빠지고 나머지는 유지').toEqual(['김의사', '신입일'])
+    expect(labels, '"미지정" 만 빠지고 나머지는 유지').toEqual(['김담당', '신입일'])
   })
 
-  it('원장(staffStore.doctors)에는 "미지정" 이 그대로 남는다 — 목록에서만 감춘다', async () => {
+  it('대표(staffStore.doctors)에는 "미지정" 이 그대로 남는다 — 목록에서만 감춘다', async () => {
     const wrapper = await mountSetting()
     const staff = useStaffStore()
 
@@ -128,7 +128,7 @@ describe('구성원 picker — "미지정" 제외', () => {
     const state = wrapper.vm.$.setupState
 
     // 과거에 배정돼 팀 구성원으로 남아 있는 상태
-    state.teams = [{ id: TEAM_A, name: '보철팀', doctorIds: [A1, UNASSIGNED] }]
+    state.teams = [{ id: TEAM_A, name: '관리팀', doctorIds: [A1, UNASSIGNED] }]
     state.openStaffPickerFor(TEAM_A, { top: 0, left: 0 })
     await wrapper.vm.$nextTick()
 

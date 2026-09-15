@@ -57,8 +57,8 @@ import SchedulerSettingsTreatmentSetting from '@/pages/desktop/scheduleBoard/com
 import { useStaffStore } from '@/stores/staffStore'
 
 // ── fixture ────────────────────────────────────────────────
-const A1 = 101, A2 = 102, A3 = 103   // 보철팀 (순서: A1 → A2 → A3)
-const B1 = 201                        // 교정팀
+const A1 = 101, A2 = 102, A3 = 103   // 관리팀 (순서: A1 → A2 → A3)
+const B1 = 201                        // 점검팀
 /* 서버는 팀 id 를 숫자로 주지만 hydrateFromServer 가 String(t.id) 로 담는다 — 화면 상태 기준은 문자열이다. */
 const TEAM_A = '1'
 const TEAM_B = '2'
@@ -104,10 +104,10 @@ beforeEach(() => {
 
   const staff = useStaffStore()
   staff.doctors.push(
-    { id: `${A1}`, text: '김의사', staffId: A1 } as any,
+    { id: `${A1}`, text: '김담당', staffId: A1 } as any,
     { id: `${A2}`, text: '이직원', staffId: A2 } as any,
     { id: `${A3}`, text: '최위생', staffId: A3 } as any,
-    { id: `${B1}`, text: '박의사', staffId: B1 } as any,
+    { id: `${B1}`, text: '박담당', staffId: B1 } as any,
   )
 
   mocks.getTeams.mockResolvedValue({
@@ -115,8 +115,8 @@ beforeEach(() => {
       code   : 'succeed',
       payload: {
         teams: [
-          { id: Number(TEAM_A), name: '보철팀', doctors: members(A1, A2, A3) },
-          { id: Number(TEAM_B), name: '교정팀', doctors: members(B1) },
+          { id: Number(TEAM_A), name: '관리팀', doctors: members(A1, A2, A3) },
+          { id: Number(TEAM_B), name: '점검팀', doctors: members(B1) },
         ],
       },
     },
@@ -259,7 +259,7 @@ describe('구성원이 없는 팀 — 배정 진입점', () => {
         code   : 'succeed',
         payload: {
           teams: [
-            { id: Number(TEAM_A), name: '보철팀', doctors: members(A1, A2, A3) },
+            { id: Number(TEAM_A), name: '관리팀', doctors: members(A1, A2, A3) },
             { id: Number(TEAM_C), name: '빈팀', doctors: [] },
           ],
         },
@@ -280,7 +280,7 @@ describe('구성원이 없는 팀 — 배정 진입점', () => {
     expect(area.exists(), '높이 0 인 빈 ul 만 있으면 겨냥할 자리가 없다').toBe(true)
     expect(area.text()).toContain('클릭하여 직원을 추가해주세요')
 
-    /* 칩 리스트는 구성원이 있는 팀(보철팀) 것 하나뿐이어야 한다 */
+    /* 칩 리스트는 구성원이 있는 팀(관리팀) 것 하나뿐이어야 한다 */
     expect(wrapper.findAll('.schedulerTreatmentSetting__chipList--member').length).toBe(1)
   })
 

@@ -80,7 +80,7 @@ function setupMocks(staff: any[] = [], offRulesPayload: any = {}) {
   mocks.getTeams.mockResolvedValue({
     data: {
       code   : 'succeed',
-      payload: { teams: [{ id: 1, name: '1진료팀', doctors: [{ staffId: DOC, staffName: '홍의사' }] }] },
+      payload: { teams: [{ id: 1, name: '1팀', doctors: [{ staffId: DOC, staffName: '홍담당' }] }] },
     },
   })
   mocks.getSiteWorkHours.mockResolvedValue({
@@ -110,7 +110,7 @@ async function mountSetting() {
 
 /** 그 담당자 행만 있는 staff 응답 한 건 */
 function staffRow(times: any[] = [], monthlyOffRules: any[] = []) {
-  return { staffId: DOC, staffName: '홍의사', times, monthlyOffRules, holidayOpenYn: 'N' }
+  return { staffId: DOC, staffName: '홍담당', times, monthlyOffRules, holidayOpenYn: 'N' }
 }
 
 beforeEach(() => {
@@ -136,7 +136,7 @@ describe('요일별 — 사업장 매주 휴무의 상속', () => {
     }
   })
 
-  it('자기 값을 정해 뒀으면 상속하지 않는다 — 진료로 정한 요일은 체크가 없다', async () => {
+  it('자기 값을 정해 뒀으면 상속하지 않는다 — 운영으로 정한 요일은 체크가 없다', async () => {
     setupMocks(
       [staffRow([{ dayCd: FRI, staffOpenHm: '1300', staffCloseHm: '1900' }])],
       { recurringOffRules: [{ dayCd: FRI, repeatTy: 'WEEKLY', monthlyNth: null }] },
@@ -219,7 +219,7 @@ describe('특정일자 — 사업장 일자 지정의 상속', () => {
     setupMocks([staffRow()], { offDates: [FRI_1ST] })
     const state = (await mountSetting()).vm.$.setupState
 
-    state.toggleRangeOffFor(OWNER, FRI_1ST, FRI_1ST)   // 진료로 뒤집는다
+    state.toggleRangeOffFor(OWNER, FRI_1ST, FRI_1ST)   // 운영으로 뒤집는다
 
     expect(state.dateOverridesFor(OWNER).get(FRI_1ST)).toBe('WORK')
     expect(state.ownsDateOverride(OWNER, FRI_1ST)).toBe(true)
@@ -239,7 +239,7 @@ describe('특정일자 — 사업장 일자 지정의 상속', () => {
     const state = (await mountSetting()).vm.$.setupState
 
     state.selectOffOwner(OWNER)
-    state.toggleRangeOffFor(OWNER, FRI_1ST, FRI_1ST)   // 달력에서 진료로 뒤집는다
+    state.toggleRangeOffFor(OWNER, FRI_1ST, FRI_1ST)   // 달력에서 운영으로 뒤집는다
 
     expect(state.specificDates.find((r: any) => r.startKey === FRI_1ST).locked).toBe(false)
   })
@@ -250,7 +250,7 @@ describe('특정일자 — 사업장 일자 지정의 상속', () => {
 
     const d = dayjs(FRI_1ST)
     state.selectOffOwner(OWNER);
-    state.toggleRangeOffFor(OWNER, FRI_1ST, FRI_1ST)   // 자기 지정(진료)을 만든다
+    state.toggleRangeOffFor(OWNER, FRI_1ST, FRI_1ST)   // 자기 지정(운영)을 만든다
     state.removeSpecificRange({ startDate: d, endDate: d })
 
     expect(state.ownsDateOverride(OWNER, FRI_1ST), '자기 지정이 사라진다').toBe(false)
@@ -272,7 +272,7 @@ describe('특정일자 — 사업장 일자 지정의 상속', () => {
     const state = (await mountSetting()).vm.$.setupState
 
     /* 종전에는 FRI_1ST 만 "어차피 상속으로 휴무"이라며 지정을 만들지 않고 넘어갔고,
-     * 같은 드래그가 앞뒤 날에 지정을 만들면서 일자 축이 넘어가 그 하루만 진료로 되살아났다. */
+     * 같은 드래그가 앞뒤 날에 지정을 만들면서 일자 축이 넘어가 그 하루만 운영으로 되살아났다. */
     state.toggleRangeOffFor(OWNER, '2026-08-06', '2026-08-08')
 
     for (const key of ['2026-08-06', FRI_1ST, '2026-08-08']) {

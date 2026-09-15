@@ -14,7 +14,7 @@ interface RawItem {
     o: number;      // 앵커로부터 offset(일)
     t: string;      // 시작 "HH:MM"
     e: string;      // 종료 "HH:MM"
-    d: string;      // 의사명(정제됨)
+    d: string;      // 담당자명(정제됨)
     p: string;      // 고객명
     h: string;      // 전화
     i: string;      // 통합회원 Y/N
@@ -50,7 +50,7 @@ function dateFromOffset(shiftDays: number, offset: number): Date {
     return d;
 }
 
-/** 의사(컬럼) — 빈도순. name 모드 컬럼 id = 이름. */
+/** 담당자(컬럼) — 빈도순. name 모드 컬럼 id = 이름. */
 export const csvDoctors: DoctorPayload[] = seed.doctors.map((name, idx) => ({
     staffId: idx + 1,
     staffName: name,
@@ -88,7 +88,7 @@ export const csvReservations: BookItem[] = (() => {
             birthDate: member ? '1988-05-20' : null,
             sexDivisionCode: member ? (no % 2 === 0 ? 'M' : 'F') : null,
             createdAt: `${day}T08:00:00`,
-            registeredFrom: 'CMM', // 시드는 전부 예약장부 등록건 — 진료장부에서 직접 등록해야 '당일' 뱃지 확인 가능
+            registeredFrom: 'CMM', // 시드는 전부 예약장부 등록건 — 방문장부에서 직접 등록해야 '당일' 뱃지 확인 가능
             externalYn: 'N',
         } as BookItem;
     });

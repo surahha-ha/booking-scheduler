@@ -85,8 +85,8 @@ const settingPopupVisible = ref(false);
 
 // 호출처 명시값이 우선. 없으면 'auto' = 콘텐츠 주도.
 //
-// 과거에는 진료내용 칩 행 수로 420/500/540/580 을 추정해 내려줬는데, 높이를 바꾸는 요소가
-// 칩 행 말고도 여럿(폼 grid gap × 행수, 담당의사 뱃지 유무, 진료내용 형식오류 안내줄, 진료항목 선택 영역)이라
+// 과거에는 방문내용 칩 행 수로 420/500/540/580 을 추정해 내려줬는데, 높이를 바꾸는 요소가
+// 칩 행 말고도 여럿(폼 grid gap × 행수, 담당자 뱃지 유무, 방문내용 형식오류 안내줄, 서비스 항목 선택 영역)이라
 // 조합에 따라 콘텐츠가 고정 높이를 넘겼고, 문서 순서상 마지막인 .schedulePopupActions(취소/등록)가 잘렸다.
 // 상수를 키우는 방식은 다른 조합에서 재발하므로 높이 산정 자체를 콘텐츠에 맡긴다.
 const effectiveHeight = computed(() => props.height ?? 'auto');
@@ -94,7 +94,7 @@ const effectiveHeight = computed(() => props.height ?? 'auto');
 const emit = defineEmits(['close', 'save', 'modify']);
 const MEMO_MAX_LENGTH = 1000;
 // 항목이 있는 그룹을 고르고 항목을 비워 둔 경우의 안내.
-const TREATMENT_ITEM_REQUIRED_MSG = '선택한 그룹의 진료항목을 선택해주세요.';
+const TREATMENT_ITEM_REQUIRED_MSG = '선택한 그룹의 서비스 항목을 선택해주세요.';
 
 // ============================================================================
 // mode / title
@@ -106,7 +106,7 @@ const isDayViewMode = computed(() => viewMode.value === 'DAY');
 const isTreatmentMode = computed(() => computedDateType.value === 'TREATMENT');
 
 const readOnlyMode = computed(() => {
-  // 진료모드 EDIT: 과거 예약만 readOnly (현재 이후는 수정 가능)
+  // 방문 모드 EDIT: 과거 예약만 readOnly (현재 이후는 수정 가능)
   if (isTreatmentMode.value && isEditMode.value) {
     const s = props.payload?.startDateTime;
     return s ? isPastSlot(s) : false;
@@ -123,18 +123,18 @@ const popupTitle = computed(() => {
   const isTreatment = computedDateType.value === 'TREATMENT';
 
   if (readOnlyMode.value) {
-    return isTreatment ? '진료 보기' : '예약 보기';
+    return isTreatment ? '방문 보기' : '예약 보기';
   }
 
   if (isEditMode.value) {
-    return isTreatment ? '진료 수정' : '예약 수정';
+    return isTreatment ? '방문 수정' : '예약 수정';
   }
 
-  return isTreatment ? '진료 등록' : '예약 등록';
+  return isTreatment ? '방문 등록' : '예약 등록';
 });
 // 일시(날짜·시작·종료)는 readOnlyMode 와 별개로 판정한다.
 // EDIT 이면 대상 예약이 과거·현재이든 상태가 무엇이든 시간 재지정을 허용 — 지난 예약의
-// 실제 진료 시각 보정이 필요하다. BE(BookLockService.modifyWithLock)에 과거시간 금지 검증 없음.
+// 실제 운영 시각 보정이 필요하다. BE(BookLockService.modifyWithLock)에 과거시간 금지 검증 없음.
 const dateTimeReadOnly = computed(() => !isEditMode.value && readOnlyMode.value);
 const uiModeClassName = computed(() => ({
   'ui--readonly': readOnlyMode.value,
@@ -144,7 +144,7 @@ const dateTimeUiClassName = computed(() => ({
   'ui--readonly': dateTimeReadOnly.value,
   'ui--disabled': false
 }));
-// 예약 화면에서는 예약(00)·취소(03)만 상태 뱃지로 구분한다(진료완료·미이행은 예약처럼 표기). 규칙 SSOT = toDisplayStatus.
+// 예약 화면에서는 예약(00)·취소(03)만 상태 뱃지로 구분한다(완료·미이행은 예약처럼 표기). 규칙 SSOT = toDisplayStatus.
 const displayStatus = computed(() => toDisplayStatus(props?.payload?.status, dataType.value));
 const headerBadgeText = computed(() => {
   if (displayStatus.value === '01') return '완료';
@@ -186,7 +186,7 @@ const createInitialTried = () => ({
 
 const createInitialValidationState = () => ({
   formSubmit: {
-    doctorName  : {ok: true, message: '', placeholder: '담당의사명을 입력해주세요.'},
+    doctorName  : {ok: true, message: '', placeholder: '담당자명을 입력해주세요.'},
     patientName : {ok: true, message: '', placeholder: '고객명을 입력해주세요.'},
     patientPhone: {ok: true, message: '', placeholder: '고객 전화번호를 입력해주세요. 예) 01012345678'},
     dateStr     : {ok: true, message: ''},
@@ -207,14 +207,14 @@ const validationState = ref(createInitialValidationState());
 const baseDateStr = ref('');
 const baseTimeStr = ref('');
 
-/* 팝업을 연 순간의 슬롯(일자·시작시각·의사) — 저장 시 운영시간 재검사의 기준점. */
+/* 팝업을 연 순간의 슬롯(일자·시작시각·담당자) — 저장 시 운영시간 재검사의 기준점. */
 const openedSlot = ref(null);
 
 /* 이 팝업이 띄운 다이얼로그(alert/confirm)가 떠 있는 동안 true — 호출은 전부 withDialog 를 지난다.
  * ★이 팝업은 hide-on-outside-click 이라, 확인 대화상자의 버튼 클릭이 "바깥 클릭"으로 잡혀
  *   @hiding → handleClose → resetFormState 가 돌아버린다. 그러면 [확인]을 눌러도 form 이
  *   비워진 뒤 payload 가 만들어져 저장이 실패하고, [취소]를 눌러도 수정 화면이 사라진다.
- *   다이얼로그가 떠 있는 동안에는 바깥 클릭 닫힘을 끈다(진료항목 설정 팝업과 같은 useDialogGuard). */
+ *   다이얼로그가 떠 있는 동안에는 바깥 클릭 닫힘을 끈다(서비스 항목 설정 팝업과 같은 useDialogGuard). */
 const {dialogOpen, withDialog} = useDialogGuard();
 
 const startDate = computed(() => mergeDateTime(form.value.dateStr, form.value.startTimeStr));
@@ -222,7 +222,7 @@ const endDate = computed(() => mergeDateTime(form.value.dateStr, form.value.endT
 
 // EDIT 은 과거 날짜도 선택 가능(지난 예약의 일자 보정). ADD 만 오늘 이후로 제한.
 const minSelectableDate = computed(() => isEditMode.value ? null : dayjs().startOf('day').toDate());
-// 진료 화면: 오늘까지만 선택 가능
+// 방문 화면: 오늘까지만 선택 가능
 const maxSelectableDate = computed(() => isTreatmentMode.value ? dayjs().endOf('day').toDate() : null);
 const yearRange = computed(() => {
   return datePickerYearRange(0, 11);
@@ -266,7 +266,7 @@ const startOptions = computed(() => {
   // 보기 모드
   if (readOnlyMode.value) return opts;
 
-  // 공통 최소(병원 운영 minTime)
+  // 공통 최소(사업장 운영 minTime)
   let minMinute = parseTimeToMinutes(props.minTime);
 
   // =========================
@@ -435,7 +435,7 @@ function onPatientPickItem(p) {
 
   // Tab 자동선택 후 다음 입력 흐름: 전화번호 input 으로 focus 이동.
   // (자동완성으로 phone 이 채워지면 readonly 가 되어도 focus 가능 → 사용자가
-  //  의식적으로 다음 Tab 으로 의사 선택까지 진행하기에 자연스러움)
+  //  의식적으로 다음 Tab 으로 담당자 선택까지 진행하기에 자연스러움)
   nextTick(() => {
     phoneInputRef.value?.focus?.();
   });
@@ -519,9 +519,9 @@ function onKeydownPatientPhone(e) {
 }
 
 // ============================================================================
-// 담당의사 관련 이벤트
+// 담당자 관련 이벤트
 // ============================================================================
-// 진료 팀 표시 필터 (검색필터와 동일 — 선택 팀 담당자만 담당의사 후보). 이름 통일 key (SF-3c).
+// 팀 표시 필터 (검색필터와 동일 — 선택 팀 담당자만 담당자 후보). 이름 통일 key (SF-3c).
 const teamDoctors = computed(() => resolveVisibleDoctors(schedulerFilterStore.selectedTeamName, doctors.value, teams.value));
 const doctorPage = ref(0);
 
@@ -538,8 +538,8 @@ const visibleDoctors = computed(() => {
   return teamDoctors.value.slice(start, start + PAGE_SIZE_DOCTOR_ADD_FILTER);
 });
 
-// 선택 날짜 기준 "휴무"(의사별 휴무/휴무) 의사 id 집합 — getBlockedReason(정오, 의사id) 재사용.
-// 의사 옆 "휴무" 라벨용. getBlockedReason 미전달 시 빈 집합(라벨 안 뜸).
+// 선택 날짜 기준 "휴무"(담당자별 휴무/휴무) 담당자 id 집합 — getBlockedReason(정오, 담당자id) 재사용.
+// 담당자 옆 "휴무" 라벨용. getBlockedReason 미전달 시 빈 집합(라벨 안 뜸).
 const closedDoctorSet = computed(() => {
   const set = new Set();
   if (typeof props.getBlockedReason !== 'function' || !form.value.dateStr) return set;
@@ -610,7 +610,7 @@ function buildSubmitPayload() {
  * 드래그·⋮변경 모드는 이미 같은 확인을 하므로(SchedulerV3Page.confirmBlockedMove),
  * 세 경로 중 이 경로만 조용히 나가는 상태였다.
  *
- * 연 시점과 (일자·시작시각·의사)가 같으면 묻지 않는다 — 진입 확인과 겹쳐 두 번 묻게 된다.
+ * 연 시점과 (일자·시작시각·담당자)가 같으면 묻지 않는다 — 진입 확인과 겹쳐 두 번 묻게 된다.
  * @returns 저장을 진행해도 되면 true
  */
 async function confirmBlockedIfChanged() {
@@ -843,10 +843,10 @@ function validatePatientPhone() {
 }
 
 function validateDoctorName() {
-  // 담당의사
+  // 담당자
   const doctorName = form.value.doctorName?.trim();
   if (!doctorName) {
-    setFieldError('formSubmit', 'doctorName', false, '담당의사를 선택해주세요.');
+    setFieldError('formSubmit', 'doctorName', false, '담당자를 선택해주세요.');
     return false;
   }
   setFieldError('formSubmit', 'doctorName', true, '');
@@ -861,9 +861,9 @@ async function validateFormSubmit() {
   ok = validatePatientName() && ok;
   ok = validatePatientPhone() && ok;
   ok = validateDoctorName() && ok;
-  // 진료항목은 입력칸이 없어 다른 필드처럼 테두리로 알릴 수 없다 → alert 로 안내.
+  // 서비스 항목은 입력칸이 없어 다른 필드처럼 테두리로 알릴 수 없다 → alert 로 안내.
   if (!isTreatmentItemSelected.value) {
-    await withDialog(() => dialog.alert(TREATMENT_ITEM_REQUIRED_MSG, {title: '진료항목 선택'}));
+    await withDialog(() => dialog.alert(TREATMENT_ITEM_REQUIRED_MSG, {title: '서비스 항목 선택'}));
     ok = false;
   }
   return ok;
@@ -949,10 +949,10 @@ watch(
       const clickStart = p?.startDateTime ? dayjs(p.startDateTime) : null;
       const clickEnd = p?.endDateTime ? dayjs(p.endDateTime) : null;
       const isEditReservation = !!p?.id;
-      // ⚠️ 반드시 의사 id(=doctorRules 키, name 모드에선 정규화 이름)를 함께 넘긴다.
-      //   생략하면 getBlockedReason 이 의사룰을 못 찾아 기관(hospital)으로 fallback →
-      //   기관이 그 요일 미설정이면 의사는 운영시간인데도 'outsideHours'(운영종료)로 오판.
-      //   p.doctorName = 클릭한 컬럼의 resourceLabel = 의사키(그리드 getReason 이 넘기는 col.resourceId 와 동일).
+      // ⚠️ 반드시 담당자 id(=doctorRules 키, name 모드에선 정규화 이름)를 함께 넘긴다.
+      //   생략하면 getBlockedReason 이 담당자룰을 못 찾아 기관(hospital)으로 fallback →
+      //   기관이 그 요일 미설정이면 담당자는 운영시간인데도 'outsideHours'(운영종료)로 오판.
+      //   p.doctorName = 클릭한 컬럼의 resourceLabel = 담당자키(그리드 getReason 이 넘기는 col.resourceId 와 동일).
       const blockReason = props.getBlockedReason?.(clickStart, p?.doctorName);
 
       if (!isEditReservation) {
@@ -1001,7 +1001,7 @@ watch(
       const s = clickStart ?? snapped;
       const e = clickEnd ?? s.add(STEP_MIN, 'minute');
 
-      /* 저장 시점 재검사의 기준점 — 팝업을 연 순간의 (일자, 시작시각, 의사).
+      /* 저장 시점 재검사의 기준점 — 팝업을 연 순간의 (일자, 시작시각, 담당자).
        * 위 진입 확인은 '연 시각'만 보므로, 팝업 안에서 시간을 휴게시간대로 바꿔 저장하면
        * 아무 안내 없이 나간다. 저장 때 이 기준과 달라졌으면 다시 확인한다(confirmBlockedIfChanged). */
       openedSlot.value = {
@@ -1224,14 +1224,14 @@ watch(
             @blur.stop="validatePatientPhone"
         >
 
-        <!-- 의사 -->
+        <!-- 담당자 -->
         <div class="schedulePopupForm__label">
-          담당의사<span class="is-required"> *</span>
-          <!-- 의사 추가 UI 는 제거했다 — 담당자 등록·수정은 사업장 설정가 소유한다. -->
+          담당자<span class="is-required"> *</span>
+          <!-- 담당자 추가 UI 는 제거했다 — 담당자 등록·수정은 사업장 설정가 소유한다. -->
         </div>
         <div class="doctorSection">
 
-          <!-- 의사 목록 라디오 버튼 -->
+          <!-- 담당자 목록 라디오 버튼 -->
           <div class="doctorRadioList doctorRadioList--inline" data-field="doctor">
             <!-- Prev Arrow -->
             <button
@@ -1374,9 +1374,9 @@ watch(
   position: relative;
   display: flex;
   flex-wrap: nowrap !important;
-  /* 화살표와 담당의사 항목을 같은 세로 중앙에 정렬한다. */
+  /* 화살표와 담당자 항목을 같은 세로 중앙에 정렬한다. */
   align-items: center;
-  /* 의사 버튼 간격은 6px, 좌우 화살표와의 간격은 개별 margin으로 12px을 유지한다. */
+  /* 담당자 버튼 간격은 6px, 좌우 화살표와의 간격은 개별 margin으로 12px을 유지한다. */
   gap: 6px;
 }
 
@@ -1392,13 +1392,13 @@ watch(
 .doctorRadioList--inline .doctorRadioList__arrow--next {
   margin-left: 6px;
 }
-/* 의사 항목 — 콘텐츠 너비를 유지하고 항목 사이 간격만 고정한다. */
+/* 담당자 항목 — 콘텐츠 너비를 유지하고 항목 사이 간격만 고정한다. */
 .doctorRadioList--inline .doctorRadioItem {
   flex: 0 0 auto;
   white-space: nowrap;
 }
 
-/* 담당의사 항목 — 휴무/비공개 라벨을 이름 위(세로)로 배치해 < > 화살표와 겹침 방지.
+/* 담당자 항목 — 휴무/비공개 라벨을 이름 위(세로)로 배치해 < > 화살표와 겹침 방지.
    align-items: flex-start = 균등 셀(flex:1) 안에서 내용을 좌측 정렬 → 1명만 있는 페이지도 중앙이 아니라 좌측순차로 표기. */
 .doctorRadioItem {
   display: inline-flex;
@@ -1603,19 +1603,19 @@ watch(
 
 /* 예외1-V2: 서비스 내용 영역(TreatmentContentSelector)도 readonly 상태에서 수정 가능.
  * V1 textarea 와 동일하게 그룹/항목 선택 + 직접입력 memo 편집 허용.
- * 진료모드에서 과거 예약 서비스 내용 보정 등의 흐름 지원. */
+ * 방문 모드에서 과거 예약 서비스 내용 보정 등의 흐름 지원. */
 .schedulePopupForm[data-readonly="true"] .treatmentContentSelector {
   pointer-events: auto;
   cursor: default;
 }
 
-/* 진료보기에서도 진료항목 설정 팝업은 열 수 있도록 설정 아이콘만 허용한다. */
+/* 방문보기에서도 서비스 항목 설정 팝업은 열 수 있도록 설정 아이콘만 허용한다. */
 .schedulePopupForm[data-readonly="true"] .tcs-settingBtn {
   pointer-events: auto;
   cursor: pointer;
 }
 
-/* 예외2: 의사 영역(doctor)만 열기 */
+/* 예외2: 담당자 영역(doctor)만 열기 */
 .schedulePopupForm[data-readonly="true"] [data-field="doctor"] {
   pointer-events: auto;
   cursor: default;

@@ -7,10 +7,10 @@
  * GroupingConfig.levels 배열이 트리의 깊이와 순서를 결정한다.
  *
  * 지원하는 그룹 구조:
- *   ['date', 'doctor']                  → 날짜 > 의사
+ *   ['date', 'doctor']                  → 날짜 > 담당자
  *   ['date', 'chair']                   → 날짜 > 체어
- *   ['date', 'doctor', 'chair']         → 날짜 > 의사 > 체어
- *   ['date', 'doctorGroup', 'doctor']   → 날짜 > 의사그룹 > 의사
+ *   ['date', 'doctor', 'chair']         → 날짜 > 담당자 > 체어
+ *   ['date', 'doctorGroup', 'doctor']   → 날짜 > 담당자그룹 > 담당자
  *
  * 정책:
  *   - doctorGroup은 중간 그룹 노드 전용. leaf가 될 수 없다.
@@ -73,7 +73,7 @@ export function getHeaderDepth(grouping: GroupingConfig): number {
  * 헤더 트리를 depth별 flat 배열로 변환
  *
  * rows[0] = depth 0의 모든 노드 (날짜 행)
- * rows[1] = depth 1의 모든 노드 (의사 또는 그룹 행)
+ * rows[1] = depth 1의 모든 노드 (담당자 또는 그룹 행)
  * ...
  */
 export function flattenHeaderByDepth(nodes: HeaderNode[]): HeaderNode[][] {
@@ -94,7 +94,7 @@ export function flattenHeaderByDepth(nodes: HeaderNode[]): HeaderNode[][] {
 /**
  * resources 기반 하루당 실제 leaf column 수 계산
  *
- * 의사별 chair 수가 다를 수 있으므로 단순 곱셈이 아닌
+ * 담당자별 chair 수가 다를 수 있으므로 단순 곱셈이 아닌
  * 실제 resources를 순회하여 합산한다.
  */
 export function countLeafColumnsPerDay(
@@ -215,7 +215,7 @@ function buildDoctorGroupNodes(
     const children = buildSubLevel(levels, levelIndex + 1, depth + 1, resources, childCtx)
     const colSpan = sumColSpan(children)
 
-    // children이 없으면 (그룹 내 의사가 0명) 이 그룹 노드도 생략
+    // children이 없으면 (그룹 내 담당자가 0명) 이 그룹 노드도 생략
     if (colSpan === 0) return null!
 
     return {
@@ -349,7 +349,7 @@ function countResourceLeaves(
       if (index === subLevels.length - 1) return 0 // leaf 불가
       let total = 0
       for (const group of groups) {
-        // 그룹 내 의사 수 × 하위 leaf
+        // 그룹 내 담당자 수 × 하위 leaf
         const doctors = resources.doctors.filter(d => {
           const idSet = new Set(group.doctorIds)
           return idSet.has(d.id)

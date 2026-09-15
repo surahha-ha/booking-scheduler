@@ -5,14 +5,14 @@
  *
  * 셀 옆의 빨간 '휴무' 라벨은 **사업장 축**이고, 셀 안의 직원 리스트는 **담당자 축**이다
  * (화면정의서 APB031 §2-1). 예전에는 사업장 축의 isOff 를 직원 전원에게 그대로 접어
- * 내려(fold-down) 공휴일 진료('Y')로 정한 담당자까지 "(휴무)"으로 찍혔다. 두 축은 갈라야 한다.
+ * 내려(fold-down) 공휴일 운영('Y')로 정한 담당자까지 "(휴무)"으로 찍혔다. 두 축은 갈라야 한다.
  *
  * 이 파일이 고정하는 것:
- *   1. holidayOpenYn='Y' 담당자는 사업장이 공휴일 휴무가어도 진료로 표기된다(시간까지).
+ *   1. holidayOpenYn='Y' 담당자는 사업장이 공휴일 휴무가어도 운영으로 표기된다(시간까지).
  *   2. holidayOpenYn='N' 담당자는 "(휴무)"이다.
  *   3. 1·2 와 무관하게 셀의 isOff(빨간 라벨)는 사업장 축이라 그대로 true 다.
  *   4. 사업장 축 자체의 우선순위는 "일자 지정 > 공휴일 스위치 > 반복 휴무" 이다 —
- *      공휴일이라도 그 날짜를 임시진료(workDates)로 지정했으면 셀은 휴무가 아니다.
+ *      공휴일이라도 그 날짜를 임시운영(workDates)로 지정했으면 셀은 휴무가 아니다.
  *
  * 판정 본체는 순수함수(`offDayRules.isStaffOffOn`)에 있지만, "화면이 그 함수를 실제로 쓰는가 ·
  * 응답의 holidayOpenYn/monthlyOffRules 를 수집하는가"는 마운트해야만 드러난다.
@@ -57,9 +57,9 @@ vi.mock('@/api/siteApi', () => ({
 import SchedulerSettingsTreatmentView from '@/pages/desktop/scheduleBoard/components/SchedulerSettingsTreatmentView.vue'
 
 // ── fixture ────────────────────────────────────────────────
-const DOC_WORK = 201  // 공휴일에도 진료 (holidayOpenYn='Y')
+const DOC_WORK = 201  // 공휴일에도 운영 (holidayOpenYn='Y')
 const DOC_OFF = 202   // 공휴일은 휴무   (holidayOpenYn='N')
-const NAME_WORK = '진료의'
+const NAME_WORK = '운영의'
 const NAME_OFF = '휴무의'
 
 /* 사업장 — 월~금 10:00~17:00. 자기 요일값이 없는 담당자가 따르게 되는 값. */
@@ -126,7 +126,7 @@ function entriesOf(wrapper: any, dateKey: string) {
   return cellOf(wrapper, dateKey).entries.map((e: any) => ({ name: e.name, time: e.time }))
 }
 
-/** '진료일'(WORK) / '휴무일'(OFF) 세그먼트 전환 */
+/** '운영일'(WORK) / '휴무일'(OFF) 세그먼트 전환 */
 async function setDayType(wrapper: any, type: 'WORK' | 'OFF') {
   wrapper.vm.$.setupState.selectedDayType = type
   await wrapper.vm.$nextTick()
@@ -158,7 +158,7 @@ describe('보기 화면 공휴일 — 사업장 축(셀 라벨)과 담당자 축
     mocks.getSiteWorkHours.mockResolvedValue({ data: { payload: { site: institutionTimes } } })
   })
 
-  it("★holidayOpenYn='Y' — 기관이 공휴일 휴무가어도 진료일 목록에 시간과 함께 남는다", async () => {
+  it("★holidayOpenYn='Y' — 기관이 공휴일 휴무가어도 운영일 목록에 시간과 함께 남는다", async () => {
     const wrapper = await mountView()
 
     // 자기 요일값이 없으므로 사업장 그 요일(화) 운영시간을 따른다
@@ -192,12 +192,12 @@ describe('보기 화면 공휴일 — 사업장 축(셀 라벨)과 담당자 축
   it('★셀의 휴무 라벨(isOff)은 사업장 축이라 직원 판정과 무관하게 유지된다', async () => {
     const wrapper = await mountView()
 
-    // 'Y' 담당자가 그 날 진료해도 기관은 여전히 공휴일 휴무가다
+    // 'Y' 담당자가 그 날 운영해도 기관은 여전히 공휴일 휴무가다
     expect(cellOf(wrapper, HOLIDAY).isOff, '공휴일 + holidayClosedYn=true').toBe(true)
     expect(cellOf(wrapper, PLAIN_TUE).isOff, '평일 대조군').toBe(false)
   })
 
-  it('공휴일이 아닌 화요일은 두 담당자 모두 진료다 (공휴일 축이 평일까지 물들이지 않는다)', async () => {
+  it('공휴일이 아닌 화요일은 두 담당자 모두 운영다 (공휴일 축이 평일까지 물들이지 않는다)', async () => {
     const wrapper = await mountView()
 
     expect(entriesOf(wrapper, PLAIN_TUE)).toEqual([
@@ -207,31 +207,31 @@ describe('보기 화면 공휴일 — 사업장 축(셀 라벨)과 담당자 축
   })
 
   /* ★사업장 축의 순서 교정 — 예전에는 공휴일 여부를 먼저 보고 일자 지정을 무시해,
-   * 공휴일에 임시진료로 지정해 둔 날도 셀이 '휴무'으로 남았다. */
-  it('★일자 임시진료(workDates)는 공휴일 스위치를 이긴다 — 셀 isOff=false', async () => {
+   * 공휴일에 임시운영으로 지정해 둔 날도 셀이 '휴무'으로 남았다. */
+  it('★일자 임시운영(workDates)는 공휴일 스위치를 이긴다 — 셀 isOff=false', async () => {
     setInstitutionSettings({ workDates: [HOLIDAY] })
     const wrapper = await mountView()
 
     expect(cellOf(wrapper, HOLIDAY).isOff).toBe(false)
   })
 
-  it("★기관이 임시진료로 열어도 holidayOpenYn='N' 담당자는 여전히 휴무가다", async () => {
+  it("★기관이 임시운영으로 열어도 holidayOpenYn='N' 담당자는 여전히 휴무가다", async () => {
     setInstitutionSettings({ workDates: [HOLIDAY] })
     const wrapper = await mountView()
     await setDayType(wrapper, 'OFF')
 
-    // 기관 축은 진료(isOff=false)지만, 공휴일 휴무는 그 담당자가 직접 정한 답이라 상속에 지지 않는다
+    // 기관 축은 운영(isOff=false)지만, 공휴일 휴무는 그 담당자가 직접 정한 답이라 상속에 지지 않는다
     expect(entriesOf(wrapper, HOLIDAY)).toEqual([{ name: NAME_OFF, time: '(휴무)' }])
   })
 
-  it('★일자 임시휴무(offDates)은 공휴일 진료 담당자도 쉬게 한다 — 병원이 그날 문을 닫는다', async () => {
+  it('★일자 임시휴무(offDates)은 공휴일 운영 담당자도 쉬게 한다 — 사업장이 그날 문을 닫는다', async () => {
     setInstitutionSettings({ holidayClosedYn: false, offDates: [HOLIDAY] })
     const wrapper = await mountView()
 
-    /* 'Y' 는 "공휴일이라는 이유로는 쉬지 않는다"는 뜻일 뿐, 그 날짜를 진료로 지정한 것이 아니다.
+    /* 'Y' 는 "공휴일이라는 이유로는 쉬지 않는다"는 뜻일 뿐, 그 날짜를 운영으로 지정한 것이 아니다.
      * 그 담당자는 그 날짜도 그 요일도 정한 것이 없으므로 기관 일자 지정을 상속한다(§4-2 4단계). */
     expect(cellOf(wrapper, HOLIDAY).isOff, '기관 축은 휴무').toBe(true)
-    expect(entriesOf(wrapper, HOLIDAY), '진료일 모드에 뜨지 않는다').toEqual([])
+    expect(entriesOf(wrapper, HOLIDAY), '운영일 모드에 뜨지 않는다').toEqual([])
 
     await setDayType(wrapper, 'OFF')
     expect(entriesOf(wrapper, HOLIDAY).map((e: any) => e.name), '휴무일 모드에 뜬다')

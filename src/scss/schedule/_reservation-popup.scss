@@ -94,9 +94,9 @@
 .schedulePopupForm {
   display: grid;
   /* field 컬럼은 minmax(0, 1fr) — 그냥 1fr 은 암묵적 min=min-content 라,
-     담당의사 행(.doctorRadioList--inline, flex-wrap:nowrap)의 긴 min-content 가
+     담당자 행(.doctorRadioList--inline, flex-wrap:nowrap)의 긴 min-content 가
      컬럼을 강제 확장 → 다른 입력칸까지 같이 넓어지고 팝업 우측 여백을 잡아먹는다.
-     min 을 0 으로 고정해 컬럼이 콘텐츠로 늘어나지 않게 한다(담당의사는 개수 페이징으로 처리). */
+     min 을 0 으로 고정해 컬럼이 콘텐츠로 늘어나지 않게 한다(담당자자는 개수 페이징으로 처리). */
   grid-template-columns: 65px minmax(0, 1fr);
   gap: 20px 10px;
   align-items: center;

@@ -14,7 +14,7 @@ import CellMorePopover from './CellMorePopover.vue';
 const holidayStore = useHolidayStore();
 
 const DAY_TYPE_ITEMS = [
-  {value: 'WORK', label: '진료일'},
+  {value: 'WORK', label: '운영일'},
   {value: 'OFF', label: '휴무일'},
 ];
 
@@ -51,8 +51,8 @@ const workingHoursOverridesByOwner = ref(new Map());
 
 /* 담당자 축 휴무 판정 재료 (offDayRules §4-2 의 2·3단계) — 설정 화면과 같은 응답에서 온다.
  * staffMonthlyOffRules — Map<'STAFF:<id>', StaffMonthlyOffRule[]>  매월 N번째 O요일 휴무
- * staffHolidayOff         — Map<'STAFF:<id>', 'Y'|'N'>               공휴일 진료여부(NOT NULL 2상태)
- * ★이 두 축을 빼고 그리면 사업장 공휴일 휴무가 전 직원에게 덮여, 공휴일 진료('Y')로 정한
+ * staffHolidayOff         — Map<'STAFF:<id>', 'Y'|'N'>               공휴일 운영 여부(NOT NULL 2상태)
+ * ★이 두 축을 빼고 그리면 사업장 공휴일 휴무가 전 직원에게 덮여, 공휴일 운영('Y')로 정한
  *   담당자까지 (휴무)으로 표기된다 — 설정 화면·보드와 판정이 갈린다. */
 const staffMonthlyOffRules = ref(new Map());
 const staffHolidayOff = ref(new Map());
@@ -71,7 +71,7 @@ const institutionHoursLoaded = ref(false);
  * 미설정 담당자가 공휴일에 빌려 쓸 값이다 — 설정 화면(institutionBlocksOn)과 같은 규약을 쓴다. */
 const institutionHolidayRange = ref(null);
 
-/* 사업장 일자별 운영시간 — Map<'YYYY-MM-DD', Range>. 임시진료로 지정한 날짜에 저장된 시각이다(응답 dateTimes).
+/* 사업장 일자별 운영시간 — Map<'YYYY-MM-DD', Range>. 임시운영으로 지정한 날짜에 저장된 시각이다(응답 dateTimes).
  * 조회 전용이며 설정 화면(institutionDateDayMap)·보드와 같은 규약으로 담는다:
  * 임시휴무(closed)인 날짜와 시작·종료가 반쪽인 행은 담지 않는다. */
 const institutionDateRange = ref(new Map());
@@ -137,7 +137,7 @@ function hmmToHHMM(hmm) {
   return `${hmm.slice(0, 2)}:${hmm.slice(2, 4)}`;
 }
 
-/* 시작·종료 "HHmm" 짝 → Range | null. 한쪽이라도 비면 null(= 진료 안 함). */
+/* 시작·종료 "HHmm" 짝 → Range | null. 한쪽이라도 비면 null(= 운영 안 함). */
 function toRange(strtHm, endHm) {
   const s = hmmToHHMM(strtHm);
   const e = hmmToHHMM(endHm);
@@ -145,7 +145,7 @@ function toRange(strtHm, endHm) {
 }
 
 /* 의료인주간(B) 한 요일 row → Range | null.
- * 진료는 시작~종료 단일 구간이다. USE_YN 계열 필드는 없어졌고, 시작·종료가 null 이면 그 요일 휴무이다. */
+ * 운영은 시작~종료 단일 구간이다. USE_YN 계열 필드는 없어졌고, 시작·종료가 null 이면 그 요일 휴무이다. */
 function staffRowToRange(row) {
   return toRange(row.staffOpenHm, row.staffCloseHm);
 }
@@ -159,7 +159,7 @@ function overrideRowToRange(ov) {
 /* 담당자 times[](정한 요일 행만) → Map<weekday, Range|null>.
  * ★행이 있다는 것 자체가 "그 요일을 정했다"는 뜻이므로 range 가 null 이어도 키를 남긴다 —
  * 버리면 명시적 휴무가 미설정으로 강등돼 사업장 값을 따르게 된다.
- *   키 없음 = 미설정 / 키 + null = 휴무 / 키 + Range = 진료
+ *   키 없음 = 미설정 / 키 + null = 휴무 / 키 + Range = 운영
  * override 가 쓰던 규약과 같고, 설정 화면(timesToDayMap)과도 같다. */
 function timesToDayMap(times) {
   const m = new Map();
@@ -180,7 +180,7 @@ function isRecurringOff(date) {
  * 뒤 단계로 넘기지 않는다 — 넘기면 쉬기로 정한 요일에 기관 운영시간이 덮여버린다.
  *
  * state:
- *   'WORK'    진료 — range 있음
+ *   'WORK'    운영 — range 있음
  *   'OFF'     휴무로 정함 (일자 지정 null 또는 요일 설정 null)
  *   'UNKNOWN' 미설정인데 기관 운영시간도 모름 — 휴무가 아니라 "알 수 없음"이다
  */
@@ -228,7 +228,7 @@ function institutionRangeOn(dateKey, weekday) {
   return institutionWeeklyDayMap.value.get(weekday) ?? null;
 }
 
-/* 진료 단일 구간 → "09:00 ~ 18:00" */
+/* 운영 단일 구간 → "09:00 ~ 18:00" */
 function formatRange(range) {
   return range ? `${range.start} ~ ${range.end}` : null;
 }
@@ -356,7 +356,7 @@ async function hydrateWorkingHours() {
 
 /* 담당자 축 판정 재료 — offDayRules 의 StaffOffContext 로 변환.
  * 이 화면은 단일 구간(Range)으로 들고 있으므로 blocks 배열 규약으로 감싼다:
- *   키 없음 = undefined(미설정) / 키 + null = [](휴무로 정함) / 키 + Range = [Range](진료) */
+ *   키 없음 = undefined(미설정) / 키 + null = [](휴무로 정함) / 키 + Range = [Range](운영) */
 function staffOffContextFor(ownerKey, dateKey, weekday) {
   const byDate = workingHoursOverridesByOwner.value.get(ownerKey);
   const hasDate = byDate?.has(dateKey) === true;
@@ -408,7 +408,7 @@ function inheritedInstitutionOff(date, dateKey, ownerKey) {
 
 /* 그 날짜 한 직원의 최종 판정 — 휴무 여부는 담당자 축(offDayRules §4-2, 정한 것이 없을 때만 기관 상속),
  * 표시 시간은 기존 cascade(resolveDisplay)가 답한다.
- * ★기관 판정을 그대로 덮으면 안 된다 — 기관 휴무 요일의 명시적 진료(R11)처럼
+ * ★기관 판정을 그대로 덮으면 안 된다 — 기관 휴무 요일의 명시적 운영(R11)처럼
  *   담당자가 직접 정한 값이 기관 휴무를 이긴다. 그때의 시간은 자기 요일값, 없으면 기관 요일값이다. */
 function resolveStaffDay(doctorId, date, dateKey) {
   const weekday = date.day();
@@ -422,7 +422,7 @@ function resolveStaffDay(doctorId, date, dateKey) {
 
 /* ===== 캘린더 셀 계산 =====
  * dayType 필터:
- *  - WORK 모드: 그 날짜 진료로 판정된 직원만 entry 생성 (시간을 모르는 미설정 직원은 skip)
+ *  - WORK 모드: 그 날짜 운영으로 판정된 직원만 entry 생성 (시간을 모르는 미설정 직원은 skip)
  *  - OFF  모드: 휴무로 판정된 직원만 entry 생성 (화면정의서 APB031 §3-1)
  * 결과 entries 는 selected 직원만 포함 */
 function buildCellEntries(date, isOff, dateKey) {
@@ -437,7 +437,7 @@ function buildCellEntries(date, isOff, dateKey) {
     } else {
       /* 휴무로 판정된 직원만 표기한다(화면정의서 APB031 §3-1 "휴무하는 직원에 대한 정보만 표기").
        * 미설정에 기관 시간도 모르는 직원은 휴무로 정한 적이 없으므로 목록에서 뺀다 —
-       * 진료일 모드가 시간을 모르는 직원을 표기하지 않는 것과 같은 규칙이다. */
+       * 운영일 모드가 시간을 모르는 직원을 표기하지 않는 것과 같은 규칙이다. */
       if (!docIsOff) continue;
       entries.push({staffId: doc.id, name: doc.name, time: '(휴무)', isOff: true});
     }
@@ -447,7 +447,7 @@ function buildCellEntries(date, isOff, dateKey) {
 
 /* 선택된 직원이 그 날짜에 '전원 휴무'인지 판정.
  * 모든 선택 직원이 휴무 판정이거나 표시할 시간이 없으면 true.
- * 선택 직원이 0명이면 isOff(공휴일/병원휴무) 여부로만 판단. */
+ * 선택 직원이 0명이면 isOff(공휴일/사업장휴무) 여부로만 판단. */
 function isAllStaffOff(date, isOff, dateKey) {
   let total = 0;
   let off = 0;
@@ -480,8 +480,8 @@ function buildMonthCells(monthDate, detailed) {
     const isHoliday = isCurrentMonth && includePublicHolidays.value && holidayStore.isHoliday(key);
 
     /* 우선순위 = 일자별 지정(override) > 공휴일 체크박스 > 반복 휴무요일 — 설정 화면(isDisplayedOff)·
-     * BE 운영중 판정과 같다. 지정한 것이 일반 규칙을 이긴다(공휴일이라도 임시진료로 지정했으면 진료).
-     * 공휴일은 반복 휴무에서 제외 → '공휴일' 체크박스로만 결정(ON=휴무, OFF=진료). */
+     * BE 운영중 판정과 같다. 지정한 것이 일반 규칙을 이긴다(공휴일이라도 임시운영으로 지정했으면 운영).
+     * 공휴일은 반복 휴무에서 제외 → '공휴일' 체크박스로만 결정(ON=휴무, OFF=운영). */
     const isOff = isCurrentMonth && override !== 'WORK' && (
         override === 'OFF'
         || (holidayStore.isHoliday(key) ? includePublicHolidays.value : isRecurringOff(cursor))
@@ -492,9 +492,9 @@ function buildMonthCells(monthDate, detailed) {
 
     /* 현재 dayType 필터에 맞지 않는 셀 — 회색 배경으로 dim.
      * 선택 직원이 있으면 그 직원 기준(hasMatch)으로 판정 → 담당자 필터가 캘린더에 반영됨.
-     *  - WORK 모드: 선택 직원이 아무도 진료 안 하는 날이 mismatch
+     *  - WORK 모드: 선택 직원이 아무도 운영 안 하는 날이 mismatch
      *  - OFF  모드: 선택 직원이 아무도 휴무 아닌 날이 mismatch
-     * 표시 대상 담당자가 0명(팀 미선택/빈 팀)이면 병원 단위(isOff)로 폴백 (전체 dim 방지). */
+     * 표시 대상 담당자가 0명(팀 미선택/빈 팀)이면 사업장 단위(isOff)로 폴백 (전체 dim 방지). */
     const hasSelection = visibleDoctors.value.length > 0;
     const isMismatch = isCurrentMonth && (
         hasSelection
@@ -712,7 +712,7 @@ defineExpose({settlePopovers: closeCellMore});
         />
       </div>
 
-      <!-- 진료 팀 + 담당자 — 예약장부(SchedulerSearchFilter)와 같은 구성.
+      <!-- 팀 + 담당자 — 예약장부(SchedulerSearchFilter)와 같은 구성.
            선택 상태만 이 화면 것이다(예약장부와 연동되지 않는다). -->
       <div class="schedulerTreatmentView__doctorGroup">
         <select
@@ -987,7 +987,7 @@ defineExpose({settlePopovers: closeCellMore});
     }
   }
 
-  /* 진료 팀 셀렉트 + 의사 필터 묶음 — 예약장부(scheduleSearchFilter__doctorGroup)와 같은 값. */
+  /* 팀 셀렉트 + 담당자 필터 묶음 — 예약장부(scheduleSearchFilter__doctorGroup)와 같은 값. */
   &__doctorGroup {
     display: inline-flex;
     align-items: center;
@@ -1072,7 +1072,7 @@ defineExpose({settlePopovers: closeCellMore});
       background: #e9e9e9;
     }
 
-    /* 휴무일(OFF) 월 뷰 — 선택 직원 전원 휴무/공휴일이면 #f5f5f5, 한 명이라도 진료하면 #fff(기본) */
+    /* 휴무일(OFF) 월 뷰 — 선택 직원 전원 휴무/공휴일이면 #f5f5f5, 한 명이라도 운영하면 #fff(기본) */
     &.is-all-off {
       background: #f5f5f5;
     }
@@ -1263,7 +1263,7 @@ defineExpose({settlePopovers: closeCellMore});
       opacity: 0.4;
     }
 
-    /* 현재 탭(진료일/휴무일)에 해당하는 날 — 굵게. is-mismatch 와 상호배타라 우선순위 충돌 없음 */
+    /* 현재 탭(운영일/휴무일)에 해당하는 날 — 굵게. is-mismatch 와 상호배타라 우선순위 충돌 없음 */
     &.is-active {
       font-weight: $font-weight-bold;
     }

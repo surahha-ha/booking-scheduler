@@ -43,7 +43,7 @@ import { reanchorArgsForSlot } from './navSlots'
 import { toV2Bands, toV2Columns, toV2HeaderTree, toV2Rects } from './v3ParityAdapter'
 // 공유 검색필터 컴포넌트 재사용. filterStore→searchVersion→bookStore 자체 구동.
 import SchedulerSearchFilter from '@/pages/desktop/scheduleBoard/components/SchedulerSearchFilter.vue'
-// 줄달력 — 예약 모드: 당일 포함 미래 30일 / 진료: 당일 포함 직전 30일.
+// 줄달력 — 예약 모드: 당일 포함 미래 30일 / 방문: 당일 포함 직전 30일.
 import SchedulerDateStrip from '@/pages/desktop/scheduler/components/SchedulerDateStrip.vue'
 // 렌더 컴포넌트 재사용(어댑터로 props 변환).
 import SchedulerTimeAxis from '@/pages/desktop/scheduler/components/SchedulerTimeAxis.vue'
@@ -126,20 +126,20 @@ watch(periodDate, (newPeriodDate) => {
 // runLayout/카드매핑이 쓰는 선택 날짜(ymd) = navigation 단일 기준
 const selectedDate = computed(() => navigation.selectedDate.value)
 
-// 담당자 0명(표시 컬럼 없음)일 때 헤더에 표기할 날짜 라벨 — 날짜는 정해져 있으므로 의사 행만 비고 날짜는 보인다.
+// 담당자 0명(표시 컬럼 없음)일 때 헤더에 표기할 날짜 라벨 — 날짜는 정해져 있으므로 담당자 행만 비고 날짜는 보인다.
 const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토']
 const fallbackDateLabel = computed(() => {
   const d = dayjs(selectedDate.value)
   return d.isValid() ? `${d.format('MM-DD')} (${WEEKDAY_KO[d.day()]})` : ''
 })
-// 의사 0명(fallback) 헤더의 공휴일 휴무 — 빨간 span 으로 별도 표기.
+// 담당자 0명(fallback) 헤더의 공휴일 휴무 — 빨간 span 으로 별도 표기.
 const fallbackHolidayLabel = computed(() => {
   const d = dayjs(selectedDate.value)
   return d.isValid() ? holidayLabelFor(d.format('YYYY-MM-DD')) : undefined
 })
 
 // 나머지는 페이지-로컬 (DB 저장 X) — 보기단계/N칸/페이지
-// N칸보기 기본값 = 2 (예약·진료 공통). 예약은 툴바로 라이브 조절, 진료는 effectiveSlotDivision 에서 2 강제.
+// N칸보기 기본값 = 2 (예약·방문 공통). 예약은 툴바로 라이브 조절, 운영은 effectiveSlotDivision 에서 2 강제.
 const viewStep = ref(3)
 const slotDivision = ref(2)
 // 컬럼별 칸수 override(state-only). { '${date}__${doctorId}': N }. 드래그로 특정 컬럼만 N칸 조절 → 엔진 resolveSlots 우선 적용.
@@ -149,7 +149,7 @@ const customSlots = ref({})
 const layoutMode = ref('A')
 // date-anchored 윈도우 시작 sub-col offset. 좌측 끝은 항상 selectedDate(날짜)로 고정 →
 // 데이터 재조회로 밀도가 변해도 보던 날짜가 안 끌려감(헤더 > 빈보드 점프 차단). 0 = selectedDate 첫 컬럼부터.
-// >0 은 하루 컬럼수가 budget 을 초과할 때만(within-day 의사 페이징).
+// >0 은 하루 컬럼수가 budget 을 초과할 때만(within-day 담당자 페이징).
 const colOffset = ref(0)
 // 헤더 담당자 <> 의 날짜 re-anchor 용 — selectedDate 변경(→colOffset reset) 후 flush:post 에서 복원할 offset.
 const pendingColOffset = ref(null)
@@ -157,25 +157,25 @@ const pendingColOffset = ref(null)
 const timelineTopExtend = ref(0)
 const timelineBottomExtend = ref(0)
 
-// ── 줄달력 상태 + 이벤트 (예약/진료 분기) ──
+// ── 줄달력 상태 + 이벤트 (예약/방문 분기) ──
 // 줄달력은 filterStore.dataType(실제 토글) 기준 분기.
 const isTreatmentMode = computed(() => dataType.value === 'TREATMENT')
-// 진료모드는 N칸 2 강제(라이브 무시). 렌더(viewState)와 drag/resize hitTest 가 동일 값을 써야 좌표 정합 → 단일 computed.
+// 방문 모드는 N칸 2 강제(라이브 무시). 렌더(viewState)와 drag/resize hitTest 가 동일 값을 써야 좌표 정합 → 단일 computed.
 const effectiveSlotDivision = computed(() => (isTreatmentMode.value ? 2 : slotDivision.value))
 const dateStripMode = ref('rolling')
 const expandedMonth = ref(null)
 
-// 예약: 당일 포함 미래 30일 / 진료: 당일 포함 직전 30일(당일=오른쪽 끝)
+// 예약: 당일 포함 미래 30일 / 방문: 당일 포함 직전 30일(당일=오른쪽 끝)
 function computeInitialStrip() {
   return isTreatmentMode.value
     ? dayjs().subtract(29, 'day').format('YYYY-MM-DD')
     : dayjs().format('YYYY-MM-DD')
 }
 const stripWindowStart = ref(computeInitialStrip())
-// 진료: 미래 표기 불가 → 줄달력 maxDate=오늘 (월버튼 왼쪽·› 숨김 자동). 예약: 제한 없음.
+// 방문: 미래 표기 불가 → 줄달력 maxDate=오늘 (월버튼 왼쪽·› 숨김 자동). 예약: 제한 없음.
 const stripMaxDate = computed(() => (isTreatmentMode.value ? dayjs().format('YYYY-MM-DD') : null))
 
-// 진료: strip 끝(start+29) ≤ 오늘 보장
+// 방문: strip 끝(start+29) ≤ 오늘 보장
 function clampStripForTreatment() {
   if (!isTreatmentMode.value) return
   const maxStart = dayjs().subtract(29, 'day').format('YYYY-MM-DD')
@@ -187,7 +187,7 @@ function isInStripRange(date) {
   return !dayjs(date).isBefore(start, 'day') && !dayjs(date).isAfter(end, 'day')
 }
 function adjustStripToInclude(date) {
-  // 진료: 선택일이 strip 끝 / 예약: 선택일이 strip 시작
+  // 방문: 선택일이 strip 끝 / 예약: 선택일이 strip 시작
   stripWindowStart.value = isTreatmentMode.value
     ? dayjs(date).subtract(29, 'day').format('YYYY-MM-DD')
     : dayjs(date).format('YYYY-MM-DD')
@@ -203,7 +203,7 @@ function onStripShiftPrev() {
   stripWindowStart.value = dayjs(stripWindowStart.value).subtract(1, 'day').format('YYYY-MM-DD')
 }
 function onStripShiftNext() {
-  // 진료: 오늘 이후 이동 불가
+  // 방문: 오늘 이후 이동 불가
   if (isTreatmentMode.value && !dayjs(navigation.selectedDate.value).isBefore(dayjs(), 'day')) return
   navigation.goNextDay()
   stripWindowStart.value = dayjs(stripWindowStart.value).add(1, 'day').format('YYYY-MM-DD')
@@ -225,7 +225,7 @@ function onExpandNextMonth() {
     ? dayjs(`${expandedMonth.value}-01`)
     : dayjs(navigation.selectedDate.value)
   let target = base.add(1, 'month').format('YYYY-MM-DD')
-  // 진료: 오늘 이후 불가 → 오늘로 clamp
+  // 방문: 오늘 이후 불가 → 오늘로 clamp
   if (isTreatmentMode.value && target > dayjs().format('YYYY-MM-DD')) {
     target = dayjs().format('YYYY-MM-DD')
   }
@@ -261,7 +261,7 @@ function onDateStripGoToday() {
 watch(() => navigation.selectedDate.value, (date) => {
   ensureStripContains(date)
 })
-// dataType(예약↔진료) 전환 시 strip 재계산. selectedDate 클램프는 filterStore.setDataType(#1) 담당.
+// dataType(예약↔방문) 전환 시 strip 재계산. selectedDate 클램프는 filterStore.setDataType(#1) 담당.
 watch(isTreatmentMode, () => {
   stripWindowStart.value = computeInitialStrip()
   dateStripMode.value = 'rolling'
@@ -273,10 +273,10 @@ const viewState = computed(() => ({
   dataType: dataType.value,
   selectedDate: selectedDate.value,
   // 방문 장부 기본값 강제: 라이브 zoom/N칸(예약값) 무시하고 설정 전체칸(viewStep=3 → budget=totalColumns)·N칸2.
-  // ref 자체는 예약값 보존 → 예약 복귀 시 사용자 zoom/N칸 유지. layout 계산만 진료 시 기본 적용.
+  // ref 자체는 예약값 보존 → 예약 복귀 시 사용자 zoom/N칸 유지. layout 계산만 방문 시 기본 적용.
   viewStep: isTreatmentMode.value ? 3 : viewStep.value,
   slotDivision: effectiveSlotDivision.value,
-  // 컬럼별 칸수 — customSlots override 우선, 없으면 기본(예약=slotDivision / 진료=2).
+  // 컬럼별 칸수 — customSlots override 우선, 없으면 기본(예약=slotDivision / 방문=2).
   customSlots: customSlots.value,
   // date-anchored 모델: 엔진이 [colOffset, colOffset+budget) 임의 슬라이스. 좌측=selectedDate 기준.
   slotOffset: colOffset.value,
@@ -341,17 +341,17 @@ const visibleDoctors = computed(() => resolveVisibleDoctors(selectedTeamName.val
 // ── 조회 윈도우 = 예약0(최소밀도) 가정 한 화면 채울 일수 + 버퍼1 (담당자/budget 기반 동적, 과조회 방지) ──
 // 담당자 많으면 적게(하루 칸수 > budget → 1일), 적으면 많이 조회. 표시(horizon)가 조회를 주도.
 // budget_max = zoom out 최대(viewStep=1) = totalColumns + 4. totalColumns = 예약장부 설정값(reservationSettingStore).
-// 설정 6칸이면 budget_max 10 → 윈도우 조회량이 설정에 정합. 진료(TREATMENT)는 엔진이 horizon=1 강제라 무관.
+// 설정 6칸이면 budget_max 10 → 윈도우 조회량이 설정에 정합. 방문(TREATMENT)는 엔진이 horizon=1 강제라 무관.
 const BUDGET_MAX = computed(() => settingTotalColumns.value + 4) // = computeBudget(totalColumns, viewStep=1)
 const MAX_WINDOW_DAYS = 90
-// 실제 표시 의사 수 = 팀/미지정 visibleDoctors ∩ 검색필터 의사선택(없으면 전체).
+// 실제 표시 담당자 수 = 팀/미지정 visibleDoctors ∩ 검색필터 담당자선택(없으면 전체).
 const activeDoctorCount = computed(() => {
   const sel = selectedDoctorIds.value
   const visible = visibleDoctors.value
   if (sel.length === 0) return visible.length
   return visible.filter(d => sel.includes(d.id)).length
 })
-// 한 화면(budget_max)을 채울 최소 일수 (예약0 → 의사당 1칸). 의사 0 가드.
+// 한 화면(budget_max)을 채울 최소 일수 (예약0 → 담당자당 1칸). 담당자 0 가드.
 const baseWindowDays = computed(() => {
   const n = activeDoctorCount.value
   return n <= 0 ? 1 : Math.max(1, Math.ceil(BUDGET_MAX.value / n))
@@ -377,7 +377,7 @@ const doctorWeeklyById = computed(() => {
   }
   return out
 })
-// doctorRules → {담당자키: {날짜: DailySchedule}} — 특정일자 진료 시각(밴드용). 요일 시각과 같은 스위치를 탄다.
+// doctorRules → {담당자키: {날짜: DailySchedule}} — 특정일자 운영 시각(밴드용). 요일 시각과 같은 스위치를 탄다.
 const doctorDailyByDateById = computed(() => {
   if (!USE_DOCTOR_HOURS_IN_TIMELINE) return undefined
   const out = {}
@@ -389,7 +389,7 @@ const doctorDailyByDateById = computed(() => {
 
 /* 국가 공휴일 목록 → 엔진이 쓰는 배열로. store 는 Set 이라 조회가 빠르지만 엔진 config 는 plain 만 담는다.
  * ★"사업장이 문을 여는 공휴일"(holidayOpenDates)이 아니라 **공휴일 전부**를 넘긴다 — 공휴일 축은
- *  담당자 자기 값(HOLIDAY_OPEN_YN)이라 기관이 쉬어도 그날 진료하는 담당자가 있고, 그 사람의 밴드는
+ *  담당자 자기 값(HOLIDAY_OPEN_YN)이라 기관이 쉬어도 그날 운영하는 담당자가 있고, 그 사람의 밴드는
  *  기관 공휴일 운영시간으로 그려야 한다. 예약검증(useSchedulerRules 의 isPublicHolidayDate)과 한 쌍이다. */
 const publicHolidayDateList = computed(() => {
   const src = hospitalRules.value?.publicHolidayDates
@@ -401,7 +401,7 @@ const publicHolidayDateList = computed(() => {
 // 목록은 모든 상태를 받는다(조회 payload 에 status 없음). 엔진에도 전체를 넣어 칸의 폭·한 페이지에 드는
 // 날짜가 필터와 무관하게 같도록 하고, 숨길 카드는 rect 단계에서 뺀다(visibleRects). 엔진 입력을 줄이면
 // 겹침이 줄어 칸이 좁아지고 날짜가 더 들어와, '취소' 칩을 켰다고 '전체'·'예약' 숫자가 늘어난다.
-// 거르는 기준은 카드가 보이는 상태(toDisplayStatus) — 예약장부의 '예약' 칩은 진료완료·미이행·접수대기도
+// 거르는 기준은 카드가 보이는 상태(toDisplayStatus) — 예약장부의 '예약' 칩은 완료·미이행·대기도
 // 함께 보여 준다(카드가 '예약'으로 그려지는 것과 같은 규칙). 숨긴 자리(레인)는 빈 채로 남는다.
 const hiddenAppointmentIds = computed(() => {
   if (selectedStatusKeys.value.length === 0) return new Set()
@@ -414,16 +414,16 @@ const layout = computed(() =>
   runLayout(buildStoreRunLayoutInput({
     doctors: visibleDoctors.value,
     appts: appointments.value,
-    // 기관 운영시간(institution) = timeline·미설정 의사 요일의 fallback 소스.
+    // 기관 운영시간(institution) = timeline·미설정 담당자 요일의 fallback 소스.
     weekly: hospitalRules.value?.weekly,
-    // 공휴일 운영시간 — 공휴일에 진료하는 날은 요일·담당자 시간 대신 기관 공휴일 시간으로 밴드를 그린다
+    // 공휴일 운영시간 — 공휴일에 운영하는 날은 요일·담당자 시간 대신 기관 공휴일 시간으로 밴드를 그린다
     // (예약검증 useSchedulerRules 와 같은 규칙. 한쪽만 반영하면 "밴드는 열렸는데 클릭하면 운영종료").
     holiday: hospitalRules.value?.holiday,
     holidayDates: publicHolidayDateList.value,
     dailyByDate: hospitalRules.value?.dailyByDate ?? undefined,
     // 담당자별 요일 운영시간(밴드용). 미설정 요일은 어댑터→엔진 fallback 이 기관으로 메꾼다.
     doctorWeeklyById: doctorWeeklyById.value,
-    // 담당자별 특정일자 진료 시각(밴드용). 그 날짜는 요일·기관 시각 대신 이걸로 연다 — 예약검증과 한 쌍.
+    // 담당자별 특정일자 운영 시각(밴드용). 그 날짜는 요일·기관 시각 대신 이걸로 연다 — 예약검증과 한 쌍.
     doctorDailyByDateById: doctorDailyByDateById.value,
     availableWidth: availableWidth.value,
     selectedDate: selectedDate.value,
@@ -460,7 +460,7 @@ function onExtendBottom() { timelineBottomExtend.value++ }
 const v2Bands = computed(() => toV2Bands(bandInfos.value))
 // Header/Grid/NowIndicator 용 FlatColumn 형태로 변환(key/date/resourceId/leftPx/widthPx).
 const v2Columns = computed(() => toV2Columns(columns.value))
-// SchedulerHeader 용 날짜>의사 트리(leaf.key=unit.key → 의사1명 행제거 자동 동작).
+// SchedulerHeader 용 날짜>담당자 트리(leaf.key=unit.key → 담당자1명 행제거 자동 동작).
 const v2HeaderTree = computed(() => toV2HeaderTree(columns.value, holidayLabelFor))
 
 // 현재 페이지에 보이는 날짜들 — 공휴일 연도 보장·페이징 폭 등 표시용. 조회 윈도우는 선택 날짜 기준(아래)이라 여기에 매달리지 않는다.
@@ -481,17 +481,17 @@ watch(visibleDates, (dates) => {
 //    안 함)으로 끊었다. 그런데 그 규칙 때문에 날짜를 옮겨도 창이 그대로여서 상태·회원 카운트가
 //    이전 날짜의 값으로 남았다(줄달력 ‹ › 이동에서 재현).
 //    → 창을 layout 결과에서 떼어낸다. selectedDate + baseWindowDays 는 예약장부 설정값과 표시
-//      의사 수로만 정해져 데이터에 연동되지 않으므로 되먹임이 없고, covering 규칙 없이도 날짜를
+//      담당자 수로만 정해져 데이터에 연동되지 않으므로 되먹임이 없고, covering 규칙 없이도 날짜를
 //      옮기면 언제나 그 범위로 갱신된다. baseWindowDays 는 겹침 0 가정의 한 화면 일수라,
 //      겹침이 많은 날은 화면에 그려지는 날짜가 이보다 적을 수 있다(그만큼 미리 받아 둔 셈).
 const dataWindowAnchor = computed(() => selectedDate.value)
 const dataWindowDays = computed(() => baseWindowDays.value)
 
 // load 직접호출 금지 → setWindow→searchVersion watch chain. setWindow dedup(anchor+days 동일 return)으로 수렴.
-// 랜딩 중에는 표시 의사 집합이 단계적으로 확정된다(전체 → 팀 미배정만 → 기본 팀). 그 중간 상태마다
+// 랜딩 중에는 표시 담당자 집합이 단계적으로 확정된다(전체 → 팀 미배정만 → 기본 팀). 그 중간 상태마다
 // 재조회하면 같은 화면에서 조회가 3번 나가므로, 마지막 값 1회로 수렴시킨다(SSE 재조회와 동일 패턴).
 const applyDataWindow = debounce(() => {
-  // 표시 의사가 아직 없으면(담당자 로드 전) 잡지 않는다 — baseWindowDays 가 의사 수로 정해져
+  // 표시 담당자가 아직 없으면(담당자 로드 전) 잡지 않는다 — baseWindowDays 가 담당자 수로 정해져
   // 로드 전 값으로 한 번, 로드 후 또 한 번 조회가 나간다.
   if (activeDoctorCount.value === 0) return
   // 예약장부 설정(전체 칸 개수)이 도착하기 전에는 잡지 않는다 — 기본값으로 한 번, 응답 후 또 한 번 나간다.
@@ -513,7 +513,7 @@ const totalSlots = computed(() => layout.value.totalSlots)
 const effectiveColOffset = computed(() => layout.value.slotOffset)
 // 현 horizon 안에 다음 윈도우가 더 있나 — 엔진이 unit 경계로 낸 다음 시작 slot 유무로 판정.
 const hasMoreForward = computed(() => layout.value.nextSlotOffset != null)
-// 예약: <> 항시(과거/미래 무한). 진료: < 항시(과거), > 는 오늘 도달 시 숨김(미래 불가).
+// 예약: <> 항시(과거/미래 무한). 방문: < 항시(과거), > 는 오늘 도달 시 숨김(미래 불가).
 const canPrevDoctor = computed(() => totalSlots.value > 0)
 const canNextDoctor = computed(() =>
   isTreatmentMode.value
@@ -540,7 +540,7 @@ function onNextDoctor() {
     reanchorTo(at.date, at.offset)
     return
   }
-  // horizon 끝 → 미래로 (예약: 보이는 일수만큼 앞 / 진료: 오늘까지 +1일).
+  // horizon 끝 → 미래로 (예약: 보이는 일수만큼 앞 / 방문: 오늘까지 +1일).
   if (isTreatmentMode.value) {
     if (dayjs(selectedDate.value).isBefore(dayjs(), 'day')) {
       reanchorTo(dayjs(selectedDate.value).add(1, 'day').format('YYYY-MM-DD'), 0)
@@ -557,7 +557,7 @@ function onPrevDoctor() {
     reanchorTo(at.date, at.offset)
     return
   }
-  // 과거로 — 보이는 일수만큼(진료 1일) selectedDate 뒤로, colOffset 0.
+  // 과거로 — 보이는 일수만큼(방문 1일) selectedDate 뒤로, colOffset 0.
   const back = isTreatmentMode.value ? 1 : Math.max(1, visiblePageDays.value)
   reanchorTo(dayjs(selectedDate.value).subtract(back, 'day').format('YYYY-MM-DD'), 0)
 }
@@ -574,7 +574,7 @@ watch(
   [selectedDate, selectedDoctorIds, dataType, selectedTeamName, slotDivision, viewStep],
   () => { colOffset.value = 0 },
 )
-// 장부(예약↔진료) 전환 시 보기단계/N칸을 기본값(보기단계=3·N칸=2)으로 리셋 — 한 장부의 라이브 조절값이 다른 장부로 이월되지 않음.
+// 장부(예약↔방문) 전환 시 보기단계/N칸을 기본값(보기단계=3·N칸=2)으로 리셋 — 한 장부의 라이브 조절값이 다른 장부로 이월되지 않음.
 watch(dataType, () => {
   viewStep.value = 3
   slotDivision.value = 2
@@ -585,12 +585,12 @@ watch(dataType, () => {
 watch(settingTotalColumns, () => {
   if (viewStep.value !== 3) viewStep.value = 3
 })
-// 의사 행 항상 유지 → 1명만 선택/표시돼도 해당 담당자명이 헤더에 보이게(사용자 요구).
-// (페이징으로 한 페이지에 1명만 표시될 때 의사행이 사라져 < > 까지 갇히는 것도 함께 방지.)
+// 담당자 행 항상 유지 → 1명만 선택/표시돼도 해당 담당자명이 헤더에 보이게(사용자 요구).
+// (페이징으로 한 페이지에 1명만 표시될 때 담당자행이 사라져 < > 까지 갇히는 것도 함께 방지.)
 const keepDoctorRow = computed(() => true)
 
 // ── 본문 좌우 페이지 네비 — 화면 보이는 일자수만큼 ±N일 이동(슬라이드+재조회) ──
-// 헤더 담당자 <> 는 윈도우를 budget 칸씩(의사+날짜 혼합), 본문 좌우 <> 는 보이는 일자 단위 점프.
+// 헤더 담당자 <> 는 윈도우를 budget 칸씩(담당자+날짜 혼합), 본문 좌우 <> 는 보이는 일자 단위 점프.
 // visibleDates 는 위(데이터 조회 윈도우)에서 정의 — 보이는 날짜 수만큼 점프.
 const visiblePageDays = computed(() => visibleDates.value.length || 1)
 // firstVisible = 좌측 첫 컬럼의 날짜 (date-anchored: colOffset 0 이면 selectedDate, within-day overflow 면 그 날짜).
@@ -599,7 +599,7 @@ const lastVisibleDate = computed(() => visibleDates.value[visibleDates.value.len
 // 줄달력 하이라이트(=firstVisible)가 strip 윈도우 밖으로 스크롤되면(헤더 담당자 <> 페이징으로 anchor≠firstVisible)
 // 윈도우를 따라 이동. ensureStripContains 는 범위 밖일 때만 조정(멱등) — re-anchor 조작은 selectedDate watch 가 이미 커버.
 watch(firstVisibleDate, (date) => { ensureStripContains(date) })
-// 진료모드는 미래 불가 → 마지막 보이는 날짜가 오늘 이전일 때만 다음 구간 허용(줄달력 maxDate 정합).
+// 방문 모드는 미래 불가 → 마지막 보이는 날짜가 오늘 이전일 때만 다음 구간 허용(줄달력 maxDate 정합).
 const canBodyNext = computed(() => !isTreatmentMode.value || dayjs(lastVisibleDate.value).isBefore(dayjs(), 'day'))
 // 본문 <> = 보이는 첫 날짜(firstVisible) 기준 ±N일. goToDate → colOffset reset(0) → 좌측=새 날짜.
 //   date-anchored 라 colOffset 복원 불필요(0 착지). firstVisible 기준이므로 헤더 페이징 후에도 보이는 화면 기준 이동.
@@ -627,8 +627,8 @@ function onChangeSlotDivision(v) { reanchorThen(() => { slotDivision.value = v; 
 const blockOptions = ref({ lunchBlock: true, blockedTime: true, closedDay: true })
 const ruleCellDuration = computed(() => layout.value.config.cellDuration ?? 30)
 const selectedDoctorSet = computed(() => new Set(selectedDoctorIds.value))
-// 의사 운영시간/요일휴무 우선(DOCTOR_FIRST), 의사 미설정 요일은 기관(institution)으로 fallback(FALLBACK).
-// 의사가 설정한 요일은 그 의사 daily 통째로 사용(기관 점심 merge 안 함).
+// 담당자 운영시간/요일휴무 우선(DOCTOR_FIRST), 담당자 미설정 요일은 기관(institution)으로 fallback(FALLBACK).
+// 담당자가 설정한 요일은 그 담당자 daily 통째로 사용(기관 점심 merge 안 함).
 const rulesOptions = { priority: 'DOCTOR_FIRST', mergePolicy: 'FALLBACK' }
 const {
   getBlockedReason,
@@ -649,14 +649,14 @@ const {
 provide('getBlockedReason', getBlockedReason)
 
 /* 날짜 행(담당자 무관)의 '휴무' 라벨.
- * ★공휴일만이 아니라 **사업장 휴무일 전부**를 표기한다 — 요일 휴무·매월 N번째·임시휴무일도 병원이 닫는 날이다.
+ * ★공휴일만이 아니라 **사업장 휴무일 전부**를 표기한다 — 요일 휴무·매월 N번째·임시휴무일도 사업장이 닫는 날이다.
  *  종전에는 `holidayStore.isHoliday(ymd) &&` 가 앞에 걸려 있어 공휴일에만 라벨이 붙었고,
  *  기관이 매주 쉬는 요일에는 날짜 행이 아무 표시도 없었다.
- * 판정은 셀·담당자 칸과 같은 `isHospitalClosedDayForHeader` 하나로 모은다(공휴일 진료일 rescue 포함). */
+ * 판정은 셀·담당자 칸과 같은 `isHospitalClosedDayForHeader` 하나로 모은다(공휴일 운영일 rescue 포함). */
 const holidayLabelFor = ymd => (isHospitalClosedDayForHeader(dayjs(ymd).hour(12).toDate()) ? '휴무' : undefined)
 
 // 컬럼 key → { doctorClosed, hospitalClosed, dateClosed } (헤더 뱃지 + Grid 셀)
-//  - hospitalClosed: 사업장 휴무가 **이 담당자 칸에** 적용되는가 — 담당자가 그날 진료로 정했으면 false(R11).
+//  - hospitalClosed: 사업장 휴무가 **이 담당자 칸에** 적용되는가 — 담당자가 그날 운영으로 정했으면 false(R11).
 //    셀(getBlockedReason)과 같은 판정이어야 "뱃지는 휴무인데 셀은 열림"이 안 생긴다.
 //  - dateClosed: 사업장 순수 휴무 — 날짜 행(담당자 무관) 표기용.
 const closedDayMap = computed(() => {
@@ -797,7 +797,7 @@ function validateResizePosition(appointmentId, columnKey, startMinute, endMinute
   return warning ? { isValid: true, warning } : { isValid: true }
 }
 
-// 의사 이름 resolver (drag adapter용, 이름키 정합)
+// 담당자 이름 resolver (drag adapter용, 이름키 정합)
 function resolveDoctorName(doctorName) {
   return doctors.value.find(d => d.id === doctorName)?.text ?? doctorName
 }
@@ -921,7 +921,7 @@ const reservationPopupVisible = ref(false)
 const reservationPopupPayload = ref(null)
 // 저장 요청 진행 중 — 연타로 등록이 두 번 나가는 것을 막는다(팝업 버튼 비활성도 이 값을 본다).
 const reservationSaving = ref(false)
-// 담당자 칸 뱃지와 같은 판정 — 담당자가 그날 진료로 정했으면 사업장 휴무가어도 휴무일이 아니다(R11).
+// 담당자 칸 뱃지와 같은 판정 — 담당자가 그날 운영으로 정했으면 사업장 휴무가어도 휴무일이 아니다(R11).
 const reservationPopupIsDayOff = computed(() => {
   const p = reservationPopupPayload.value
   const startDate = p?.startDateTime
@@ -1043,7 +1043,7 @@ function startHighlightTimer() {
     searchHighlightTimer = null
   }, SEARCH_HIGHLIGHT_MS)
 }
-// pick 한 예약 의사(staffName)가 속한 팀명 — 어느 팀에도 없으면 null(미지정 그룹).
+// pick 한 예약 담당자(staffName)가 속한 팀명 — 어느 팀에도 없으면 null(미지정 그룹).
 function findTeamOfDoctor(staffName) {
   const target = normalizeName(staffName)
   const team = teams.value.find(t =>
@@ -1168,7 +1168,7 @@ async function onRecentPick(item) {
   const d = dayjs(item.startAt)
   if (!d.isValid()) return
   const targetId = String(item.reservationId)
-  // 이미 현재 화면에 렌더된 카드면(날짜·의사·페이지 모두 표시 중) 날짜 이동/팀 전환 없이
+  // 이미 현재 화면에 렌더된 카드면(날짜·담당자·페이지 모두 표시 중) 날짜 이동/팀 전환 없이
   // 그 화면 그대로 하이라이트만. rects = 현재 그려진 카드 집합(runLayout 출력).
   const alreadyRendered = rects.value.some(r => String(r.id) === targetId)
   if (!alreadyRendered) {
@@ -1176,10 +1176,10 @@ async function onRecentPick(item) {
     if (filterStore.dataType === 'TREATMENT' && d.isAfter(dayjs(), 'day')) {
       filterStore.setDataType('APPOINTMENT', false)
     }
-    // 의사 컬럼 정합 — pick 의사가 visible 집합에 포함되도록 팀 컨텍스트 전환 + 의사 개별 필터 전체.
-    //  - 미지정 그룹 의사 → selectedTeamName=null(미지정 "전체")
-    //  - 팀 소속 의사 → 그 팀(팀 "전체"). setTeam 이 doctors 도 비움([], 전체).
-    // (그 의사가 팀 멤버라 "미지정"에서 빠져 카드가 안 그려지던 버그 해결)
+    // 담당자 컬럼 정합 — pick 담당자가 visible 집합에 포함되도록 팀 컨텍스트 전환 + 담당자 개별 필터 전체.
+    //  - 미지정 그룹 담당자 → selectedTeamName=null(미지정 "전체")
+    //  - 팀 소속 담당자 → 그 팀(팀 "전체"). setTeam 이 doctors 도 비움([], 전체).
+    // (그 담당자가 팀 멤버라 "미지정"에서 빠져 카드가 안 그려지던 버그 해결)
     const teamName = findTeamOfDoctor(item.staffName)
     filterStore.patch({ selectedTeamName: teamName, doctors: [] }, false)
     // 날짜 이동 — 마지막에 trigger=한 번만 재조회(normalize/클램프는 setPeriodDate 가 처리).
@@ -1220,7 +1220,7 @@ const bodyHeight = computed(() => {
     </div>
 
     <div class="v3-filterStripArea">
-      <!-- 공유 검색필터 바 재사용 (예약/진료·날짜·의사·상태·회원·검색·설정). 일별/주별 토글은 V3에서 숨김. -->
+      <!-- 공유 검색필터 바 재사용 (예약/방문·날짜·담당자·상태·회원·검색·설정). 일별/주별 토글은 V3에서 숨김. -->
       <SchedulerSearchFilter
         class="v3-searchfilter"
         :hide-view-mode="true"
@@ -1276,7 +1276,7 @@ const bodyHeight = computed(() => {
           @select-date="onDateStripSelectDate"
           @expand-month="onExpandMonth"
         />
-        <!-- N칸 보기 · 보기단계(zoom). 진료모드는 라이브 칸보기/보기단계 없음(1일 고정) → 툴바 숨김. -->
+        <!-- N칸 보기 · 보기단계(zoom). 방문 모드는 라이브 칸보기/보기단계 없음(1일 고정) → 툴바 숨김. -->
       <SchedulerToolbar
         v-if="!isTreatmentMode"
         :patient-slot-span="slotDivision"
@@ -1324,7 +1324,7 @@ const bodyHeight = computed(() => {
       <div v-if="isRefreshing" class="v3-refreshing-dim" aria-hidden="true" />
 
       <!-- 오늘 날짜 그룹 좌/우 경계선 — 헤더 날짜셀 브랜드 강조와 한 쌍.
-           헤더(날짜행+의사행)와 본문을 하나로 관통해야 해서 보드 최상위에 단일 요소로 둔다.
+           헤더(날짜행+담당자행)와 본문을 하나로 관통해야 해서 보드 최상위에 단일 요소로 둔다.
            헤더 셀/그리드 셀에 나눠 그리면 행 구분선(1px)마다 끊겨 보인다.
            x 는 시간축(48px) 다음부터 — 본문 leftPx 가 시간축 제외 기준이라 축 폭을 더한다. -->
       <div
@@ -1341,7 +1341,7 @@ const bodyHeight = computed(() => {
         <!-- 좌상단 빈 코너 -->
         <div class="v3-corner" />
 
-        <!-- 헤더: 날짜 > 의사 -->
+        <!-- 헤더: 날짜 > 담당자 -->
         <div class="v3-header">
         <div class="v3-header-inner" :style="{ width: `${availableWidth}px` }">
           <SchedulerHeader
@@ -1357,7 +1357,7 @@ const bodyHeight = computed(() => {
             @prev-doctor="onPrevDoctor"
             @next-doctor="onNextDoctor"
           />
-          <!-- 담당자 0명(표시 컬럼 없음): 의사 행은 없지만 날짜 행은 표기(날짜는 정해져 있음). -->
+          <!-- 담당자 0명(표시 컬럼 없음): 담당자 행은 없지만 날짜 행은 표기(날짜는 정해져 있음). -->
           <div v-else class="v3-header-dateonly" :class="{ 'is-today': selectedDate === todayYmd }">
             <span>{{ fallbackDateLabel }}</span>
             <span v-if="fallbackHolidayLabel" class="v3-header-holiday">{{ fallbackHolidayLabel }}</span>
@@ -1382,7 +1382,7 @@ const bodyHeight = computed(() => {
             class="scheduleTimeCell__btn scheduleTimeCell__btn--up"
             title="-60분"
             type="button"
-            aria-label="진료 시작 시간을 60분 앞당기기"
+            aria-label="운영 시작 시간을 60분 앞당기기"
             @click="onExtendTop"
         />
         <SchedulerTimeAxis :band-infos="v2Bands" />
@@ -1391,7 +1391,7 @@ const bodyHeight = computed(() => {
             class="scheduleTimeCell__btn scheduleTimeCell__btn--down"
             title="+60분"
             type="button"
-            aria-label="진료 종료 시간을 60분 늦추기"
+            aria-label="운영 종료 시간을 60분 늦추기"
             @click="onExtendBottom"
         />
       </div>
@@ -1406,7 +1406,7 @@ const bodyHeight = computed(() => {
           :band-row-count-map="{}"
           @cell-click="onGridCellClick"
         />
-        <!-- 카드 레이어: 고객명 + displayInfo(생년월일/나이/성별/진료/전화) 동적 + 상태색 + EXT뱃지.
+        <!-- 카드 레이어: 고객명 + displayInfo(생년월일/나이/성별/방문/전화) 동적 + 상태색 + EXT뱃지.
              display-info = 예약장부 설정 표시정보 순서대로 렌더(엔진 정규화=NAME 선두). -->
         <AppointmentLayer
           :rects="v2Rects"
@@ -1420,7 +1420,7 @@ const bodyHeight = computed(() => {
           @callback="onCardCallback"
         />
 
-        <!-- 칸수조절 핸들 — 예약·진료 공통(drag 적용). 컬럼별 개별 N(slotsByKey).
+        <!-- 칸수조절 핸들 — 예약·방문 공통(drag 적용). 컬럼별 개별 N(slotsByKey).
              edge-only: 헤더 담당자/날짜 그룹 컬럼 경계에만(sub-col 내부 분할선 X). -->
         <SubColResizeHandles
           :columns="v2Columns"
@@ -1461,7 +1461,7 @@ const bodyHeight = computed(() => {
       >›</button>
     </div>
 
-    <!-- 예약 생성/수정 팝업 — 공유 컴포넌트, 담당의사는 내부 staffStore(teamDoctors) -->
+    <!-- 예약 생성/수정 팝업 — 공유 컴포넌트, 담당자는 내부 staffStore(teamDoctors) -->
     <ReservationPopup
       :get-blocked-reason="getBlockedReason"
       :payload="reservationPopupPayload"
@@ -1818,7 +1818,7 @@ const bodyHeight = computed(() => {
 }
 .v3-header-inner {
   position: relative;
-  /* 높이는 SchedulerHeader 내용(날짜+의사 2행 / 의사1명 1행)에 따라 가변 */
+  /* 높이는 SchedulerHeader 내용(날짜+담당자 2행 / 담당자1명 1행)에 따라 가변 */
 }
 /* 담당자 0명일 때 날짜만 표기하는 헤더 행 (SchedulerHeader 날짜 행과 동일 톤) */
 .v3-header-dateonly {
@@ -1838,7 +1838,7 @@ const bodyHeight = computed(() => {
   background: var(--scheduler-brand, #2F6FED);
   color: #fff;
 }
-/* 의사 0명(fallback) 헤더의 공휴일명 — 빨강 강조 */
+/* 담당자 0명(fallback) 헤더의 공휴일명 — 빨강 강조 */
 .v3-header-holiday {
   color: #d32f2f;
   font-weight: 700;
@@ -1851,7 +1851,7 @@ const bodyHeight = computed(() => {
   background: #d32f2f;
   color: #fff;
 }
-/* 의사축(의사행) 페이징 <> 노출. 날짜축 <>(날짜행)는 미사용 → 숨김(본문 좌우 page-nav 가 날짜 담당). */
+/* 담당자축(담당자행) 페이징 <> 노출. 날짜축 <>(날짜행)는 미사용 → 숨김(본문 좌우 page-nav 가 날짜 담당). */
 .v3-header :deep(.header-row--date .header-nav) {
   display: none;
 }

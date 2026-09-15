@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  *
- * UiStatusFilter — 예약/진료 상태 체크 필터 (전체 + 상태별 버튼, 각 버튼에 건수 뱃지).
+ * UiStatusFilter — 예약/방문 상태 체크 필터 (전체 + 상태별 버튼, 각 버튼에 건수 뱃지).
  *
  * UiDoctorFilter 와 달리 **v-model 이 없다**. 선택 상태를 직접 useSchedulerFilterStore.status 에
  * 읽고 쓴다 — 즉 이 컴포넌트를 두 군데에 놓으면 두 곳이 같은 상태를 공유한다.

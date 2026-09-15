@@ -75,7 +75,7 @@ const STATUS_LABEL = {
   '01': '완료',
   '02': '미이행',
   '03': '취소',
-  '05': '접수대기',
+  '05': '대기',
 };
 
 /* 뱃지는 색·글자 모두 예약 카드와 같은 규칙(toDisplayStatus)을 따른다 — 예약장부에서는 00·03 만
@@ -92,7 +92,7 @@ function statusLabelOf(item) {
   return STATUS_LABEL[code] ?? code;
 }
 
-/* 화면정의서 OSP_MD_APB01/APB02 §5-1 "최근 진료(예약)일시" 표기.
+/* 화면정의서 OSP_MD_APB01/APB02 §5-1 "최근 방문(예약)일시" 표기.
  * 정의서 문구는 yy.dd.mm 이지만 같은 화면의 예시 데이터가 26.03.21 · 25.12.20 이라
  * dd.mm 로는 성립하지 않는다(월이 21·20). 예시 기준인 yy.mm.dd 로 맞춘다. */
 function formatRecentDateTime(dtm) {

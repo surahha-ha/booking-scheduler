@@ -9,7 +9,7 @@
  *
  *   키 없음      = 미설정 → 사업장 운영시간을 따른다
  *   키 + null    = 휴무로 정함 → 기관 값으로 대체되지 않는다
- *   키 + Range   = 진료
+ *   키 + Range   = 운영
  *
  * 이 판정(resolveDisplay)은 컴포넌트 안에만 있어 마운트로 검증한다.
  */
@@ -47,7 +47,7 @@ vi.mock('@/api/siteApi', () => ({
 import SchedulerSettingsTreatmentView from '@/pages/desktop/scheduleBoard/components/SchedulerSettingsTreatmentView.vue'
 
 const STAFF_ID = 101
-const DOCTOR = '김의사'
+const DOCTOR = '김담당'
 
 /** 이번 달에서 그 요일인 날짜 하나 (1~28일 안에서 고른다 — 모든 달에 존재) */
 function dateOfWeekday(weekday: number) {
@@ -64,7 +64,7 @@ const D_OFF = dateOfWeekday(2)    // 화 — 본인이 휴무로 정함 (행 + n
 const D_UNSET = dateOfWeekday(3)  // 수 — 정한 적 없음 (행 자체가 없다)
 const D_NO_INSTITUTION = dateOfWeekday(0)  // 일 — 담당자도 사업장도 정한 적이 없다
 
-/* 담당자 weekly — 월만 진료, 화는 명시적 휴무, 수는 행을 아예 넣지 않는다(미설정). */
+/* 담당자 weekly — 월만 운영, 화는 명시적 휴무, 수는 행을 아예 넣지 않는다(미설정). */
 const staffTimes = [
   { dayCd: 1, staffOpenHm: '0900', staffCloseHm: '1800' },
   { dayCd: 2, staffOpenHm: null, staffCloseHm: null },
@@ -102,8 +102,8 @@ function entriesOfDay(wrapper: any, ymd: string) {
   }))
 }
 
-/** '진료일'/'휴무일' 세그먼트 클릭 */
-async function selectDayType(wrapper: any, label: '진료일' | '휴무일') {
+/** '운영일'/'휴무일' 세그먼트 클릭 */
+async function selectDayType(wrapper: any, label: '운영일' | '휴무일') {
   const btn = wrapper.findAll('.scheduleSegment__btn').find((b: any) => b.text() === label)
   await btn!.trigger('click')
   await wrapper.vm.$nextTick()
@@ -115,7 +115,7 @@ describe('운영일정 보기 — 요일 3상태 표기 (설정 화면과 동일
     mocks.getTeams.mockResolvedValue({
       data: { payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: STAFF_ID, staffName: DOCTOR }] }] } },
     })
-    // 휴무 규칙 없음 — 이 달은 전부 진료일
+    // 휴무 규칙 없음 — 이 달은 전부 운영일
     mocks.getTreatmentSettings.mockResolvedValue({
       data: { payload: { recurringOffRules: [], offDates: [], workDates: [], holidayClosedYn: false, teams: [] } },
     })
@@ -125,14 +125,14 @@ describe('운영일정 보기 — 요일 3상태 표기 (설정 화면과 동일
     mocks.getSiteWorkHours.mockResolvedValue({ data: { payload: { site: institutionTimes } } })
   })
 
-  it('진료 — 본인이 정한 시간이 그대로 표기된다 (기관 값으로 덮이지 않는다)', async () => {
+  it('운영 — 본인이 정한 시간이 그대로 표기된다 (기관 값으로 덮이지 않는다)', async () => {
     const wrapper = await mountView()
     expect(entriesOfDay(wrapper, D_WORK)).toEqual([{ name: DOCTOR, time: '09:00 ~ 18:00' }])
   })
 
   it('★미설정 — 정한 적 없는 요일은 사업장 운영시간으로 표기된다', async () => {
     const wrapper = await mountView()
-    // 예전에는 이 요일이 "휴무"이라 진료일 목록에서 아예 빠졌다.
+    // 예전에는 이 요일이 "휴무"이라 운영일 목록에서 아예 빠졌다.
     expect(entriesOfDay(wrapper, D_UNSET)).toEqual([{ name: DOCTOR, time: '10:00 ~ 17:00' }])
   })
 
@@ -144,7 +144,7 @@ describe('운영일정 보기 — 요일 3상태 표기 (설정 화면과 동일
     expect(entriesOfDay(wrapper, D_NO_INSTITUTION)).toEqual([{ name: DOCTOR, time: '09:00 ~ 18:00' }])
   })
 
-  /* 사업장이 임시진료로 지정한 날짜에는 그 날짜 운영시간이 따로 저장된다(응답 dateTimes).
+  /* 사업장이 임시운영으로 지정한 날짜에는 그 날짜 운영시간이 따로 저장된다(응답 dateTimes).
    * 보드·타임라인·설정 화면이 모두 이 값을 요일보다 먼저 쓴다 — 이 화면만 빠지면 시간이 갈린다. */
   it('★사업장이 그 날짜에 저장한 시각은 요일 시간을 이긴다', async () => {
     mocks.getSiteWorkHours.mockResolvedValue({
@@ -170,7 +170,7 @@ describe('운영일정 보기 — 요일 3상태 표기 (설정 화면과 동일
     expect(entriesOfDay(wrapper, D_OFF)).toEqual([{ name: DOCTOR, time: '(휴무)' }])
   })
 
-  it('휴무일 모드에서 미설정·진료 요일은 휴무로 잡히지 않는다', async () => {
+  it('휴무일 모드에서 미설정·운영 요일은 휴무로 잡히지 않는다', async () => {
     const wrapper = await mountView()
     await selectDayType(wrapper, '휴무일')
 
@@ -195,7 +195,7 @@ describe('운영일정 보기 — 요일 3상태 표기 (설정 화면과 동일
 
     // 본인이 정한 요일은 조회 실패와 무관하게 그대로 보인다
     expect(entriesOfDay(wrapper, D_WORK)).toEqual([{ name: DOCTOR, time: '09:00 ~ 18:00' }])
-    // 미설정 요일은 진료일 목록에서 빠지고
+    // 미설정 요일은 운영일 목록에서 빠지고
     expect(entriesOfDay(wrapper, D_UNSET)).toEqual([])
 
     // 휴무일 목록에도 잡히지 않는다 — 휴무로 정한 적이 없다

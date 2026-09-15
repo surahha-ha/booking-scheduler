@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  *
- * 운영일정 "보기" 년 뷰 — 현재 탭(진료일/휴무일)에 해당하는 날짜는 굵게(is-active), 아닌 날짜는 흐리게(is-mismatch).
+ * 운영일정 "보기" 년 뷰 — 현재 탭(운영일/휴무일)에 해당하는 날짜는 굵게(is-active), 아닌 날짜는 흐리게(is-mismatch).
  *
  * 두 클래스는 상호배타다. 같은 셀이 둘 다 갖거나 둘 다 없으면 "굵게" 규칙이 깨진 것이다.
  */
@@ -37,7 +37,7 @@ vi.mock('@/api/siteApi', () => ({
 import SchedulerSettingsTreatmentView from '@/pages/desktop/scheduleBoard/components/SchedulerSettingsTreatmentView.vue'
 
 const STAFF_ID = 101
-const DOCTOR = '김의사'
+const DOCTOR = '김담당'
 
 /** 이번 달에서 그 요일인 날짜 하나 (1~28일 안에서 고른다 — 모든 달에 존재) */
 function dateOfWeekday(weekday: number) {
@@ -49,10 +49,10 @@ function dateOfWeekday(weekday: number) {
   throw new Error(`이번 달에 요일 ${weekday} 없음`)
 }
 
-const D_WORK = dateOfWeekday(1) // 월 — 진료
+const D_WORK = dateOfWeekday(1) // 월 — 운영
 const D_OFF = dateOfWeekday(2)  // 화 — 휴무로 정함
 
-/* 담당자 weekly — 월만 진료, 화는 명시적 휴무. */
+/* 담당자 weekly — 월만 운영, 화는 명시적 휴무. */
 const staffTimes = [
   { dayCd: 1, staffOpenHm: '0900', staffCloseHm: '1800' },
   { dayCd: 2, staffOpenHm: null, staffCloseHm: null },
@@ -101,7 +101,7 @@ describe('운영일정 보기 년 뷰 — 현재 탭에 해당하는 날짜는 �
     mocks.getSiteWorkHours.mockResolvedValue({ data: { payload: { site: [] } } })
   })
 
-  it('진료일 탭 — 진료하는 날은 is-active, 휴무일은 is-mismatch', async () => {
+  it('운영일 탭 — 운영하는 날은 is-active, 휴무일은 is-mismatch', async () => {
     const wrapper = await mountView()
     await clickSegment(wrapper, '년')
 
@@ -114,7 +114,7 @@ describe('운영일정 보기 년 뷰 — 현재 탭에 해당하는 날짜는 �
     expect(off.classes()).not.toContain('is-active')
   })
 
-  it('휴무일 탭 — 뒤집힌다: 휴무일이 is-active, 진료일이 is-mismatch', async () => {
+  it('휴무일 탭 — 뒤집힌다: 휴무일이 is-active, 운영일이 is-mismatch', async () => {
     const wrapper = await mountView()
     await clickSegment(wrapper, '년')
     await clickSegment(wrapper, '휴무일')

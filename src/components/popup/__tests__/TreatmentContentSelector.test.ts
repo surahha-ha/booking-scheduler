@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-// 진료내용 선택기 — 그룹/항목 선택, memo 독립성, 빈 그룹 처리, 항목 페이징.
+// 방문내용 선택기 — 그룹/항목 선택, memo 독립성, 빈 그룹 처리, 항목 페이징.
 //
 // 이 화면의 사고는 전부 "보이는 것과 저장되는 것이 다르다"에서 났다.
 // 그래서 emit 계약(무엇이 form 으로 나가나)과 표시 상태(무엇이 눌리나·보이나)를 함께 고정한다.
@@ -22,16 +22,16 @@ function seedGroups() {
   return [
     {
       serviceGroupId: GROUP_WITH_ITEMS,
-      serviceGroupName: '교정',
+      serviceGroupName: '점검',
       items: [
-        {serviceItemId: ITEM_FIRST, serviceItemName: '교정상담'},
+        {serviceItemId: ITEM_FIRST, serviceItemName: '정밀상담'},
         {serviceItemId: ITEM_SECOND, serviceItemName: '장치조정'},
       ],
     },
     {serviceGroupId: GROUP_EMPTY, serviceGroupName: '빈그룹', items: []},
     {
       serviceGroupId: GROUP_MANY,
-      serviceGroupName: '보철',
+      serviceGroupName: '관리',
       // 페이지당 8개 — 9개면 페이저가 뜬다
       items: Array.from({length: 9}, (_, i) => ({serviceItemId: 30 + i, serviceItemName: `항목${i}`})),
     },
@@ -126,7 +126,7 @@ describe('그룹·항목 선택', () => {
   it('그룹을 고르면 그 그룹의 첫 항목이 함께 선택된다 — 짝이 깨진 채 남지 않는다', async () => {
     const wrapper = await mountSelector({groupId: GROUP_WITH_ITEMS, itemId: ITEM_FIRST})
 
-    await chips(wrapper)[2].trigger('click') // 보철
+    await chips(wrapper)[2].trigger('click') // 관리
     expect(lastEmit(wrapper, 'update:groupId')).toBe(GROUP_MANY)
     expect(lastEmit(wrapper, 'update:itemId')).toBe(30)
   })
@@ -139,9 +139,9 @@ describe('그룹·항목 선택', () => {
     expect(lastEmit(wrapper, 'update:itemId')).toBeNull()
   })
 
-  it('항목을 바꿔도 그룹과 memo 는 그대로다 — 진료항목과 직접입력은 독립이다', async () => {
+  it('항목을 바꿔도 그룹과 memo 는 그대로다 — 서비스 항목과 직접입력은 독립이다', async () => {
     const wrapper = await mountSelector({
-      groupId: GROUP_WITH_ITEMS, itemId: ITEM_FIRST, modelValue: '구강검진',
+      groupId: GROUP_WITH_ITEMS, itemId: ITEM_FIRST, modelValue: '기본진단',
     })
 
     await items(wrapper)[1].trigger('click')
@@ -158,15 +158,15 @@ describe('그룹·항목 선택', () => {
     expect(wrapper.emitted('update:itemId')?.length ?? 0).toBe(before)
   })
 
-  it('memo 입력은 진료항목 선택을 건드리지 않는다', async () => {
+  it('memo 입력은 서비스 항목 선택을 건드리지 않는다', async () => {
     const wrapper = await mountSelector({groupId: GROUP_WITH_ITEMS, itemId: ITEM_FIRST})
     const groupEmits = wrapper.emitted('update:groupId')?.length ?? 0
 
     const memo = wrapper.find('.tcs-memo')
-    ;(memo.element as HTMLTextAreaElement).value = '임플란트 상담'
+    ;(memo.element as HTMLTextAreaElement).value = '설치 상담'
     await memo.trigger('input')
 
-    expect(lastEmit(wrapper, 'update:modelValue')).toBe('임플란트 상담')
+    expect(lastEmit(wrapper, 'update:modelValue')).toBe('설치 상담')
     expect(wrapper.emitted('update:groupId')?.length ?? 0).toBe(groupEmits)
   })
 })

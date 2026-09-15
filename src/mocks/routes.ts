@@ -181,7 +181,7 @@ export const routes: MockRoute[] = [
             }
             /* 공휴일 운영시간도 요일별과 같이 전체 치환이다(BE buildHolidayRows 규약).
              *  - null/미전송 → baseline 보존. 공휴일을 휴무로 바꾼 저장이 시간을 지우면
-             *    다시 진료로 되돌렸을 때 값이 사라진다
+             *    다시 운영으로 되돌렸을 때 값이 사라진다
              *  - 전체 구간(work)이 없으면 휴게만 남길 이유가 없어 빈 목록 = 미설정으로 떨어진다(삭제 경로)
              *  - 휴게는 시작·종료가 둘 다 있을 때만 행이 되므로, 왕복에서 한쪽만 남지 않는다 */
             if (b.holidayHours != null && typeof b.holidayHours === 'object') {

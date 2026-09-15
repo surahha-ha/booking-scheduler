@@ -10,7 +10,7 @@
 
 - 활성 화면은 하나: `/book` → `src/pages/desktop/scheduler-v3/SchedulerV3Page.vue`. 라우트 정의는 `src/pages/index.js`.
 - 렌더링은 자체 레이아웃 엔진(`src/scheduler-engine/redesign/`)이 좌표를 계산한다. 외부 캘린더 라이브러리 없음.
-- 도메인 용어는 `src/messages/ko.json` 의 `terms` 가 단일 출처다(담당자·서비스 항목·고객·운영시간·휴무). 업종을 바꾸려면 그 섹션만 고친다. 코드 식별자(`doctorName`·`TREATMENT` 등)와 일부 문구에는 이식 전 용어가 남아 있다 — 문구 치환은 별도 작업으로 한 번에 한다.
+- 도메인 용어는 `src/messages/ko.json` 의 `terms` 가 단일 출처다(담당자·서비스 항목·고객·운영시간·휴무). 업종을 바꾸려면 그 섹션만 고친다. 문구·주석·문서는 이 용어표를 따른다(두 장부는 예약=`APPOINTMENT`, 방문=`TREATMENT`; 근무일 문맥은 "운영"). 코드 식별자(`doctorName`·`TREATMENT`·`TreatmentItem*` 등)와 파일명에는 이식 전 이름이 남아 있으며 이는 의도적이다 — 식별자 개명은 별도 결정 사항.
 
 ```bash
 pnpm install         # 락파일은 pnpm-lock.yaml 하나뿐 — npm install 은 드리프트를 낸다

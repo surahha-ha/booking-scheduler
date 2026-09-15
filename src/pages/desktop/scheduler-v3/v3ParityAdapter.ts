@@ -78,8 +78,8 @@ export function toV2Columns(columns: ResolvedColumn[]): FlatColumn[] {
 }
 
 /**
- * redesign ResolvedColumn[] → V2 HeaderNode[] (날짜 > 의사 트리).
- * leaf.key = unit.key 로 FlatColumn.key 와 통일 → SchedulerHeader 의 "의사 1명 시 doctor 행 제거" 자동 동작.
+ * redesign ResolvedColumn[] → V2 HeaderNode[] (날짜 > 담당자 트리).
+ * leaf.key = unit.key 로 FlatColumn.key 와 통일 → SchedulerHeader 의 "담당자 1명 시 doctor 행 제거" 자동 동작.
  * holidayLabelFor: 날짜→공휴일 휴무 라벨('휴무') lookup. 전달 시 date 노드 holidayLabel 채움(날짜 행 빨간 표기).
  */
 export function toV2HeaderTree(

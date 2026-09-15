@@ -10,32 +10,32 @@ import {RECURRING_OPTIONS} from './offDayOptions';
  * 상태 보관·렌더링은 화면이 갖는다.
  *
  * 판정 순서(구체적인 지정이 일반 규칙을 이긴다):
- *   1. 그 날짜 지정   → 있으면 그것이 답 (빈 blocks = 휴무 / blocks 있음 = 진료)
- *   2. 공휴일 휴무    → 담당자 공휴일 진료여부가 'N' 이면 휴무
+ *   1. 그 날짜 지정   → 있으면 그것이 답 (빈 blocks = 휴무 / blocks 있음 = 운영)
+ *   2. 공휴일 휴무    → 담당자 공휴일 운영 여부가 'N' 이면 휴무
  *   3. 요일 규칙      → 매월 N번째 규칙 해당 = 휴무, 그다음 그 요일 설정(빈 blocks = 매주 휴무)
  *   4. 아무것도 없음  → 미설정. 사업장 판정을 상속
  *
- * ★공휴일 진료('Y')는 "공휴일이라는 이유로는 쉬지 않는다"는 뜻일 뿐, 아래 요일 판정을 덮지 않는다.
+ * ★공휴일 운영('Y')는 "공휴일이라는 이유로는 쉬지 않는다"는 뜻일 뿐, 아래 요일 판정을 덮지 않는다.
  * 매주 금요일 쉬는 담당자가 금요일 공휴일에 나온다는 결론은 성립하지 않는다. 그래서 2단계는
- * 휴무만 확정하고 진료는 확정하지 않는다.
+ * 휴무만 확정하고 운영은 확정하지 않는다.
  *
  * ★상속({@link isStaffOffOn} 의 inheritedOff)에 **사업장의 공휴일 판정은 넣지 않는다.**
  * 공휴일은 담당자가 자기 값(holidayOpenYn)으로 따로 관리하므로 기관에서 내려받을 것이 없다 —
- * 넣으면 "공휴일에도 진료"로 정해 둔 담당자가 기관 공휴일 휴무를 상속해 휴무가 된다.
+ * 넣으면 "공휴일에도 운영"로 정해 둔 담당자가 기관 공휴일 휴무를 상속해 휴무가 된다.
  */
 export type StaffDayState = 'OFF' | 'WORK' | 'INHERIT';
 
-/** 진료 구간 1건. 판정은 "구간이 있는가"만 보므로 시각 형식은 상관하지 않는다. */
+/** 운영 구간 1건. 판정은 "구간이 있는가"만 보므로 시각 형식은 상관하지 않는다. */
 export type TimeBlockLike = {kind?: string; start?: string | null; end?: string | null};
 
 export type StaffOffContext = {
-    /** 그 날짜 지정. `undefined` = 지정 없음 / `[]` = 그 날짜 휴무 / 구간 있음 = 그 날짜 진료 */
+    /** 그 날짜 지정. `undefined` = 지정 없음 / `[]` = 그 날짜 휴무 / 구간 있음 = 그 날짜 운영 */
     dateBlocks?: TimeBlockLike[];
-    /** 그 요일 설정. `undefined` = 미설정 / `[]` = 매주 휴무 / 구간 있음 = 진료 */
+    /** 그 요일 설정. `undefined` = 미설정 / `[]` = 매주 휴무 / 구간 있음 = 운영 */
     weekdayBlocks?: TimeBlockLike[];
     /** 매월 N번째 O요일 휴무 규칙 목록. 목록에 있는 조합이 곧 휴무가다. */
     monthlyOffRules?: StaffMonthlyOffRule[];
-    /** 공휴일 진료여부. 값이 없는 것은 조회 전 과도 상태뿐이며, 그때는 사업장 판정을 상속한다. */
+    /** 공휴일 운영 여부. 값이 없는 것은 조회 전 과도 상태뿐이며, 그때는 사업장 판정을 상속한다. */
     holidayOpenYn?: StaffHolidayOpenYn;
     /** 그 날짜가 국가 공휴일인가 (공휴일 스위치가 아니라 날짜 자체의 성질) */
     isHoliday?: boolean;
@@ -132,7 +132,7 @@ export function inheritedInstitutionOffOn(ctx: InstitutionInheritContext): boole
 }
 
 /**
- * 담당자가 그 날짜를 어떻게 정했는가 — 휴무(OFF) / 진료(WORK) / 정하지 않음(INHERIT).
+ * 담당자가 그 날짜를 어떻게 정했는가 — 휴무(OFF) / 운영(WORK) / 정하지 않음(INHERIT).
  *
  * `INHERIT` 를 `OFF` 로 접지 않는 이유는 "정하지 않음"과 "휴무로 정함"이 다른 상태이기 때문이다.
  * 미설정이면 사업장 값을 따라야 하고, 저장할 때도 행을 만들지 않는다.
@@ -143,10 +143,10 @@ export function resolveStaffDayState(date: Dayjs, context: StaffOffContext): Sta
         return context.dateBlocks.length === 0 ? 'OFF' : 'WORK';
     }
 
-    // 2. 공휴일 휴무만 여기서 확정한다. 'Y'(공휴일에도 진료)는 요일 판정을 덮지 않고 아래로 내려간다.
+    // 2. 공휴일 휴무만 여기서 확정한다. 'Y'(공휴일에도 운영)는 요일 판정을 덮지 않고 아래로 내려간다.
     if (context.isHoliday && context.holidayOpenYn === 'N') return 'OFF';
 
-    // 3. 매월 N번째 규칙이 그 요일 설정보다 구체적이다 — 매주 진료여도 그 날짜만 쉰다.
+    // 3. 매월 N번째 규칙이 그 요일 설정보다 구체적이다 — 매주 운영여도 그 날짜만 쉰다.
     if (matchesMonthlyOffRule(date, context.monthlyOffRules)) return 'OFF';
 
     if (context.weekdayBlocks !== undefined) {

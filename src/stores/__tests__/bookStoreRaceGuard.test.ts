@@ -33,7 +33,7 @@ vi.mock('@/api/bookApi', () => ({
 
 // 담당자·사업장 조회는 이 테스트의 관심사가 아니다 — 조회 체인이 굴러가기만 하면 된다.
 const oimStub = vi.hoisted(() => ({
-    doctors: [{id: '김의사', text: '김의사', staffId: 1, openYn: 'Y'}],
+    doctors: [{id: '김담당', text: '김담당', staffId: 1, openYn: 'Y'}],
     teams: [],
     hospitalRules: {weekly: {1: [{start: '09:00', end: '18:00'}]}},
     loadDoctor: vi.fn(async () => true),
@@ -63,7 +63,7 @@ function bookResp(names: string[]) {
                     customerName: name,
                     startAt: '2026-08-19T10:00:00',
                     endAt: '2026-08-19T10:30:00',
-                    staffName: '김의사',
+                    staffName: '김담당',
                     customerId: 100 + i,
                     statusCode: '00',
                 })),

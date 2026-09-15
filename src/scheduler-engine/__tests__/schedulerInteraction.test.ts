@@ -46,7 +46,7 @@ describe('quickActionLabel', () => {
 
   function getQuickActionLabel(isAppointment: boolean, status: string): string | null {
     if (isAppointment) return null
-    if (status === '00') return '접수'
+    if (status === '00') return '대기'
     if (status === '05') return '완료'
     return null
   }
@@ -55,23 +55,23 @@ describe('quickActionLabel', () => {
     expect(getQuickActionLabel(true, '00')).toBeNull()
   })
 
-  it('진료 상태 00 → 접수', () => {
-    expect(getQuickActionLabel(false, '00')).toBe('접수')
+  it('방문 상태 00 → 대기', () => {
+    expect(getQuickActionLabel(false, '00')).toBe('대기')
   })
 
-  it('진료 상태 05 → 완료', () => {
+  it('방문 상태 05 → 완료', () => {
     expect(getQuickActionLabel(false, '05')).toBe('완료')
   })
 
-  it('진료 상태 01 → null', () => {
+  it('방문 상태 01 → null', () => {
     expect(getQuickActionLabel(false, '01')).toBeNull()
   })
 
-  it('진료 상태 02 → null', () => {
+  it('방문 상태 02 → null', () => {
     expect(getQuickActionLabel(false, '02')).toBeNull()
   })
 
-  it('진료 상태 03 → null', () => {
+  it('방문 상태 03 → null', () => {
     expect(getQuickActionLabel(false, '03')).toBeNull()
   })
 })

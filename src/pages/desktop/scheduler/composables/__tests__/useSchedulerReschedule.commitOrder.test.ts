@@ -14,11 +14,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { useSchedulerReschedule, type RescheduleResult } from '../useSchedulerReschedule'
 
-const ORIGIN = { appointmentId: '77', fromColumnKey: '2026-06-12|김원장', startMinute: 600, endMinute: 630 }
+const ORIGIN = { appointmentId: '77', fromColumnKey: '2026-06-12|김대표', startMinute: 600, endMinute: 630 }
 const SLOT = {
-  columnKey  : '2026-06-12|박원장',
+  columnKey  : '2026-06-12|박대표',
   date       : '2026-06-12',
-  resourceId : '박원장',
+  resourceId : '박대표',
   startMinute: 780,
   endMinute  : 810,
 }
@@ -90,9 +90,9 @@ describe('useSchedulerReschedule — 커밋 중단 시 변경 모드 유지', ()
 
     expect(onCommit).toHaveBeenCalledWith(expect.objectContaining({
       appointmentId : '77',
-      fromColumnKey : '2026-06-12|김원장',
-      toColumnKey   : '2026-06-12|박원장',
-      toResourceId  : '박원장',
+      fromColumnKey : '2026-06-12|김대표',
+      toColumnKey   : '2026-06-12|박대표',
+      toResourceId  : '박대표',
       newStartMinute: 780,
       newEndMinute  : 810, // 슬롯 endMinute 가 아니라 원 duration(30분) 기준
     }))

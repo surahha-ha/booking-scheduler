@@ -20,7 +20,7 @@ const yearRange = computed(() => {
   return datePickerYearRange(10, 10);
 });
 
-// 진료 화면: 오늘까지만 선택 가능
+// 방문 화면: 오늘까지만 선택 가능
 const maxDate = computed(() => selectedDataType.value === 'TREATMENT' ? new Date() : null);
 
 // 보고 있는 기간의 마지막 날. WEEK 의 periodDate 는 그 주의 일요일이라 시작일만 보면
@@ -29,7 +29,7 @@ const periodEndDate = computed(() => selectedViewMode.value === 'WEEK'
     ? dayjs(selectedPeriodDate.value).add(6, 'day')   // week-start=0(일) 기준 토요일
     : dayjs(selectedPeriodDate.value));
 
-// 진료 화면: > 버튼 비활성 (오늘 이후 이동 불가). maxDate 와 같은 규칙 —
+// 방문 화면: > 버튼 비활성 (오늘 이후 이동 불가). maxDate 와 같은 규칙 —
 // 오늘이 든 기간까지는 볼 수 있고, 전부 미래인 다음 기간으로는 못 넘어간다.
 const canMoveNext = computed(() => {
   if (selectedDataType.value !== 'TREATMENT') return true;

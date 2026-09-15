@@ -82,7 +82,7 @@ const LEFT_TAB_ITEMS = [
 
 /* 요일 라벨·반복 옵션은 휴무 컨트롤(SchedulerSettingsOffDayControls)과 공유한다 → offDayOptions.ts */
 
-/* 진료팀 구성원으로 배정할 수 없는 담당자명. BE 가 사업장 설정 경유 예약의 담당의로 고정 사용하는 자리표시자다
+/* 팀 구성원으로 배정할 수 없는 담당자명. BE 가 사업장 설정 경유 예약의 담당의로 고정 사용하는 자리표시자다
  * (McsBookSyncService.resolveDoctorName · McsReservationBackfillService 의 선등록). */
 const UNASSIGNABLE_DOCTOR_NAME = '미지정';
 
@@ -101,10 +101,10 @@ const props = defineProps({
 const emit = defineEmits(['cancel', 'save']);
 
 /* 운영시간 탭 — 블록 종류 분리:
- * - WORK: 진료 블록. 시작~종료 단일 구간 하나뿐이다(오전/오후/야간 3세션은 폐기).
+ * - WORK: 운영 블록. 시작~종료 단일 구간 하나뿐이다(오전/오후/야간 3세션은 폐기).
  *   사업장·담당자 모두 요일별로 편집한다.
  * - BREAK: 휴게시간1·2. **사업장만 소유한다.** 담당자 화면에서는 기관 값을 읽기 전용으로 보여줄 뿐이고,
- *   보드에서도 의사 컬럼에 기관 휴게가 그대로 그려진다.
+ *   보드에서도 담당자 컬럼에 기관 휴게가 그대로 그려진다.
  * 코드 심볼(LUNCH/DINNER)과 API 필드(lunchStartHm·dinnerStartHm)는 그대로 두고 화면 표기만 휴게시간1/2 다. */
 const WORK_BLOCK_KINDS = ['WORK'];
 const BREAK_BLOCK_KINDS = ['LUNCH', 'DINNER'];
@@ -118,10 +118,10 @@ const BLOCK_KIND_LABEL = {
 const CELL_ENTRY_VISIBLE_MAX = 3;
 
 /* 사업장 운영시간(요일별) — 원천은 사업장 설정.
- *  - WORK: Map<weekday, Block[]>. 진료 블록(WORK) 하나뿐이다.
+ *  - WORK: Map<weekday, Block[]>. 운영 블록(WORK) 하나뿐이다.
  *  - BREAK: Map<weekday, {LUNCH:{start,end}|null, DINNER:{start,end}|null}>.
  *    ⚠️ 휴게를 WORK 의 Block[] 에 섞지 않는다 — 표시·집계·전송 코드가 WORK 를 운영시간으로만 보므로
- *       섞으면 진료 구간 자리에 휴게가 끼어든다. */
+ *       섞으면 운영 구간 자리에 휴게가 끼어든다. */
 const institutionWeeklyDayMap = ref(new Map());
 const institutionBreaksByWeekday = ref(new Map());
 
@@ -132,17 +132,17 @@ const institutionBreaksByWeekday = ref(new Map());
  *   (getStaffWorkBlock · buildInstitutionTimesPayload)에
  *   공휴일이 요일 행으로 새어 나가 담당자 기본값이나 site[] 에 엉뚱한 dayCd 로 실린다.
  * 공휴일에 쉬는지 여부는 여기가 아니라 includePublicHolidays(=holidayClosedYn) 가 갖는다 —
- * 휴무로 바꿔도 시간 값은 지우지 않고 보존한다(다시 진료로 되돌렸을 때 살아 있어야 한다). */
+ * 휴무로 바꿔도 시간 값은 지우지 않고 보존한다(다시 운영으로 되돌렸을 때 살아 있어야 한다). */
 const HOLIDAY_OWNER = 'INSTITUTION_HOLIDAY';
 const HOLIDAY_SLOT = 0;
 const institutionHolidayDayMap = ref(new Map());
 const institutionHolidayBreaks = ref(new Map());
 
-/* 사업장 **일자별** 운영시간 — Map<'YYYY-MM-DD', Block[]>. 임시진료로 지정한 날짜에 실제로 저장된 시각이다.
+/* 사업장 **일자별** 운영시간 — Map<'YYYY-MM-DD', Block[]>. 임시운영으로 지정한 날짜에 실제로 저장된 시각이다.
  * ⚠️ 조회 전용이다(응답 dateTimes). 자체 에 일자별 시간 편집 UI 가 없어 저장 payload 에도 없고,
  *   그래서 dirty 판정(SITE_STATE_KEYS)에도 넣지 않는다.
  * 이 값을 안 보면 보드·타임라인은 그 날짜에 저장된 시각으로 열리는데 이 화면만 요일 시각을 그려
- * 같은 날 같은 담당자의 시간이 화면마다 갈린다(임시진료 지정 후 요일 운영시간을 바꾼 경우 등). */
+ * 같은 날 같은 담당자의 시간이 화면마다 갈린다(임시운영 지정 후 요일 운영시간을 바꾼 경우 등). */
 const institutionDateDayMap = ref(new Map());
 
 /* ownerKey('STAFF:<id>') × weekday × WeekdayBlock[]
@@ -187,7 +187,7 @@ function hasBlocksFor(ownerKey, weekday) {
  *  요일 단위였다 — 이 표만 어긋나 있었다.
  *
  * 세 상태는 요일마다 따로 선다(BE SiteService.getStaffWorkHours 규약과 같다):
- *   entry 없음 = 미설정(기관 값 상속) / entry = [] = 휴무 / entry = [block] = 진료. */
+ *   entry 없음 = 미설정(기관 값 상속) / entry = [] = 휴무 / entry = [block] = 운영. */
 function usesInstitutionDefault(staffId, weekday) {
   return !workingHoursByOwner.value.get(`STAFF:${staffId}`)?.has(weekday);
 }
@@ -206,7 +206,7 @@ function showsInheritedStaffTime(staffId, weekday) {
       && getStaffWeekdayBlocks(`STAFF:${staffId}`, weekday).length > 0;
 }
 
-/* 그 담당자·요일에 실제로 표시할 진료 블록들. 미설정 요일이면 사업장의 그 요일 블록이다.
+/* 그 담당자·요일에 실제로 표시할 운영 블록들. 미설정 요일이면 사업장의 그 요일 블록이다.
  * 채워 넣지 않고 읽는 시점에 참조하므로, 기관 값을 방금 화면에서 고쳤어도 즉시 따라온다.
  *
  * ★상속 판정을 하는 곳은 여기 하나여야 한다 — 담당자 7행 표 · 월 캘린더 라벨 · 일자 지정 popover 가
@@ -238,7 +238,7 @@ function getStaffWorkBlock(staffId, weekday) {
   return getStaffWeekdayBlocks(`STAFF:${staffId}`, weekday).find(b => b.kind === 'WORK');
 }
 
-/* 그 담당자·요일의 진료 시작/종료("HH:MM") */
+/* 그 담당자·요일의 운영 시작/종료("HH:MM") */
 function fetchStaffWorkHours(staffId, weekday, field) {
   return getStaffWorkBlock(staffId, weekday)?.[field] ?? '';
 }
@@ -281,7 +281,7 @@ function onStaffTimeInput(event, staffId, weekday, field) {
  *
  * 요일축이 이미 있는 표라 요일마다 실값을 그대로 싣는다 — 예전의 한 줄 요약은 요일마다 값이
  * 다르면 '요일별 상이'로만 알려 줘, 실제 값을 보려면 사업장 패널을 따로 펼쳐 대조해야 했다.
- * 그 요일에 진료 자체가 없으면(휴무) 휴게도 의미가 없어 '-' 로 둔다. */
+ * 그 요일에 운영 자체가 없으면(휴무) 휴게도 의미가 없어 '-' 로 둔다. */
 function staffBreakText(staffId, weekday, kind) {
   if (!getStaffWorkBlock(staffId, weekday)) return '-';
   const range = getInstitutionBreaks(weekday)[kind];
@@ -339,7 +339,7 @@ function isWeekdayClosed(weekday, ownerKey = 'INSTITUTION') {
 
   /* ★담당자 설정이 사업장 휴무보다 우선한다(R11) — 사업장이 쉬는 요일이라도 그 담당자가
    * 운영시간을 정해 뒀으면 잠그지 않는다. 보드(useSchedulerRules)·휴무일 탭 뷰어와 같은 규칙이다.
-   * 휴무일 탭이 만든 상태를 그대로 읽는다: entry = [] 휴무 / entry = [block] 진료 / entry 없음 = 미설정.
+   * 휴무일 탭이 만든 상태를 그대로 읽는다: entry = [] 휴무 / entry = [block] 운영 / entry 없음 = 미설정.
    * 미설정일 때만 사업장을 상속한다. 운영시간 탭은 잠그기만 하고 값은 지우지 않는다. */
   const entry = getOwnerDayMap(ownerKey)?.get(weekday);
   if (entry !== undefined) return entry.length === 0;
@@ -356,7 +356,7 @@ function isWeekdayClosed(weekday, ownerKey = 'INSTITUTION') {
  * ★행이 있다는 것 자체가 "그 요일을 정했다"는 뜻이므로 빈 blocks 도 entry 로 남긴다 —
  * 버리면 명시적 휴무가 미설정으로 강등돼, 다시 저장할 때 사업장 값이 도로 채워진다.
  * setStaffWorkHours / clearStaffWorkHours 이 쓰는 표현과 같다:
- *   entry 없음 = 미설정 / entry = [] = 휴무 / entry = [block] = 진료.
+ *   entry 없음 = 미설정 / entry = [] = 휴무 / entry = [block] = 운영.
  * 결과가 통째로 비면 = 한 번도 정하지 않은 담당자 → 사업장 값을 기본값으로 쓴다
  * (채워 넣지 않고 읽는 시점에 참조한다 — fetchStaffWorkHours 참고). */
 function timesToDayMap(times) {
@@ -449,7 +449,7 @@ const dateOverrides = ref(new Map());
  *  같은 상태를 두 자리에 두면 운영시간 탭과 휴무일 탭이 서로를 덮어쓴다(계획서 R1). */
 const staffMonthlyOffs = ref(new Map());
 
-/* 담당자 공휴일 진료여부 — Map<ownerKey, 'Y' | 'N'>. NOT NULL 2상태라 서버가 전원 값을 내려준다.
+/* 담당자 공휴일 운영 여부 — Map<ownerKey, 'Y' | 'N'>. NOT NULL 2상태라 서버가 전원 값을 내려준다.
  * 상속은 팀 배치 시점 복사(applyInheritedSettings)로 해결한다 — 키 부재는 조회 전 과도 상태뿐. */
 const staffHolidayOff = ref(new Map());
 
@@ -546,8 +546,8 @@ function editorHasBreaks(ownerKey) {
   return ownerKey === 'INSTITUTION' || ownerKey === HOLIDAY_OWNER;
 }
 
-/* popover draft → 진료 Block[].
- * 사용여부 토글을 두지 않는다 — 시작·종료가 모두 있으면 진료, 둘 다 비우면 그 요일/날짜는 휴무가다.
+/* popover draft → 운영 Block[].
+ * 사용여부 토글을 두지 않는다 — 시작·종료가 모두 있으면 운영, 둘 다 비우면 그 요일/날짜는 휴무가다.
  * (휴게시간과 같은 규약이고, 담당자 7행 인라인 표와도 같다.)
  * ★한쪽만 채운 블록도 그대로 담는다 — 닫을 때 버리면 반쪽 입력이 조용히 사라져 그 요일이 휴무가
  *  된다. 상태에 남겨 두고 저장 게이트(findIncompleteOwner)가 잡는다. */
@@ -575,14 +575,14 @@ const INCOMPLETE_TIME_MSG = '시작시간과 종료시간을 모두 입력해 �
 const INVALID_TIME_MSG = '시간을 00:00 ~ 23:59 범위로 입력해 주세요.';
 const REVERSED_TIME_MSG = '종료시간은 시작시간보다 늦어야 합니다.';
 
-/* 공휴일에 진료하기로 했으면 공휴일 운영시간을 반드시 정해야 한다.
- * 시간이 없어도 그날은 휴무가 아니라 **종일진료**다(useSchedulerRules 주석 참조) — 즉 시간 제한 없이
+/* 공휴일에 운영하기로 했으면 공휴일 운영시간을 반드시 정해야 한다.
+ * 시간이 없어도 그날은 휴무가 아니라 **종일운영**다(useSchedulerRules 주석 참조) — 즉 시간 제한 없이
  * 하루가 통째로 열린다. 대개는 그런 의도가 아니라 입력 누락이라 저장 시점에 한 번 잡아 준다.
- * 공휴일 운영시간(공휴일 운영시간 테이블)은 시작·종료시분이 NOT NULL 이라 "시간 없는 공휴일 진료" 행
+ * 공휴일 운영시간(공휴일 운영시간 테이블)은 시작·종료시분이 NOT NULL 이라 "시간 없는 공휴일 운영" 행
  * 자체가 저장되지 않는다는 점도 같다 — 입력하지 않으면 정한 것이 아무것도 남지 않는다. */
-const HOLIDAY_TIME_REQUIRED_MSG = '공휴일에 진료하려면 공휴일 운영시간을 입력해 주세요.';
+const HOLIDAY_TIME_REQUIRED_MSG = '공휴일에 운영하려면 공휴일 운영시간을 입력해 주세요.';
 
-/* 진료팀은 구성원이 있어야 뜻이 있다 — 이름만 있는 팀은 예약을 받을 수도, 운영시간을 가질 수도 없다.
+/* 팀은 구성원이 있어야 뜻이 있다 — 이름만 있는 팀은 예약을 받을 수도, 운영시간을 가질 수도 없다.
  * 서버는 이 상태를 거부하지 않고 팀만 저장하므로(구성원 목록이 비면 그냥 넣지 않는다) 화면에서 막는다.
  * ★문구에 팀 이름을 넣지 않는다 — 빈 팀이 여럿이면 하나만 말하게 되어 나머지를 감춘다.
  *  어느 팀인지는 화면에서 빈 팀 전부를 하이라이트해 보여준다(시간 미완성 칸과 같은 규약). */
@@ -599,7 +599,7 @@ const TEAM_MEMBERS_REQUIRED_MSG = '팀 구성원이 없습니다.\n구성원을 
  * 안내하면 사용자가 엉뚱한 곳을 고친다.
  *
  * 한쪽만 채워진 시간 행 = 미완성. 하나라도 입력했으면 시작·종료 둘 다 있어야 한다.
- * 둘 다 비운 것은 정상이다 — 진료행은 "그 요일 휴무", 휴게행은 "휴게 없음"이라는 뜻이다.
+ * 둘 다 비운 것은 정상이다 — 운영행은 "그 요일 휴무", 휴게행은 "휴게 없음"이라는 뜻이다.
  * ★이 가드가 없으면 반쪽 입력이 조용히 버려진다(blocksToWorkRange 가 짝이 안 맞으면 null 로 바꾼다).
  *  사용자는 09:00 을 입력해 두고 저장했는데 그 요일이 휴무로 저장돼 있는 상황이 된다.
  * {ownerKey, key} 를 돌려주는 이유 = 저장 가드가 그 패널을 펼치고 그 요일/날짜 popover 를 다시 열어
@@ -618,7 +618,7 @@ function findReversedOwner(dayMapByOwner) {
   return findOwnerBy(dayMapByOwner, b => isReversedTimeRange(b.start, b.end));
 }
 
-/* 진료 요일인데 사업장 운영시간이 없는 요일들 — **저장하면 '매주 휴무'이 될 요일**이다.
+/* 운영 요일인데 사업장 운영시간이 없는 요일들 — **저장하면 '매주 휴무'이 될 요일**이다.
  * 배너와 buildPayload 가 같은 값을 본다: 안내한 것과 다른 것이 저장되면 안 된다.
  *
  * 막지 않고 보정하는 이유 — 원천(마이페이지)이 "운영시간이 모두 없으면 휴무"으로 읽으므로
@@ -646,7 +646,7 @@ const missingTimeWeekdays = computed(() => {
   return found;
 });
 
-/* 매월 n번째**만** 쉬는 요일인가 — 나머지 주에 진료하는 요일. 매주이거나 다섯 개 전부(isEveryWeekOff)면
+/* 매월 n번째**만** 쉬는 요일인가 — 나머지 주에 운영하는 요일. 매주이거나 다섯 개 전부(isEveryWeekOff)면
  * 쉬지 않는 주가 없어 여기 들지 않는다. */
 function isMonthlyOnlyOff(weekday) {
   const options = weekdayOffs.value.get(weekday);
@@ -654,7 +654,7 @@ function isMonthlyOnlyOff(weekday) {
 }
 
 /* 매월 n번째만 쉬는 요일인데 사업장 운영시간이 없는 요일들 — **운영시간이 있어야 저장되는 요일**이다.
- * 나머지 주에 진료하는 요일이라 자동 '매주 휴무'(missingTimeWeekdays)의 대상이 아니고, 미설정으로
+ * 나머지 주에 운영하는 요일이라 자동 '매주 휴무'(missingTimeWeekdays)의 대상이 아니고, 미설정으로
  * 두면 보드가 기본 운영시간으로 열린다. 배너 둘째 줄과 저장 게이트(findTimeGateViolation)가 같은
  * 값을 본다. 잠금·로드 전 제외는 missingTimeWeekdays 와 같은 이유다. */
 const monthlyOnlyMissingTimeWeekdays = computed(() => {
@@ -689,12 +689,12 @@ const monthlyOnlyMissingTimeSegments = computed(() => monthlyOnlyMissingTimeWeek
 })));
 
 /* 게이트 안내는 배너 둘째 줄과 같은 문장이어야 한다 — 같은 문제를 누르기 전과 후에 다르게 말하면
- * 사용자가 다른 문제로 읽는다. "수요일은 매월 1, 3번째, 금요일은 매월 2번째 휴무가라 …" */
+ * 사용자가 다른 문제로 읽는다. "수요일은 매월 1, 3번째, 금요일은 매월 2번째 휴무라 …" */
 function monthlyTimeRequiredMsg(weekdays) {
   const head = weekdays
       .map(w => `${WEEKDAY_LABELS[w]}요일은 매월 ${monthlyOrdinalsLabel(w)}번째`)
       .join(', ');
-  return `${head} 휴무가라 나머지 주에 진료합니다.\n운영시간을 입력해 주세요.`;
+  return `${head} 휴무라 나머지 주에 운영합니다.\n운영시간을 입력해 주세요.`;
 }
 
 /* 매월 n번째만 쉬는 사업장 요일의 빈 운영시간 — 붉은 표시 판정. 게이트 4단이 가리키는 칸이다.
@@ -715,8 +715,8 @@ function findOwnerBy(dayMapByOwner, predicate) {
   return null;
 }
 
-/* 휴게시간 Map<weekday, {LUNCH, DINNER}> → 진료 블록과 같은 Map<weekday, {start,end}[]> 모양.
- * 게이트가 진료·휴게를 한 predicate 로 보게 하기 위한 어댑터다(값은 복사하지 않는다). */
+/* 휴게시간 Map<weekday, {LUNCH, DINNER}> → 운영 블록과 같은 Map<weekday, {start,end}[]> 모양.
+ * 게이트가 운영·휴게를 한 predicate 로 보게 하기 위한 어댑터다(값은 복사하지 않는다). */
 function breaksToGateBlocks(breaksMap) {
   const out = new Map();
   for (const [weekday, entry] of breaksMap ?? []) {
@@ -725,7 +725,7 @@ function breaksToGateBlocks(breaksMap) {
   return out;
 }
 
-/* 저장 게이트가 훑는 시간 상태 전부 — 담당자 주간 · 일자 지정 · 사업장 요일/공휴일 진료 · 휴게.
+/* 저장 게이트가 훑는 시간 상태 전부 — 담당자 주간 · 일자 지정 · 사업장 요일/공휴일 운영 · 휴게.
  * 소유자 키가 겹치는 Map(담당자 주간과 일자 지정은 둘 다 STAFF:)이 있어 하나로 합치지 않고 순서대로 본다.
  * 순서가 곧 안내 순서다 — 먼저 걸린 소유자의 패널을 펼친다.
  * ★잠긴 자리는 보지 않는다 — 매주 휴무 요일·공휴일 휴무는 버튼이 disabled 라 고칠 길이 없고,
@@ -835,7 +835,7 @@ function editorSlotInvalid(editor, kind, field) {
 }
 
 /* 사업장 요일/공휴일 버튼의 오류 표시 — popover 를 닫아 버린 뒤에는 버튼이 그 요일을 가리키는
- * 유일한 자리다. 진료·휴게 어느 한 칸이라도 timeFieldInvalid 면 켠다(어느 칸인지는 열어 보면 보인다). */
+ * 유일한 자리다. 운영·휴게 어느 한 칸이라도 timeFieldInvalid 면 켠다(어느 칸인지는 열어 보면 보인다). */
 function ownerWeekdayInvalid(ownerKey, weekday) {
   if (ownerKey === 'INSTITUTION' && !hasInstitutionWorkRange(weekday)
       && monthlyTimeMissing(ownerKey, weekday, '', '')) return true;
@@ -856,7 +856,7 @@ function blocksInvalid(blocks) {
 /* 시간 입력칸의 blur/Enter 시점 처리 — 세 컨텍스트가 함께 쓴다.
  *
  * ★살릴 수 있으면 정규화해 확정하고("930"→"09:30"), 못 살리면 **원문을 그대로 둔다.**
- *  말없이 지우면 진료행에서는 그 요일이 휴무로 바뀐다 — 사용자는 시간을 쳐 놨는데 쉬는 날이 된다.
+ *  말없이 지우면 운영행에서는 그 요일이 휴무로 바뀐다 — 사용자는 시간을 쳐 놨는데 쉬는 날이 된다.
  *  대신 빨간 테두리로 가리키고 저장 게이트에서 막는다.
  * ★DOM 값을 직접 맞춘다: "0930"→"09:30" 처럼 state 가 이미 같은 값이면 재렌더가 일어나지 않아
  *  :value 바인딩만으로는 입력칸에 친 원문("0930")이 그대로 남는다. */
@@ -1025,8 +1025,8 @@ function commitWeekdayEditor() {
     else nextDayMap.set(weekday, blocks);
     dayMapRef.value = nextDayMap;
 
-    /* 휴게시간 — 둘 다 비우면 없음(null). 진료 블록이 하나도 없는(휴무) 요일은 휴게도 지운다.
-     * 한쪽만 채운 휴게도 진료 블록과 같이 보존한다 — 저장 게이트(timeGateSources)가 잡는다. */
+    /* 휴게시간 — 둘 다 비우면 없음(null). 운영 블록이 하나도 없는(휴무) 요일은 휴게도 지운다.
+     * 한쪽만 채운 휴게도 운영 블록과 같이 보존한다 — 저장 게이트(timeGateSources)가 잡는다. */
     const nextBreaks = new Map(breaksRef.value);
     if (blocks.length === 0) {
       nextBreaks.delete(weekday);
@@ -1056,7 +1056,7 @@ function closeWeekdayEditor() {
 }
 
 /* ===== 미지정 데이터 적용 modal =====
- * 팀에 등록된 담당자 중 1명을 선택 → 미지정 예약/진료건 일괄 적용 대상.
+ * 팀에 등록된 담당자 중 1명을 선택 → 미지정 예약/방문 건 일괄 적용 대상.
  * 모달 본체는 공용 UnassignedDataModal (메인 화면 담당자 순서 변경 팝업과 동일 컴포넌트).
  * 대상 목록은 '저장 전 편집 draft(teams)' 기준이라 여기서 만들어 prop 으로 내려준다. */
 const unassignedDataModalOpen = ref(false);
@@ -1335,7 +1335,7 @@ function isRecurringOff(date) {
 }
 
 /* 공휴일 여부 (체크박스 무관 — 날짜 자체가 국가 공휴일인지).
- * 공휴일은 휴무일(반복)·특정일자(override) 로직에서 제외하고 '공휴일' 체크박스로만 휴무/진료 결정한다. */
+ * 공휴일은 휴무일(반복)·특정일자(override) 로직에서 제외하고 '공휴일' 체크박스로만 휴무/운영 결정한다. */
 function isHolidayDate(date) {
   return holidayStore.isHoliday(date.format('YYYY-MM-DD'));
 }
@@ -1490,9 +1490,9 @@ const staffPickerDisabledIds = computed(() => {
   return ids;
 });
 
-/* 구성원 picker 목록 — 진료팀에 배정할 수 없는 담당자를 걸러낸다.
- * "미지정"은 사람이 아니라 사업장 설정 경유 예약의 담당의 자리표시자이며, BE 가 병원마다 담당자 원장에 1회 선등록한다.
- * 팀에 넣으면 "미지정 예약"(= 원장에는 있으나 팀 멤버가 아닌 건)이라는 정의가 무너져 미지정 데이터 설정이 대상을 잃는다.
+/* 구성원 picker 목록 — 팀에 배정할 수 없는 담당자를 걸러낸다.
+ * "미지정"은 사람이 아니라 사업장 설정 경유 예약의 담당의 자리표시자이며, BE 가 사업장마다 담당자 대표에 1회 선등록한다.
+ * 팀에 넣으면 "미지정 예약"(= 대표에는 있으나 팀 멤버가 아닌 건)이라는 정의가 무너져 미지정 데이터 설정이 대상을 잃는다.
  * 이미 팀에 들어가 있는 경우에는 staged 에 그대로 남으므로 저장으로 빠지지는 않는다(목록에서만 감춘다). */
 const staffPickerDoctors = computed(() =>
     doctors.value.filter(d => d.text !== UNASSIGNABLE_DOCTOR_NAME)
@@ -1512,7 +1512,7 @@ function inheritedStaffSettingsFrom(sourceKey) {
       const monthlyOptions = new Set([...options].filter(o => o !== 'WEEKLY'));
       if (monthlyOptions.size > 0) monthly.set(weekday, monthlyOptions);
     }
-    /* 기관 임시진료(WORK) 일자는 담당자에겐 시간이 필요하다 — 이 시점엔 요일 시간이 없으니 기본값. */
+    /* 기관 임시운영(WORK) 일자는 담당자에겐 시간이 필요하다 — 이 시점엔 요일 시간이 없으니 기본값. */
     const overrides = new Map();
     for (const [dateKey, type] of dateOverrides.value) {
       overrides.set(dateKey, type === 'OFF' ? [] : [{...DEFAULT_WORK_BLOCK}]);
@@ -1843,7 +1843,7 @@ function isNaturallyOff(date) {
 
 /* ===== 우측 뷰어의 owner 일반화 (§4-5-2) =====
  * 12개월 뷰어는 선택한 대상의 휴무일을 그린다. 담당자 판정은 순수함수(offDayRules.ts)가 하고,
- * "정하지 않음"은 사업장 판정을 상속한다 — 미설정을 휴무로 접으면 기관이 진료하는 날에도
+ * "정하지 않음"은 사업장 판정을 상속한다 — 미설정을 휴무로 접으면 기관이 운영하는 날에도
  * 그 담당자만 통째로 쉬는 것처럼 보인다. */
 function staffOffContextFor(ownerKey, date) {
   const dateKey = date.format('YYYY-MM-DD');
@@ -1860,12 +1860,12 @@ function staffOffContextFor(ownerKey, date) {
  *
  * ★상속은 **축 단위**다. 요일 축을 스스로 정한 담당자에게는 기관 반복 휴무를, 일자 축을 스스로 정한
  *  담당자에게는 기관 일자 지정을 더는 적용하지 않는다. 축마다 따로 끊기므로 둘을 함께 묻지 않는다 —
- *  요일 휴무를 하나 정했다고 병원 임시휴무일까지 안 따라가면 그건 정한 적 없는 결정이다.
+ *  요일 휴무를 하나 정했다고 사업장 임시휴무일까지 안 따라가면 그건 정한 적 없는 결정이다.
  *
  * ★공휴일 축은 다르다 — `HOLIDAY_OPEN_YN` 은 NOT NULL 2상태라 늘 자기 값이고, 기관 값은 팀 배치 시점에
  *  이미 복사됐다(계획서 §3-2). 그래서 기관에서 런타임으로 내려받을 것이 없다. 답을 holidayOffFor 로
  *  내는 이유는 **판정과 체크박스 표시를 한 함수로 묶기 위해서다** — 조회 전 과도 상태로 값이 비어 있을 때
- *  둘이 갈리면, 체크는 기관 값으로 켜져 보이는데 판정만 진료가 된다.
+ *  둘이 갈리면, 체크는 기관 값으로 켜져 보이는데 판정만 운영이 된다.
  * 공휴일에 기관 **요일** 휴무를 보지 않는 것은 기관 축과 같은 규약이다(isNaturallyOff) — 기관도 공휴일을
  * 반복 휴무에서 빼고 공휴일 스위치로만 가른다. */
 function inheritedInstitutionOff(date, ownerKey) {
@@ -1887,7 +1887,7 @@ function isDisplayedOffFor(ownerKey, date) {
 /* 범위 OFF 토글 (단일 클릭/드래그 공통)
  * - 범위 내 모두 OFF → 모두 해제 (자연 OFF는 'WORK' override, 아니면 override 삭제)
  * - 그 외 → 모두 OFF (자연 OFF는 override 삭제, 아니면 'OFF' override)
- * 공휴일 날짜도 토글 대상이다 — 공휴일에 임시진료/임시휴무를 지정할 수 있어야 한다
+ * 공휴일 날짜도 토글 대상이다 — 공휴일에 임시운영/임시휴무를 지정할 수 있어야 한다
  * (지정하면 일자별 행으로 저장돼 체크박스보다 우선한다). */
 function toggleRangeOff(startKey, endKey) {
   const a = dayjs(startKey);
@@ -1923,16 +1923,16 @@ function toggleRangeOff(startKey, endKey) {
   dateOverrides.value = next;
 }
 
-/* 캘린더에서 "그 날짜 진료"로 뒤집을 때 채울 운영시간 (§4-4).
+/* 캘린더에서 "그 날짜 운영"로 뒤집을 때 채울 운영시간 (§4-4).
  * 그 담당자의 그 요일 → 없으면 사업장의 그 요일 → 그것도 없으면 기본값.
  *
- * ★채우는 주체가 FE 인 이유 — BE 가 저장 시점에 채우면 "휴무일 탭이 진료로 뒤집은 날짜"와
- *  "운영시간 탭에서 정상적으로 휴무 지정한 날짜"를 구분할 수 없어 후자까지 진료로 뒤집힌다(계획서 D5).
- * 지정 자체가 만들어지는 시점에 채운다 — 일자 지정은 "빈 blocks = 휴무 / 값 있음 = 진료" 로만
- * 뜻이 갈려, 값 없는 진료 지정을 만들어 두면 그 순간부터 휴무와 구분되지 않는다. */
+ * ★채우는 주체가 FE 인 이유 — BE 가 저장 시점에 채우면 "휴무일 탭이 운영으로 뒤집은 날짜"와
+ *  "운영시간 탭에서 정상적으로 휴무 지정한 날짜"를 구분할 수 없어 후자까지 운영으로 뒤집힌다(계획서 D5).
+ * 지정 자체가 만들어지는 시점에 채운다 — 일자 지정은 "빈 blocks = 휴무 / 값 있음 = 운영" 로만
+ * 뜻이 갈려, 값 없는 운영 지정을 만들어 두면 그 순간부터 휴무와 구분되지 않는다. */
 const DEFAULT_WORK_BLOCK = {kind: 'WORK', start: '09:00', end: '18:00'};
 
-/* 그 담당자·요일을 "진료"로 확정할 때 넣을 운영시간 (계획서 §4-4)
+/* 그 담당자·요일을 "운영"로 확정할 때 넣을 운영시간 (계획서 §4-4)
  * — 자기 그 요일 → 없으면 사업장 그 요일 → 그것도 없으면 09:00~18:00. */
 function staffWorkBlocksFor(ownerKey, weekday) {
   const blocks = getStaffWeekdayBlocks(ownerKey, weekday);
@@ -1970,8 +1970,8 @@ function toggleStaffRangeOff(ownerKey, startKey, endKey) {
     /* ★누르고 지나간 날은 **자연 상태와 같아도** 자기 지정으로 남긴다 — 사용자가 고른 값이다.
      *  사업장과 달리 지우지 않는 이유: 일자 축 상속은 축 단위라, 같은 드래그가 다른 날에 지정을
      *  만드는 순간 이 대상은 기관 일자 지정을 더는 따라가지 않는다. 그때 "어차피 상속으로 휴무"이라며
-     *  지정을 만들지 않고 넘어간 날만 진료로 되살아난다(기관 임시휴무일을 가로질러 휴무로 끌면
-     *  그 하루만 진료로 남던 결함). 지우는 조작은 칩의 × 하나로 둔다. */
+     *  지정을 만들지 않고 넘어간 날만 운영으로 되살아난다(기관 임시휴무일을 가로질러 휴무로 끌면
+     *  그 하루만 운영으로 남던 결함). 지우는 조작은 칩의 × 하나로 둔다. */
     dayMap.set(key, newOff ? [] : workDayBlocksFor(ownerKey, cursor));
     cursor = cursor.add(1, 'day');
   }
@@ -2025,10 +2025,10 @@ function hasOwnDateOverrides(ownerKey) {
 }
 
 /* 그 대상의 일자 지정 — Map<'YYYY-MM-DD', 'OFF' | 'WORK'>.
- * 담당자 쪽은 운영시간 override 가 그대로 답이다: 빈 blocks = 그 날짜 휴무 / 값 있음 = 그 날짜 진료.
+ * 담당자 쪽은 운영시간 override 가 그대로 답이다: 빈 blocks = 그 날짜 휴무 / 값 있음 = 그 날짜 운영.
  *
  * ★일자 축을 **아직 하나도 정하지 않았을 때만** 사업장 지정을 상속해 보여준다.
- *  하나라도 정했으면 자기 것만 그린다 — 섞어 그리면 자기가 정한 날과 병원을 따라가는 날이
+ *  하나라도 정했으면 자기 것만 그린다 — 섞어 그리면 자기가 정한 날과 사업장을 따라가는 날이
  *  한 칩 목록에 나란히 앉아, 어느 쪽이 자기 결정인지 화면에서 사라진다. */
 function dateOverridesFor(ownerKey) {
   if (ownerKey === OFF_OWNER_INSTITUTION) return dateOverrides.value;
@@ -2073,7 +2073,7 @@ const specificDates = computed(() => {
   const dateLabel = (d) => (multiYear ? `${d.year()}년 ` : '') + `${d.month() + 1}월 ${d.date()}일`;
 
   return ranges.map((r) => {
-    /* 타입은 그룹 헤더(진료/휴무)가 말해 준다 — 칩마다 "(휴무)"을 붙이면 눈에 안 들어온다. */
+    /* 타입은 그룹 헤더(운영/휴무)가 말해 준다 — 칩마다 "(휴무)"을 붙이면 눈에 안 들어온다. */
     const label = r.startKey === r.endKey
         ? dateLabel(r.startDate)
         : `${dateLabel(r.startDate)} ~ ${dateLabel(r.endDate)}`;
@@ -2081,13 +2081,13 @@ const specificDates = computed(() => {
   });
 });
 
-/* 특정일자 칩을 **진료/휴무**으로 묶는다.
- * 종전에는 연도로 묶고 칩마다 "(휴무)"을 붙였는데, 정작 중요한 진료/휴무 구분이 괄호 안에 묻혀
+/* 특정일자 칩을 **운영/휴무**으로 묶는다.
+ * 종전에는 연도로 묶고 칩마다 "(휴무)"을 붙였는데, 정작 중요한 운영/휴무 구분이 괄호 안에 묻혀
  * 눈에 들어오지 않았다. 연도는 여러 해가 섞였을 때만 칩 라벨에 실린다(specificDates 참조).
- * 순서는 휴무 → 진료. 이 탭의 주 관심사가 휴무일이다. */
+ * 순서는 휴무 → 운영. 이 탭의 주 관심사가 휴무일이다. */
 const SPECIFIC_DATE_GROUPS = [
   {type: 'OFF', label: '휴무'},
-  {type: 'WORK', label: '진료'},
+  {type: 'WORK', label: '운영'},
 ];
 
 const specificDatesByType = computed(() =>
@@ -2154,7 +2154,7 @@ function getCalendarOwner() {
  * 공휴일 시간을 등록하지 않은 기관은 요일 시간으로 내려간다 — 종전 동작 유지다. 여기서 미표기로
  *  바꾸면 지금 보이던 줄이 통째로 사라진다.
  * 기관이 공휴일 휴무(holidayClosedYn)이어도 등록된 시간 값은 보존되므로(institutionHolidayDayMap 주석)
- *  담당자만 holidayOpenYn='Y' 로 진료하는 경우에도 이 값을 쓴다 — 그 사람이 실제로 여는 시간에 가장 가깝다. */
+ *  담당자만 holidayOpenYn='Y' 로 운영하는 경우에도 이 값을 쓴다 — 그 사람이 실제로 여는 시간에 가장 가깝다. */
 function institutionBlocksOn(date, weekday) {
   /* 일자 > 공휴일 > 요일 — 보드 예약검증(pickDailySchedule)·타임라인 밴드(resolveUnitHours)와 같은 순서다.
    * 날짜를 콕 집어 저장된 시각이 가장 구체적인 의도라 공휴일 시간보다도 먼저다. */
@@ -2224,17 +2224,17 @@ function getCalendarDoctorOrder(owner) {
  * isDesignated = 그 (직원, 날짜)에 일자 지정이 걸려 있다 → 셀에서 그 줄만 강조한다(화면정의서 APB033 §6-2
  * "해당 운영시간만 하이라이트되어 표시"). 요일 반복만 따르는 줄과 눈으로 갈리지 않으면
  * 어느 날을 따로 지정해 뒀는지 캘린더에서 확인할 방법이 없다.
- * 사업장 휴무일에도 억제하지 않는다 — 직원별 판정이 갈리면서(지정 진료는 기관 휴무를 이긴다, R11)
+ * 사업장 휴무일에도 억제하지 않는다 — 직원별 판정이 갈리면서(지정 운영은 기관 휴무를 이긴다, R11)
  * 그런 날일수록 "이 줄만 지정"이라는 신호가 필요해졌다. */
 function formatListEntries(doctorIds, date, dateKey) {
   const weekday = date.day();
   const entries = [];
   /* cascade(사용자 모델): 담당자별 운영시간 → (미설정이면)사업장 운영시간(⚙ TB) → (그것도 모르면)미표기.
    *  - 휴무 여부는 직원마다 담당자 축(isDisplayedOffFor, §4-2)으로 판정한다. 셀의 isOff(사업장 축)를
-   *    그대로 덮으면 공휴일 진료('Y')·기관 휴무 요일의 명시적 진료(R11)로 정한 담당자까지 (휴무)이 된다 —
+   *    그대로 덮으면 공휴일 운영('Y')·기관 휴무 요일의 명시적 운영(R11)로 정한 담당자까지 (휴무)이 된다 —
    *    날짜 옆 '휴무' 라벨(사업장 축)과 직원 리스트(각자 판정)는 축이 다르다(화면정의서 APB031 §2-1).
    *    명시적 휴무(요일·일자)·매월 규칙은 모두 이 판정에 접혀 있어 별도 분기가 필요 없다.
-   *  - ★"휴무로 정함"과 "아직 안 정함"을 갈라야 한다. 예전에는 둘 다 진료 구간이 없다는 이유로
+   *  - ★"휴무로 정함"과 "아직 안 정함"을 갈라야 한다. 예전에는 둘 다 운영 구간이 없다는 이유로
    *    똑같이 "(휴무)"으로 찍었는데, 그래서 사업장 운영시간을 못 불러온 것뿐인데도
    *    전원이 휴무로 보였다. 쉬기로 한 것과 모르는 것은 다르다. */
   /* 빌려 쓸 값: 사업장의 그 날짜 운영시간 → 그것도 없으면 보드·타임라인이 여는 기본 운영시간.
@@ -2258,7 +2258,7 @@ function formatListEntries(doctorIds, date, dateKey) {
       entries.push({staffId: id, name, time, label: `${name} ${time}`, isOff: false, isDesignated,
         isOwn: true, isInvalid: blocksInvalid(blocks)});
     } else if (institutionBlocks) {
-      /* 담당자별 미설정(공휴일 진료 'Y'인데 자기 시간이 없는 경우 포함) → 사업장 운영시간으로 표기.
+      /* 담당자별 미설정(공휴일 운영 'Y'인데 자기 시간이 없는 경우 포함) → 사업장 운영시간으로 표기.
        * 원천은 외부 시스템(사업장 운영시간 테이블)이다 — 자체 DB 에는 이 테이블이 없다.
        * isInherited 로 갈라 둔다: 빌린 값과 자기 값이 똑같이 생기면, 사업장 운영시간을 지웠을 때
        * 표기가 사라지는 것을 "담당자 운영시간이 삭제됐다"고 읽게 된다(showsInheritedStaffTime). */
@@ -2267,7 +2267,7 @@ function formatListEntries(doctorIds, date, dateKey) {
         isInherited: true, isInvalid: blocksInvalid(institutionBlocks)});
     }
     /* 미설정인데 사업장 운영시간도 모르는 직원은 표기하지 않는다 — 화면정의서(§2-1)는
-     * 진료하는 직원의 시간과 휴무 직원의 (휴무)만 정의한다. 휴무로 정한 적이 없는데
+     * 운영하는 직원의 시간과 휴무 직원의 (휴무)만 정의한다. 휴무로 정한 적이 없는데
      * (휴무)으로 찍으면 거짓이고, 기관 조회 실패 상태는 배너·저장차단이 따로 알린다. */
   }
   return entries;
@@ -2368,7 +2368,7 @@ function onCellStaffTimeInput(event, kind, field) {
   commitTimeInput(event, v => setCellStaffBlockTime(kind, field, v));
 }
 
-/* 진료 블록 목록이 같은가 — 단일 구간(WORK)이라 kind·시작·종료만 보면 된다. */
+/* 운영 블록 목록이 같은가 — 단일 구간(WORK)이라 kind·시작·종료만 보면 된다. */
 function sameBlocks(a, b) {
   return a.length === b.length
       && a.every((x, i) => x.kind === b[i].kind && x.start === b[i].start && x.end === b[i].end);
@@ -2437,7 +2437,7 @@ function buildMonthCells(year, month, offOwnerKey = OFF_OWNER_INSTITUTION) {
 
     /* 우선순위 = 일자별 지정(override) > 공휴일 체크박스 > 반복 휴무요일.
      * 지정한 것이 일반 규칙을 이긴다 — BE 운영중 판정(McsService)도 일자별 운영시간을 먼저 본다.
-     * (공휴일이라도 임시진료로 지정했으면 진료다.)
+     * (공휴일이라도 임시운영으로 지정했으면 운영다.)
      * 담당자를 보고 있으면 그 담당자 축으로 판정하고, 정하지 않은 날은 사업장 판정을 상속한다. */
     const isOff = isCurrentMonth && isDisplayedOffFor(offOwnerKey, cursor);
 
@@ -2623,7 +2623,7 @@ function dayMapToTimes(dayMap) {
   return rows;
 }
 
-/* blocks → 진료 시작/종료("HHmm") 쌍. 한쪽만 입력된 중간 상태는 휴무(null)으로 보낸다. */
+/* blocks → 운영 시작/종료("HHmm") 쌍. 한쪽만 입력된 중간 상태는 휴무(null)으로 보낸다. */
 function blocksToWorkRange(blocks) {
   const work = blocks.find(b => b.kind === 'WORK');
   const start = work ? HHMMToHmm(work.start) : null;
@@ -2644,23 +2644,23 @@ function blocksToOverrideTimeFields(blocks) {
 }
 
 /* 사업장(site) 운영시간(요일별) → settings/save 의 site[] 필드.
- * 진료하는 요일 행만 보낸다. BE 는 site 에서 생략된 요일을 "행 없음"으로만 처리한다 —
+ * 운영하는 요일 행만 보낸다. BE 는 site 에서 생략된 요일을 "행 없음"으로만 처리한다 —
  * 휴무는 site 생략이 아니라 recurringOffRules(WEEKLY)로 표현해야 사업장 설정에 휴무로 남는다(#휴무 이중표현).
  *
- * ★정합성: 매주 휴무(WEEKLY)인 요일은 site 진료행으로 내보내지 않는다.
+ * ★정합성: 매주 휴무(WEEKLY)인 요일은 site 운영행으로 내보내지 않는다.
  *  화면에서 그 요일에 운영시간이 남아 있어도(휴무일 탭에서 나중에 휴무 지정한 경우) 휴무 규칙이 우선이다
- *  — site 에도 넣으면 "진료행 + 휴무규칙" 이 동시에 나가 사업장 설정에서 모순이 된다. 여기서 skip 해 recurringOffRules 로만 표현한다.
+ *  — site 에도 넣으면 "운영행 + 휴무규칙" 이 동시에 나가 사업장 설정에서 모순이 된다. 여기서 skip 해 recurringOffRules 로만 표현한다.
  * 휴게 미설정은 HM null 로 표현한다. */
 function buildInstitutionTimesPayload() {
   const rows = [];
   for (let w = 0; w < 7; w++) {
-    if (isWeekdayClosed(w)) continue;         // 매주 휴무 요일 → recurringOffRules 로만 (site 진료행 금지)
+    if (isWeekdayClosed(w)) continue;         // 매주 휴무 요일 → recurringOffRules 로만 (site 운영행 금지)
 
     const blocks = institutionWeeklyDayMap.value.get(w) ?? [];
     if (blocks.length === 0) continue;
 
     const work = blocksToWorkRange(blocks);
-    if (!work.start || !work.end) continue;   // 진료 구간이 온전치 않은 요일은 보내지 않는다(= 휴무)
+    if (!work.start || !work.end) continue;   // 운영 구간이 온전치 않은 요일은 보내지 않는다(= 휴무)
 
     const breaks = getInstitutionBreaks(w);
     const hm = (block, field) => (block ? HHMMToHmm(block[field]) : null);
@@ -2679,9 +2679,9 @@ function buildInstitutionTimesPayload() {
 }
 
 /* 사업장 공휴일 운영시간 → settings/save 의 holidayHours 필드.
- * 공휴일 휴무(체크박스 ON)이어도 값은 그대로 실어 보낸다 — 지우면 다시 진료로 되돌렸을 때 시간이 사라진다.
+ * 공휴일 휴무(체크박스 ON)이어도 값은 그대로 실어 보낸다 — 지우면 다시 운영으로 되돌렸을 때 시간이 사라진다.
  *
- * ★진료 구간을 비웠으면 null 이 아니라 **전 필드 null 인 객체**를 보낸다.
+ * ★운영 구간을 비웠으면 null 이 아니라 **전 필드 null 인 객체**를 보낸다.
  *  null 은 BE 에서 "미전송 = baseline 보존"이라, 그걸 보내면 지운 값이 되살아나 삭제할 방법이 없어진다.
  *  전 필드 null 객체는 BE buildHolidayRows 가 빈 목록으로 바꿔 사업장 설정에 전체 교체(=전삭제)로 나간다. */
 function buildInstitutionHolidayPayload() {
@@ -2751,7 +2751,7 @@ function buildWorkingHoursPayload() {
 /* 서버 institution[](요일별) → institutionWeeklyDayMap + institutionBreaksByWeekday.
  * 빈 목록이면 한 번도 등록하지 않은 거래처 — 보드의 "운영시간 등록 권장" 판정은
  * staffStore.hospitalRules.weekly 가 비었는지로 이뤄지므로 여기서 따로 플래그를 두지 않는다.
- * 진료 여부 판단은 시작·종료 HM 존재 여부다. */
+ * 운영 여부 판단은 시작·종료 HM 존재 여부다. */
 function applyInstitutionTimes(rows) {
   const list = rows ?? [];
 
@@ -3072,8 +3072,8 @@ const WORKING_HOURS_STATE_KEYS = ['workingHoursByOwner', 'workingHoursOverridesB
 const SITE_STATE_KEYS = ['weekdayOffs', 'dateOverrides', 'includePublicHolidays', 'institutionWeeklyDayMap', 'institutionBreaksByWeekday',
   'institutionHolidayDayMap', 'institutionHolidayBreaks'];
 
-/* 공휴일 진료 여부·운영시간을 이번에 건드렸는가 — 공휴일 시간 필수 가드의 발동 조건.
- * 운영일정 설정 전체가 아니라 이 셋만 본다: 예전에 저장된 "진료인데 시간 없음" 상태는 그대로 둔 채
+/* 공휴일 운영 여부·운영시간을 이번에 건드렸는가 — 공휴일 시간 필수 가드의 발동 조건.
+ * 운영일정 설정 전체가 아니라 이 셋만 본다: 예전에 저장된 "운영인데 시간 없음" 상태는 그대로 둔 채
  * 휴무요일만 고치는 저장까지 막으면, 무관한 파트를 볼모로 잡는 덫이 된다(droppedKeys 주석과 같은 원칙). */
 const HOLIDAY_STATE_KEYS = ['includePublicHolidays', 'institutionHolidayDayMap', 'institutionHolidayBreaks'];
 
@@ -3115,7 +3115,7 @@ function buildPayload() {
     }
   }
   /* ★운영시간을 정하지 않은 요일은 '매주 휴무'으로 명시해 내보낸다(배너가 미리 알린다).
-   * site 진료행에서 빼는 것만으로는 원천에 휴무로 남지 않는다 — 그건 "행 없음"(미설정)이고,
+   * site 운영행에서 빼는 것만으로는 원천에 휴무로 남지 않는다 — 그건 "행 없음"(미설정)이고,
    * 휴무는 recurringOffRules(WEEKLY)로만 표현된다(#휴무 이중표현 — buildInstitutionTimesPayload).
    * 그 자리를 비워 두면 원천은 미설정으로 두는데 자체 보드는 기본 운영시간(useSchedulerRules 의
    * DEFAULT_OPEN_DAILY)으로 열어 예약을 받아, 같은 요일을 두 시스템이 다르게 읽는다.
@@ -3152,7 +3152,7 @@ function buildPayload() {
   const payload = {};
 
   if (canSaveSite.value) {
-    /* 사업장(site) 운영시간 — 진료하는 요일 행만. 원천 사업장 설정. 보낼 땐 반드시 완전상태로
+    /* 사업장(site) 운영시간 — 운영하는 요일 행만. 원천 사업장 설정. 보낼 땐 반드시 완전상태로
      * (null 이면 BE 500 + 부분저장). 휴무는 여기 아닌 recurringOffRules 로.
      * 휴무규칙/지정일자/공휴일도 같은 사업장 번들이라 site 와 함께 나가거나 함께 빠진다. */
     payload.site = buildInstitutionTimesPayload();
@@ -3197,7 +3197,7 @@ const saving = ref(false);
  * "저장하지 않고 화면을 닫으시겠습니까?" 확인창이 연달아 뜬다(사용자가 닫을 의도가 없었는데도).
  * 부모는 optional chaining 으로 호출하므로, 노출하지 않으면 가드가 조용히 무력화된다. */
 /* 띄우는 동안 팝업 닫힘을 막는다. 호출은 전부 withDialog 를 지난다(useDialogGuard — 해제는 한 tick 뒤,
- * [확인] 클릭과 팝업 hiding 이 같은 클릭에서 이어지기 때문. 진료항목 설정·예약 팝업과 같은 가드). */
+ * [확인] 클릭과 팝업 hiding 이 같은 클릭에서 이어지기 때문. 서비스 항목 설정·예약 팝업과 같은 가드). */
 const {dialogOpen: dialogBusy, withDialog} = useDialogGuard();
 
 /* 시간 오류(미완성·형식·순서)를 알릴 때 — 안내의 [확인] 클릭이 팝업 외부클릭으로 이어져 팝업이
@@ -3208,7 +3208,7 @@ async function alertTimeError(message) {
   await withDialog(() => dialog.alert(message, {title: '운영시간 입력'}));
 }
 
-/* 공휴일 진료인데 공휴일 운영시간이 비어 있을 때. 안내만으로는 어디를 고칠지 알 수 없어
+/* 공휴일 운영인데 공휴일 운영시간이 비어 있을 때. 안내만으로는 어디를 고칠지 알 수 없어
  * 운영시간 탭 + 사업장 패널을 펼쳐 공휴일 행이 화면에 보이게 한 뒤 띄운다. */
 async function alertHolidayTimeRequired() {
   activeLeftTab.value = 'WORKING_HOURS';
@@ -3319,9 +3319,9 @@ async function onSave() {
     }
   }
 
-  /* ★공휴일 진료(체크 해제)로 저장하려면 공휴일 운영시간이 있어야 한다.
+  /* ★공휴일 운영(체크 해제)로 저장하려면 공휴일 운영시간이 있어야 한다.
    * site 를 실제로 보내면서 **공휴일 설정을 이번에 건드렸을 때만** 본다 — 이미 저장돼 있던
-   * "진료인데 시간 없음" 상태 때문에 무관한 저장까지 막으면 덫이 된다(HOLIDAY_STATE_KEYS 주석 참조). */
+   * "운영인데 시간 없음" 상태 때문에 무관한 저장까지 막으면 덫이 된다(HOLIDAY_STATE_KEYS 주석 참조). */
   if (siteDirty && isDirtyIn(HOLIDAY_STATE_KEYS)
       && !includePublicHolidays.value && !hasSiteHolidayHoursRange()) {
     await alertHolidayTimeRequired();
@@ -3638,7 +3638,7 @@ defineExpose({
               >{{ getDoctor(docId)?.text }}</button>
 
               <!-- 담당자 운영시간 — 요일 7행을 그 자리에서 편집한다(요일 버튼 + popover 방식은 폐기).
-                   진료는 시작~종료 한 구간이고, 둘 다 비우면 그 요일은 휴무이다.
+                   운영은 시작~종료 한 구간이고, 둘 다 비우면 그 요일은 휴무이다.
                    휴게는 담당자가 갖지 않으므로 사업장 값을 읽기 전용으로 보여준다. -->
               <div
                   v-if="expandedTreatmentKey === `staff:${docId}`"
@@ -3796,7 +3796,7 @@ defineExpose({
                       </div>
                     </td>
                   </template>
-                  <!-- ★'휴무'이라 적는 것은 **휴무일 탭이 그렇게 정한 요일**뿐이다. 진료 요일인데
+                  <!-- ★'휴무'이라 적는 것은 **휴무일 탭이 그렇게 정한 요일**뿐이다. 운영 요일인데
                        운영시간이 비어 있는 것은 아직 정하지 않은 상태이므로 휴게시간과 같은 '-' 로
                        두고(formatSiteHours), 저장하면 휴무가 된다는 사실은 배너가 알린다.
                        조회에 실패했을 때는 원천이 뭘 갖고 있는지 모르는 것이라 '-' 로도 적지 않는다 —
@@ -3828,7 +3828,7 @@ defineExpose({
                        공휴일 체크박스의 기본값이 '휴무'이라, 순서를 뒤집으면 장애가 휴무로 보인다. -->
                   <td v-else-if="siteLoadFailed" class="schedulerTreatmentSetting__hoursOff" colspan="2">운영시간 없음</td>
                   <td v-else-if="includePublicHolidays" class="schedulerTreatmentSetting__hoursOff" colspan="2">휴무</td>
-                  <!-- 공휴일에 진료하기로 했는데 시간을 아직 안 정했다 — 쉬기로 한 것과 다르다. -->
+                  <!-- 공휴일에 운영하기로 했는데 시간을 아직 안 정했다 — 쉬기로 한 것과 다르다. -->
                   <td v-else class="schedulerTreatmentSetting__hoursOff" colspan="2">미설정</td>
                 </tr>
               </tbody>
@@ -4079,7 +4079,7 @@ defineExpose({
             class="schedulerTreatmentSetting__legend"
         >
           <li class="schedulerTreatmentSetting__legendItem is-designated">
-            <span class="schedulerTreatmentSetting__legendDot" />특정일자 진료
+            <span class="schedulerTreatmentSetting__legendDot" />특정일자 운영
           </li>
           <li class="schedulerTreatmentSetting__legendItem is-own">
             <span class="schedulerTreatmentSetting__legendDot" />요일별 운영시간
@@ -4336,14 +4336,14 @@ defineExpose({
             v-if="missingTimeWeekdays.length"
             class="schedulerTreatmentSetting__missingTimeLine"
         >운영시간이 없는 <strong>{{ missingTimeWeekdaysLabel }}요일</strong>은 저장하면 매주 휴무로 처리됩니다.<br>운영시간을 입력해 주세요.</p>
-        <!-- 매월 n번째만 쉬는 요일은 나머지 주에 진료한다 — 자동 휴무가 아니라 운영시간 필수(저장 게이트 4단) -->
+        <!-- 매월 n번째만 쉬는 요일은 나머지 주에 운영한다 — 자동 휴무가 아니라 운영시간 필수(저장 게이트 4단) -->
         <p
             v-if="monthlyOnlyMissingTimeSegments.length"
             class="schedulerTreatmentSetting__missingTimeLine"
         ><template
             v-for="(seg, i) in monthlyOnlyMissingTimeSegments"
             :key="`monthly-missing-${seg.weekday}`"
-        ><template v-if="i > 0">, </template><strong>{{ seg.label }}요일</strong>은 매월 {{ seg.ordinals }}번째</template> 휴무가라 나머지 주에 진료합니다.<br>운영시간을 입력해 주세요.</p>
+        ><template v-if="i > 0">, </template><strong>{{ seg.label }}요일</strong>은 매월 {{ seg.ordinals }}번째</template> 휴무라 나머지 주에 운영합니다.<br>운영시간을 입력해 주세요.</p>
       </div>
 
       <footer class="schedulerTreatmentSetting__footer">
@@ -4476,7 +4476,7 @@ defineExpose({
     }
   }
 
-  /* 칩 형태 리스트 (반복 휴무, 특정일자, 의사) */
+  /* 칩 형태 리스트 (반복 휴무, 특정일자, 담당자) */
   &__chipList {
     /* 담당자 chip — 한 줄당 1개, 너비 가득 (휴무일 탭 팀/신규팀 폼 공용) */
     &--member {
@@ -4860,14 +4860,14 @@ defineExpose({
     }
   }
 
-  /* 진료 / 휴게시간1 / 휴게시간2 공통 라벨 — "휴게시간1" 이 한 줄에 들어가는 폭. */
+  /* 운영 / 휴게시간1 / 휴게시간2 공통 라벨 — "휴게시간1" 이 한 줄에 들어가는 폭. */
   &__weekdayEditorKindLabel {
     flex: 0 0 60px;
     font-weight: $font-weight-medium;
     white-space: nowrap;
   }
 
-  /* 진료(WORK) 행과 휴게(BREAK) 행 사이 구분선 */
+  /* 운영(WORK) 행과 휴게(BREAK) 행 사이 구분선 */
   &__weekdayEditorDivider {
     height: 1px;
     margin: 2px 0;

@@ -12,7 +12,7 @@ describe('buildCardMenu — 항목 구성', () => {
     expect(buttons.map(b => b.value)).toEqual(['EDIT', 'CANCEL', 'RESTORE', 'DELETE'])
   })
 
-  it('진료 화면: 접수대기/완료/미이행/취소/초기화/삭제', () => {
+  it('방문 화면: 대기/완료/미이행/취소/초기화/삭제', () => {
     const buttons = buildCardMenu('TREATMENT', '01')
     expect(buttons.map(b => b.value)).toEqual(['WAITING', 'COMPLETE', 'NOSHOW', 'CANCEL', 'RESTORE', 'DELETE'])
   })
@@ -22,7 +22,7 @@ describe('buildCardMenu — 항목 구성', () => {
       buildCardMenu(dataType, '00').find(b => b.value === 'DELETE')!.displayLabel
 
     expect(label('APPOINTMENT')).toBe('예약 삭제')
-    expect(label('TREATMENT')).toBe('진료 삭제')
+    expect(label('TREATMENT')).toBe('방문 삭제')
   })
 })
 
@@ -31,7 +31,7 @@ describe('buildCardMenu — 초기화 활성 여부', () => {
   const restoreDisabled = (dataType: 'APPOINTMENT' | 'TREATMENT', status: string) =>
     buildCardMenu(dataType, status).find(b => b.value === 'RESTORE')!.disabled
 
-  it('상태 00: disabled (예약·진료 공통) — 되돌릴 대상이 없다', () => {
+  it('상태 00: disabled (예약·방문 공통) — 되돌릴 대상이 없다', () => {
     expect(restoreDisabled('APPOINTMENT', '00')).toBe(true)
     expect(restoreDisabled('TREATMENT', '00')).toBe(true)
   })
@@ -40,17 +40,17 @@ describe('buildCardMenu — 초기화 활성 여부', () => {
     expect(restoreDisabled('APPOINTMENT', '03')).toBe(false)
   })
 
-  it('진료 화면 상태 01/02/03: enabled', () => {
+  it('방문 화면 상태 01/02/03: enabled', () => {
     expect(restoreDisabled('TREATMENT', '01')).toBe(false)
     expect(restoreDisabled('TREATMENT', '02')).toBe(false)
     expect(restoreDisabled('TREATMENT', '03')).toBe(false)
   })
 
-  it('진료 화면 상태 05(접수대기): enabled — 접수 취소 경로다', () => {
+  it('방문 화면 상태 05(대기): enabled — 대기 취소 경로다', () => {
     expect(restoreDisabled('TREATMENT', '05')).toBe(false)
   })
 
-  it('접수대기는 예약 화면에 없다 — hover 퀵액션과 같은 진료 전용 동작이다', () => {
+  it('대기는 예약 화면에 없다 — hover 퀵액션과 같은 방문 전용 동작이다', () => {
     expect(buildCardMenu('APPOINTMENT', '00').some(b => b.value === 'WAITING')).toBe(false)
   })
 
@@ -60,12 +60,12 @@ describe('buildCardMenu — 초기화 활성 여부', () => {
   })
 })
 
-describe('buildCardMenu — 접수대기 활성 여부', () => {
+describe('buildCardMenu — 대기 활성 여부', () => {
 
   const waitingDisabled = (status: string) =>
     buildCardMenu('TREATMENT', status).find(b => b.value === 'WAITING')!.disabled
 
-  it('상태 05(접수대기): disabled — 이미 접수된 건이다', () => {
+  it('상태 05(대기): disabled — 이미 대기 상태가 된 건이다', () => {
     expect(waitingDisabled('05')).toBe(true)
   })
 
@@ -91,7 +91,7 @@ describe('toApiState', () => {
     expect(toApiState('COMPLETE')).toBe('complete')
     expect(toApiState('NOSHOW')).toBe('noshow')
     expect(toApiState('CANCEL')).toBe('cancel')
-    // hover 퀵액션 [접수]와 같은 state 여야 한다
+    // hover 퀵액션 [대기]와 같은 state 여야 한다
     expect(toApiState('WAITING')).toBe('waiting')
   })
 })

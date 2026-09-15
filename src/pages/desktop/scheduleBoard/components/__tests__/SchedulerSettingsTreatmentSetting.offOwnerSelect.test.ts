@@ -76,9 +76,9 @@ beforeEach(() => {
 
   const staff = useStaffStore()
   staff.doctors.push(
-    { id: `${A1}`, text: '김의사', staffId: A1 } as any,
+    { id: `${A1}`, text: '김담당', staffId: A1 } as any,
     { id: `${A2}`, text: '이직원', staffId: A2 } as any,
-    { id: `${B1}`, text: '박의사', staffId: B1 } as any,
+    { id: `${B1}`, text: '박담당', staffId: B1 } as any,
   )
 
   mocks.getTeams.mockResolvedValue({
@@ -88,16 +88,16 @@ beforeEach(() => {
         teams: [
           {
             id     : Number(TEAM_A),
-            name   : '보철팀',
+            name   : '관리팀',
             doctors: [
-              { staffId: A1, staffName: '김의사' },
+              { staffId: A1, staffName: '김담당' },
               { staffId: A2, staffName: '이직원' },
             ],
           },
           {
             id     : Number(TEAM_B),
-            name   : '교정팀',
-            doctors: [{ staffId: B1, staffName: '박의사' }],
+            name   : '점검팀',
+            doctors: [{ staffId: B1, staffName: '박담당' }],
           },
         ],
       },

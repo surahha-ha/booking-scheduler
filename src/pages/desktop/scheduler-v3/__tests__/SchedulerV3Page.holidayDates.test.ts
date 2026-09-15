@@ -3,7 +3,7 @@
  *
  * SchedulerV3Page → 엔진 입력 계약 — 밴드가 받는 `holidayDates` 는 **공휴일 전부**다.
  *
- * 공휴일 축은 담당자 자기 값(HOLIDAY_OPEN_YN)이라 기관이 쉬는 공휴일에도 그날 진료하는 담당자가 있고,
+ * 공휴일 축은 담당자 자기 값(HOLIDAY_OPEN_YN)이라 기관이 쉬는 공휴일에도 그날 운영하는 담당자가 있고,
  * 그 사람의 밴드는 기관 공휴일 운영시간으로 그려야 한다. 그래서 페이지는 "기관이 문을 여는 공휴일"
  * (holidayOpenDates)이 아니라 store 의 publicHolidayDates 를 배열로 바꿔 넘긴다.
  * 157cbb9 가 예약검증(useSchedulerRules.isPublicHolidayDate)과 밴드를 이 규칙으로 맞췄는데, 되돌아가면
@@ -60,7 +60,7 @@ describe('SchedulerV3Page — 밴드 holidayDates 는 공휴일 전부', () => {
   })
 
   // 157cbb9 이전 규칙의 재발 방지 — 기관이 그 공휴일에 문을 연다는 사실(holidayOpenDates)은
-  // 밴드의 공휴일 판정 근거가 아니다. 이걸 근거로 되돌리면 기관 휴무 공휴일에 진료하는 담당자의
+  // 밴드의 공휴일 판정 근거가 아니다. 이걸 근거로 되돌리면 기관 휴무 공휴일에 운영하는 담당자의
   // 밴드가 요일 시간으로 떨어진다.
   it('holidayOpenDates 만 있고 공휴일 목록이 비면 holidayDates 는 빈 배열이다', async () => {
     shallowMount(SchedulerV3Page)

@@ -43,7 +43,7 @@ export interface ArrangeResult {
 }
 
 export interface UnitLike {
-  /** (날짜,의사) 키 */
+  /** (날짜,담당자) 키 */
   key: string
   /** 그 unit 의 자연 칸 수 = min(maxConcurrent, N칸), 최소 1 */
   slots: number
@@ -207,7 +207,7 @@ export function arrangeCards(
 
   // 넘치는 카드 = float. 1순위 = "그 칸에서 겹치는 더 긴 카드 수"가 가장 적은 칸 → 긴 예약을 덜 가린다.
   // 2순위 = 시각적 깊이(groupDepth + 이전 그룹 occupant), 동률은 낮은 인덱스.
-  // → 빈 칸이 있으면 긴 예약 위에 얹지 않고 그 칸에 쌓는다(화면정의서 2. 예약/진료 배치 ①~④).
+  // → 빈 칸이 있으면 긴 예약 위에 얹지 않고 그 칸에 쌓는다(화면정의서 2. 예약/방문 배치 ①~④).
   // 단 EMPTY_LANE_STACK_CAP 이상 깊어진 칸은 1순위 후보에서 빼 밴드가 무한정 두꺼워지는 것을 막는다.
   function floatPlace(card: CardInput, groupDepth: number[], occupiedAtStart: number[]): void {
     const densityOf = (k: number): number => groupDepth[k] + occupiedAtStart[k]
@@ -288,7 +288,7 @@ function unitSlotsOf(u: UnitLike): number {
 
 // ════════════════════════════════════════════════════════════
 // 4. packPages — unit 경계 페이지 분할 (경계 unit 은 압축, 이월 없음)
-//    한 unit(날짜×의사)은 절대 두 페이지에 걸치지 않는다. budget 을 다 못 채우고 남은 칸보다
+//    한 unit(날짜×담당자)은 절대 두 페이지에 걸치지 않는다. budget 을 다 못 채우고 남은 칸보다
 //    큰 unit 이 오면 그 unit 을 **남은 칸수로 압축**해 이 페이지에 담고, 다음 페이지는 그 다음
 //    unit 부터 시작한다 → 같은 담당자가 좌우 페이지에 중복 노출되지 않는다.
 //    page.slotEnd - slotStart 는 budget 보다 클 수 있다(압축된 칸 수만큼). 전역 slot 시퀀스

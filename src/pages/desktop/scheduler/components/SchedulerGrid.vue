@@ -322,15 +322,15 @@ function onCellClick(ev, col, slot) {
 
 const contextMenu = ref(null) // { x, y, col, band } | null
 
-// 예약/진료 장부에 따른 추가 액션 라벨.
-const addLabel = computed(() => (dataType.value === 'TREATMENT' ? '진료 추가' : '예약 추가'))
+// 예약/방문 장부에 따른 추가 액션 라벨.
+const addLabel = computed(() => (dataType.value === 'TREATMENT' ? '운영 추가' : '예약 추가'))
 
 // 추가 불가 사유 — 메뉴 disabled 항목 아래 작게 표시(왜 안 되는지 전달).
 function disabledReason(col, slot) {
   if (isClosed(col, slot)) return '휴무일'
   if (isPastSlot(col, slot)) return '지난 시간'
   // 방문 장부는 현재 시각(now) 슬롯만 등록 가능 → 아직 안 온 시각은 '영구 불가'가 아니라 시각 대기.
-  if (dataType.value === 'TREATMENT') return '아직 진료 시간 전'
+  if (dataType.value === 'TREATMENT') return '아직 운영 시간 전'
   return '예약할 수 없는 시간' // 예약장부 — 휴무/과거 외 예외(lock 등), 실제 거의 발생 안 함
 }
 

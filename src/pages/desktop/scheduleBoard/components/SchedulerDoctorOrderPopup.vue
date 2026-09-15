@@ -1,7 +1,7 @@
 <script setup>
 /**
  * 담당자 순서 변경 팝업 (화면정의서 4-2)
- *  - 검색필터 의사영역 ⇄ 버튼으로 오픈.
+ *  - 검색필터 담당자영역 ⇄ 버튼으로 오픈.
  *  - 소속 팀 | 담당자 테이블: 팀별 그룹, 드래그 핸들(≡)로 **팀 내에서만** 순서 변경(팀 변경 불가).
  *  - 저장: 순서 전용 API reorderTeamMembers(POST /book/v2/site/teams/member-order) 단일 호출.
  *          draft 의 팀별 doctors 순서를 { teamId, orderedStaffIds } 로 보내면 BE 가 그 index 로

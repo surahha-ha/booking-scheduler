@@ -47,10 +47,10 @@ async function mountWithOpenPopup() {
   await flushPromises()
 
   wrapper.findComponent(SchedulerGrid).vm.$emit('cell-click', {
-    columnKey: '2026-06-12|김원장',
+    columnKey: '2026-06-12|김대표',
     date: '2026-06-12',
-    resourceId: '김원장',
-    resourceLabel: '김원장',
+    resourceId: '김대표',
+    resourceLabel: '김대표',
     startMinute: 600,
     endMinute: 630,
   })

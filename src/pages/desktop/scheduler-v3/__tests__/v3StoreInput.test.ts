@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { buildStoreRunLayoutInput, type StoreInputParams } from '../v3StoreInput'
 
 const baseParams: StoreInputParams = {
-  doctors: [{ id: '김원장', text: '김원장' }],
+  doctors: [{ id: '김대표', text: '김대표' }],
   appts: [],
   weekly: undefined,
   availableWidth: 1000,

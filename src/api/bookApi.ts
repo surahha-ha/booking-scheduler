@@ -39,7 +39,7 @@ export type BookItem = {
     serviceItemName?: string | null;
     /** 예약 등록일시 — '당일'(오늘 등록) 뱃지 판정 */
     createdAt?: string;
-    /** 등록 화면 구분 — 'WORK'=진료장부 등록, 'CMM'=예약장부 등록. 등록 시 확정되고 이후 갱신 안 됨 */
+    /** 등록 화면 구분 — 'WORK'=방문장부 등록, 'CMM'=예약장부 등록. 등록 시 확정되고 이후 갱신 안 됨 */
     registeredFrom?: 'WORK' | 'CMM';
     updatedAt?: string;
     updatedBy?: number;
@@ -64,7 +64,7 @@ export type BookItemRequest = {
     customerRefId: string;
     memo?: string;
     state?: string;
-    /** 예약/진료 구분 ('reservation' | 'treatment') */
+    /** 예약/방문 구분 ('reservation' | 'treatment') */
     type?: string;
     /** 서비스 항목 그룹 ID. null/undefined 시 BE 에서 직접입력 그룹으로 자동 매핑 */
     serviceGroupId?: number | null;
@@ -105,7 +105,7 @@ export type ApiResponse<T> = {
 };
 
 /**
- * 국가 공휴일 1건 (병원 휴무일과 별개 — 빨간날 표시용).
+ * 국가 공휴일 1건 (사업장 휴무일과 별개 — 빨간날 표시용).
  * 원천이 사업장 설정(/api/booking/v1/holidays)로 바뀌며 공휴일명은 사라졌다 — 사업장 설정은 날짜만 내려준다.
  */
 export type HolidayItem = {
@@ -168,7 +168,7 @@ export function modify(id: string, body?: BookItemRequest) {
 /**
  * 장부 > 삭제
  * @param id
- * @param type 화면 구분(reservation|treatment). 미전달 시 BE 가 기존 예약/진료 구분값을 유지한다.
+ * @param type 화면 구분(reservation|treatment). 미전달 시 BE 가 기존 예약/방문 구분값을 유지한다.
  */
 export function remove(id: string, type?: string) {
     const path = httpBuildPathUtils('/:id', {id});
@@ -177,12 +177,12 @@ export function remove(id: string, type?: string) {
 }
 
 export type UnassignedReservationsResponse = {
-    /** 미지정 예약/진료건 일괄 지정 가능 여부 */
+    /** 미지정 예약/방문 건 일괄 지정 가능 여부 */
     assignable: boolean;
 };
 
 /**
- * 장부 > 미지정 예약/진료건 지정 가능 여부 조회
+ * 장부 > 미지정 예약/방문 건 지정 가능 여부 조회
  * 미지정 데이터 설정 버튼 노출 여부 판단에 사용한다.
  */
 export function getUnassignedReservations() {
@@ -198,8 +198,8 @@ export type AssignUnassignedResponse = {
 };
 
 /**
- * 장부 > 미지정 예약/진료건 일괄 지정
- * 담당자가 미지정된 예약/진료건을 선택한 담당자(staffId)으로 일괄 지정한다.
+ * 장부 > 미지정 예약/방문 건 일괄 지정
+ * 담당자가 미지정된 예약/방문 건을 선택한 담당자(staffId)으로 일괄 지정한다.
  * @param staffId 지정할 담당자 staff_id
  */
 export function assignUnassigned(staffId: number) {
@@ -214,7 +214,7 @@ export function assignUnassigned(staffId: number) {
  * 장부 > 상태 변경
  * @param id
  * @param state
- * @param type 화면 구분(reservation|treatment). 미전달 시 BE 가 기존 예약/진료 구분값을 유지한다.
+ * @param type 화면 구분(reservation|treatment). 미전달 시 BE 가 기존 예약/방문 구분값을 유지한다.
  */
 export function updateStatus(id: string, state: string, type?: string) {
     const path = httpBuildPathUtils('/:id/:state', {id, state});

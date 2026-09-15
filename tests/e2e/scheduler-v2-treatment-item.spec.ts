@@ -6,14 +6,14 @@ import type { Page } from '@playwright/test';
  * V2 스케줄러 — 서비스 항목 마스터 + 서비스 항목 설정 popup 회귀 시나리오
  *
  * 회귀 안전망 (e2e 작성 = 실행 통과까지 한 사이클):
- *   T1. 빈 셀 클릭 → ReservationPopup 서비스 내용 영역에 그룹 칩 노출 (검진 및 상담, 임플란트)
+ *   T1. 빈 셀 클릭 → ReservationPopup 서비스 내용 영역에 그룹 칩 노출 (상담, 점검)
  *   T2. ⚙ 클릭 → 설정 popup + ReservationPopup 동시 노출 → ESC 로 설정만 닫힘
  *   T3. ⚙ → 그룹 추가 → 신규 그룹이 칩 목록에 즉시 반영
  *   T4. 설정 popup 내부 클릭 시 ReservationPopup 이 사라지지 않는다
  *   T5. 항목 9개 이상 → < > 페이저 노출 + 페이지 전환 동작 (Phase2 #1)
  *   T6. 빈 그룹을 선택한 채로는 닫지 못한다(alert 차단) → 항목 1개 추가 후 닫힘 (Phase2 #5)
  *   T7. 우측 공간 부족 시 설정 popup 이 ReservationPopup 영역을 덮는다 (Phase2 M8 fallback)
- *   T8. 그룹명 중복 차단 — whitespace 정규화 ('  검진  및  상담  ' → 기존 '검진 및 상담' 매치)
+ *   T8. 그룹명 중복 차단 — whitespace 정규화 ('  상담  ' 류 공백 변형 → 기존 '상담' 매치)
  *   T9. 고객명 dropdown Tab → 첫 후보 자동선택 + 다음 input(전화번호) focus 이동
  *   T10. pick 된 고객명을 수정하면 전화번호도 함께 empty 처리 (회귀 방지)
  *   T11. 고객명을 모두 지우면 자동완성 dropdown 도 닫힘 (회귀 방지)

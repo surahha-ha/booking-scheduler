@@ -1,5 +1,5 @@
 /**
- * 병원 표준 운영시간 09:00~18:00 — **아무도 그 요일을 정하지 않은 칸**의 기본값.
+ * 사업장 표준 운영시간 09:00~18:00 — **아무도 그 요일을 정하지 않은 칸**의 기본값.
  *
  * 이 값은 두 계층이 함께 쓴다. 갈리면 화면이 자기모순에 빠지므로 여기 한 곳에서만 정의한다.
  *   - 예약검증: `useSchedulerRules` 의 `DEFAULT_OPEN_DAILY` (HH:mm 문자열로 판정)
@@ -19,14 +19,14 @@ function toMinutes(hhmm: string): number {
     return h * 60 + m;
 }
 
-/** 기본 진료 시작 시각 (HH:mm) */
+/** 기본 운영 시작 시각 (HH:mm) */
 export const DEFAULT_OPERATING_START = '09:00';
 
-/** 기본 진료 종료 시각 (HH:mm) */
+/** 기본 운영 종료 시각 (HH:mm) */
 export const DEFAULT_OPERATING_END = '18:00';
 
-/** 기본 진료 시작 — 자정 기준 분 (540) */
+/** 기본 운영 시작 — 자정 기준 분 (540) */
 export const DEFAULT_OPERATING_START_MIN = toMinutes(DEFAULT_OPERATING_START);
 
-/** 기본 진료 종료 — 자정 기준 분 (1080) */
+/** 기본 운영 종료 — 자정 기준 분 (1080) */
 export const DEFAULT_OPERATING_END_MIN = toMinutes(DEFAULT_OPERATING_END);

@@ -40,7 +40,7 @@ describe('mock routes smoke', () => {
         expect(p[0]).toHaveProperty('staffName');
     });
 
-    it('장부 조회 — 요일 그룹 + items, 의사명 정합', () => {
+    it('장부 조회 — 요일 그룹 + items, 담당자명 정합', () => {
         const groups = call('GET', '/api/booking', {params: range()});
         expect(groups.length).toBeGreaterThan(0);
         const items = groups.flatMap((g: any) => g.items);
@@ -107,7 +107,7 @@ describe('mock routes smoke', () => {
         // applyBookItemToAppointment 재현: doctorId = externalStaffNo ? String : ''
         const it0 = db.reservations[0];
         const appt = {doctorId: it0.externalStaffNo ? String(it0.externalStaffNo) : '', doctorName: it0.staffName} as any;
-        // 컬럼 id = 의사 이름. resolveDoctorKey 도 이름을 반환해야 매칭됨.
+        // 컬럼 id = 담당자 이름. resolveDoctorKey 도 이름을 반환해야 매칭됨.
         expect(resolveDoctorKey(appt)).toBe(it0.staffName);
         expect(db.doctors.some(d => d.staffName === resolveDoctorKey(appt))).toBe(true);
     });

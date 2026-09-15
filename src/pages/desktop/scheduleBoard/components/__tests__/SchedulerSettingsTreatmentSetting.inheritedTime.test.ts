@@ -72,7 +72,7 @@ const INSTITUTION_MON = {
   lunchStartHm: null, lunchEndHm: null, dinnerStartHm: null, dinnerEndHm: null,
 }
 
-const UNSET_STAFF = { staffId: DOC, staffName: '홍의사', times: [], monthlyOffRules: [], holidayOpenYn: 'Y' }
+const UNSET_STAFF = { staffId: DOC, staffName: '홍담당', times: [], monthlyOffRules: [], holidayOpenYn: 'Y' }
 
 const mounted: any[] = []
 afterEach(() => {
@@ -84,7 +84,7 @@ function setupMocks(siteRows: any[], staff: any[] = []) {
   mocks.getTeams.mockResolvedValue({
     data: {
       code   : 'succeed',
-      payload: { teams: [{ id: 1, name: '1진료팀', doctors: [{ staffId: DOC, staffName: '홍의사' }] }] },
+      payload: { teams: [{ id: 1, name: '1팀', doctors: [{ staffId: DOC, staffName: '홍담당' }] }] },
     },
   })
   mocks.getSiteWorkHours.mockResolvedValue({
@@ -121,7 +121,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   setActivePinia(createPinia())
   // 셀 entry 는 이름을 staffStore.doctors 에서 찾는다 — 없으면 그 줄이 렌더되지 않는다
-  useStaffStore().doctors.push({ id: `${DOC}`, text: '홍의사', staffId: DOC } as any)
+  useStaffStore().doctors.push({ id: `${DOC}`, text: '홍담당', staffId: DOC } as any)
 })
 
 describe('빌려온 시각과 자기 시각은 화면에서 갈린다', () => {
@@ -165,7 +165,7 @@ describe('빌려온 시각과 자기 시각은 화면에서 갈린다', () => {
 
     const TUE_DATE = '2026-08-04'   // 화요일 — 사업장 값이 없는 요일
     const entries = state.formatListEntries([DOC], dayjs(TUE_DATE), TUE_DATE)
-    expect(entries[0].label).toBe('홍의사 09:00 ~ 18:00')
+    expect(entries[0].label).toBe('홍담당 09:00 ~ 18:00')
     expect(entries[0].isInherited, '기관이 아니라 기본값이어도 빌린 줄이다').toBe(true)
     expect(entries[0].isOwn, '빌린 줄은 굵게 그리지 않는다').toBeUndefined()
   })
@@ -176,7 +176,7 @@ describe('빌려온 시각과 자기 시각은 화면에서 갈린다', () => {
     const state = wrapper.vm.$.setupState
 
     const borrowed = state.formatListEntries([DOC], dayjs(MON_DATE), MON_DATE)
-    expect(borrowed[0].label).toBe('홍의사 10:00 ~ 17:00')
+    expect(borrowed[0].label).toBe('홍담당 10:00 ~ 17:00')
     expect(borrowed[0].isInherited, '기관에서 빌린 줄').toBe(true)
     expect(borrowed[0].isOwn, '빌린 줄은 굵게 그리지 않는다').toBeUndefined()
 
@@ -185,14 +185,14 @@ describe('빌려온 시각과 자기 시각은 화면에서 갈린다', () => {
     await wrapper.vm.$nextTick()
 
     const own = state.formatListEntries([DOC], dayjs(MON_DATE), MON_DATE)
-    expect(own[0].label).toBe('홍의사 09:00 ~ 13:00')
+    expect(own[0].label).toBe('홍담당 09:00 ~ 13:00')
     expect(own[0].isInherited, '자기 값 줄은 빌린 것이 아니다').toBeUndefined()
     expect(own[0].isOwn, '저장된 값은 굵게 그린다').toBe(true)
   })
 
   it('저장된 시간이 있는 줄만 굵어진다 — 휴무 줄은 아니다', async () => {
     setupMocks([INSTITUTION_MON], [{
-      staffId : DOC, staffName: '홍의사',
+      staffId : DOC, staffName: '홍담당',
       times          : [{ dayCd: MON, staffOpenHm: null, staffCloseHm: null }],  // 명시적 휴무
       monthlyOffRules: [], holidayOpenYn: 'Y',
     }])
@@ -220,7 +220,7 @@ describe('달력 범례 — 색·굵기의 뜻을 화면이 밝힌다', () => {
 
     const items = wrapper.findAll('.schedulerTreatmentSetting__legendItem')
     expect(items).toHaveLength(2)
-    expect(items[0].text()).toBe('특정일자 진료')
+    expect(items[0].text()).toBe('특정일자 운영')
     expect(items[0].classes()).toContain('is-designated')
     expect(items[1].text()).toBe('요일별 운영시간')
     expect(items[1].classes()).toContain('is-own')
@@ -240,7 +240,7 @@ describe('달력 범례 — 색·굵기의 뜻을 화면이 밝힌다', () => {
 describe('★사업장 운영시간을 지워도 담당자 자기 행은 삭제되지 않는다', () => {
   it('자기 값을 가진 담당자의 행은 기관 요일을 비운 뒤에도 payload 에 그대로 나간다', async () => {
     setupMocks([INSTITUTION_MON], [{
-      staffId : DOC, staffName: '홍의사',
+      staffId : DOC, staffName: '홍담당',
       times          : [{ dayCd: MON, staffOpenHm: '0900', staffCloseHm: '1300' }],
       monthlyOffRules: [], holidayOpenYn: 'Y',
     }])

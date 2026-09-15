@@ -52,7 +52,7 @@ const D_OVERRIDE = `${MONTH}-11`  // 지정 있음 → 13:00~16:00
 const D_DAYOFF = `${MONTH}-12`    // 지정 행은 있는데 시각 null → 그 날짜만 휴무
 
 const STAFF_ID = 101
-const DOCTOR = '김의사'
+const DOCTOR = '김담당'
 
 /** 담당자 weekly — 7요일 전부 09:00~18:00 (요일 편차가 override 검증을 흐리지 않게) */
 const weeklyTimes = Array.from({ length: 7 }, (_, dayCd) => ({
@@ -96,8 +96,8 @@ function entriesOfDay(wrapper: any, ymd: string) {
     }))
 }
 
-/** '진료일'/'휴무일' 세그먼트 클릭 */
-async function selectDayType(wrapper: any, label: '진료일' | '휴무일') {
+/** '운영일'/'휴무일' 세그먼트 클릭 */
+async function selectDayType(wrapper: any, label: '운영일' | '휴무일') {
   const btn = wrapper.findAll('.scheduleSegment__btn').find((b: any) => b.text() === label)
   await btn!.trigger('click')
   await wrapper.vm.$nextTick()
@@ -109,7 +109,7 @@ describe('운영일정 보기 — 담당자 × 날짜 지정(override)', () => {
     mocks.getTeams.mockResolvedValue({
       data: { payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: STAFF_ID, staffName: DOCTOR }] }] } },
     })
-    // 휴무 규칙 없음 — 이 달은 전부 진료일
+    // 휴무 규칙 없음 — 이 달은 전부 운영일
     mocks.getTreatmentSettings.mockResolvedValue({
       data: { payload: { recurringOffRules: [], offDates: [], workDates: [], holidayClosedYn: false, teams: [] } },
     })
@@ -128,9 +128,9 @@ describe('운영일정 보기 — 담당자 × 날짜 지정(override)', () => {
     expect(entriesOfDay(wrapper, D_OVERRIDE)).toEqual([{ name: DOCTOR, time: '13:00 ~ 16:00' }])
   })
 
-  it('지정 행이 있는데 시작·종료가 null → 그 날짜만 휴무 (진료일 목록에서 빠진다)', async () => {
+  it('지정 행이 있는데 시작·종료가 null → 그 날짜만 휴무 (운영일 목록에서 빠진다)', async () => {
     const wrapper = await mountView()
-    // 진료일(WORK) 모드: weekly 로 fallback 하지 않고 그 날짜만 사라져야 한다.
+    // 운영일(WORK) 모드: weekly 로 fallback 하지 않고 그 날짜만 사라져야 한다.
     expect(entriesOfDay(wrapper, D_DAYOFF)).toEqual([])
   })
 

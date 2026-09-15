@@ -117,7 +117,7 @@ describe('시간 popover 상호배타 — 한 번에 하나만', () => {
     setActivePinia(createPinia())
     useStaffStore()
     mocks.getTeams.mockResolvedValue({
-      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1진료팀', doctors: [{ staffId: DOC, staffName: '홍의사' }] }] } },
+      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1팀', doctors: [{ staffId: DOC, staffName: '홍담당' }] }] } },
     })
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {
@@ -314,7 +314,7 @@ describe('팀 메뉴 ↔ 직원 picker 상호배타 — 한 번에 하나만', (
     setActivePinia(createPinia())
     useStaffStore()
     mocks.getTeams.mockResolvedValue({
-      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1진료팀', doctors: [{ staffId: DOC, staffName: '홍의사' }] }] } },
+      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1팀', doctors: [{ staffId: DOC, staffName: '홍담당' }] }] } },
     })
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {
@@ -386,7 +386,7 @@ describe('설정 팝업 닫힘 — settlePopovers', () => {
     setActivePinia(createPinia())
     useStaffStore()
     mocks.getTeams.mockResolvedValue({
-      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1진료팀', doctors: [] }] } },
+      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1팀', doctors: [] }] } },
     })
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {

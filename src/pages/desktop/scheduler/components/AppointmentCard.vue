@@ -25,7 +25,7 @@
       },
     ]"
     :style="cardStyle"
-    :title="isAppointmentMode ? '우클릭하여 예약 추가' : '우클릭하여 진료 추가'"
+    :title="isAppointmentMode ? '우클릭하여 예약 추가' : '우클릭하여 운영 추가'"
     @mouseenter="onCardEnter"
     @mouseleave="onCardLeave"
     @mousedown="onCardMouseDown"
@@ -43,7 +43,7 @@
         <span class="card-patient" :class="{ 'is-join': appointment.isJoinMember }">
           {{ appointment.patientName }}
         </span>
-        <!-- 종료시각(~ HH:mm) — 고객명 뒤. 긴/짧은 예약 겹침 구분용(예약·진료 공통). 이름보다 우선 보존. -->
+        <!-- 종료시각(~ HH:mm) — 고객명 뒤. 긴/짧은 예약 겹침 구분용(예약·방문 공통). 이름보다 우선 보존. -->
         <span v-if="endTimeLabel" class="card-end-time">~ {{ endTimeLabel }}</span>
         <span v-if="appointment.isExternalSync" class="card-external-badge">EXT</span>
         <span v-if="isRegisteredToday" class="card-today-badge">당일</span>
@@ -81,7 +81,7 @@
       - click → popover toggle
       - DOM 트리상 card-wrapper 내부 → mouseleave card 발생 안 함
     -->
-    <!-- 진료화면 퀵 액션: [접수] 또는 [완료] -->
+    <!-- 방문 화면 퀵 액션: [대기] 또는 [완료] -->
     <button
       v-if="isHovered && showQuickAction && quickActionLabel"
       class="quick-action-state-btn"
@@ -233,7 +233,7 @@ const secondaryParts = computed(() => {
     else if (code === 'TREATMENT') {
       // 서비스 항목 = 등록된 서비스 항목 선택값(treatmentCategory) + 서비스 내용(memo) 함께 표기.
       // 둘 다 nullable(각각 단독/둘다/없음 허용) → 존재하는 것만 쉼표로 이어 붙인다.
-      // 공백으로 이으면 '점검 > 정기 점검 구강검진' 처럼 선택값과 직접입력이 한 덩어리로 읽힌다.
+      // 공백으로 이으면 '점검 > 정기 점검 기본진단' 처럼 선택값과 직접입력이 한 덩어리로 읽힌다.
       v = [a.treatmentCategory ?? '', a.memo ?? ''].filter(Boolean).join(', ')
     }
     else if (code === 'PHONE') {
@@ -357,10 +357,10 @@ const isRescheduleTarget = computed(() =>
   && String(reschedule.targetId.value) === String(props.appointment.id)
 )
 
-// '당일' 뱃지 — 진료 화면에서만, **진료장부에서 등록한 건**(isTreatmentRegistered) 중 예약 등록일(createdAt)이
-// 오늘이면 표시(고객명 line 우측). 예약장부에서 등록한 건은 진료 화면에 보여도 뱃지를 붙이지 않는다.
+// '당일' 뱃지 — 방문 화면에서만, **방문장부에서 등록한 건**(isTreatmentRegistered) 중 예약 등록일(createdAt)이
+// 오늘이면 표시(고객명 line 우측). 예약장부에서 등록한 건은 방문 화면에 보여도 뱃지를 붙이지 않는다.
 const isRegisteredToday = computed(() => {
-  if (isAppointmentMode.value) return false // 진료 화면 전용
+  if (isAppointmentMode.value) return false // 방문 화면 전용
   if (!props.appointment.isTreatmentRegistered) return false // 예약장부 등록건 제외
   const reg = props.appointment.createdAt
   return !!reg && dayjs(reg).isSame(dayjs(), 'day')
@@ -499,7 +499,7 @@ const STATUS_CLASS_MAP = {
   'is-receipt': 'status-receipt',
 }
 
-// 예약 화면은 예약(00)·취소(03)만 상태 색으로 구분한다 — 진료완료·미이행·접수대기 건은 예약(00)처럼 그린다.
+// 예약 화면은 예약(00)·취소(03)만 상태 색으로 구분한다 — 완료·미이행·대기 건은 예약(00)처럼 그린다.
 // 실제 status 는 그대로 두고(⋮ 메뉴·퀵액션 판정용) 표시 클래스만 바꾼다. 규칙 SSOT = toDisplayStatus.
 const statusContainerClass = computed(() => {
   const displayStatus = toDisplayStatus(props.appointment.status, selectedDataType.value)
@@ -585,8 +585,8 @@ function onQuickActionClick(e) {
 // ═══════════════════════════════════════════════════════════
 // Dot Menu + Hover Quick Action
 // 예약화면: ⋮ → 변경/취소/삭제
-// 진료화면: ⋮ → 접수대기/완료/미이행/취소/초기화/삭제
-//           hover 퀵액션 → 상태 00: [접수], 05: [완료]
+// 방문 화면: ⋮ → 대기/완료/미이행/취소/초기화/삭제
+//           hover 퀵액션 → 상태 00: [대기], 05: [완료]
 // ═══════════════════════════════════════════════════════════
 
 const dialog = useDialog()
@@ -595,7 +595,7 @@ const schedulerFilterStore = useSchedulerFilterStore()
 const { dataType: selectedDataType } = storeToRefs(schedulerFilterStore)
 
 const isAppointmentMode = computed(() => selectedDataType.value === 'APPOINTMENT')
-const dataTypeLabel = computed(() => isAppointmentMode.value ? '예약' : '진료')
+const dataTypeLabel = computed(() => isAppointmentMode.value ? '예약' : '방문')
 
 // ── Popover ⋮ 메뉴 ──
 
@@ -636,12 +636,12 @@ async function handleDotAction(value) {
   emit('callback', response)
 }
 
-// ── Hover 퀵 액션 버튼 ── 진료화면에서만 표시(예약화면은 ⋮만).
+// ── Hover 퀵 액션 버튼 ── 방문 화면에서만 표시(예약화면은 ⋮만).
 
 const quickActionLabel = computed(() => {
   if (isAppointmentMode.value) return null
   const status = props.appointment.status
-  if (status === '00') return '접수'
+  if (status === '00') return '대기'
   if (status === '05') return '완료'
   return null
 })
@@ -658,7 +658,7 @@ async function handleQuickAction() {
   const status = props.appointment.status
 
   if (status === '00') {
-    // 접수: 상태 05(접수대기) → waiting
+    // 대기: 상태 05 → waiting
     const response = await bookStore.modifyAppointmentState(id, 'waiting')
     emit('callback', response)
   } else if (status === '05') {
@@ -801,7 +801,7 @@ $marker-receipt: var(--scheduler-layer-marker-receipt, #90BE5E);
     --card-layer-marker: #{$marker-cancel};
   }
 
-  /* 접수대기(05) */
+  /* 대기(05) */
   &.status-receipt {
     border-color: var(--scheduler-card-receipt-border, rgba(245, 124, 0, 0.3));
     background: var(--scheduler-card-receipt-bg, #FFF3E0);
@@ -929,7 +929,7 @@ $marker-receipt: var(--scheduler-layer-marker-receipt, #90BE5E);
   white-space: nowrap;
   min-width: 0;
   /* grow 안 함(flex:1 폐지) — 남는 폭을 먹지 않아 EXT/당일 뱃지가 이름 바로 옆에 붙음.
-     우측 끝은 hover 액션(접수/⋮) 전용 영역으로 분리 → 뱃지·버튼 겹침 해소. */
+     우측 끝은 hover 액션(대기/⋮) 전용 영역으로 분리 → 뱃지·버튼 겹침 해소. */
   flex: 0 1 auto;
 
   &.is-join {
@@ -1105,7 +1105,7 @@ $marker-receipt: var(--scheduler-layer-marker-receipt, #90BE5E);
   line-height: 1;
 }
 
-/* 진료 퀵 액션 상태 버튼 ([접수] / [완료]) — 고객명 라인 맨 오른쪽(⋮ 버튼 왼쪽). */
+/* 방문 퀵 액션 상태 버튼 ([대기] / [완료]) — 고객명 라인 맨 오른쪽(⋮ 버튼 왼쪽). */
 .quick-action-state-btn {
   position: absolute;
   top: 2px;
@@ -1122,7 +1122,7 @@ $marker-receipt: var(--scheduler-layer-marker-receipt, #90BE5E);
   white-space: nowrap;
   z-index: 4;
 
-  /* 접수 버튼: 파란색 */
+  /* 대기 버튼: 파란색 */
   &.btn-receipt {
     background: #256AF5;
     &:hover { background: #1a5ad4; }

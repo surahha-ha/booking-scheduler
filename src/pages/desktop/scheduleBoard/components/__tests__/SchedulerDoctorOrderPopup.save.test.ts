@@ -66,9 +66,9 @@ function seedTeams(store: ReturnType<typeof useStaffStore>) {
       id: TEAM_ID,
       name: '1구역',
       doctors: [
-        { staffId: DOC_A, staffName: '가의사' },
-        { staffId: DOC_B, staffName: '나의사' },
-        { staffId: DOC_C, staffName: '다의사' },
+        { staffId: DOC_A, staffName: '가담당' },
+        { staffId: DOC_B, staffName: '나담당' },
+        { staffId: DOC_C, staffName: '다담당' },
       ],
     },
   ] as any
@@ -116,7 +116,7 @@ describe('담당자 순서 변경 팝업 — 순서 전용 API 저장', () => {
   it('드래그로 바꾼 순서가 orderedStaffIds 배열 순서에 그대로 반영된다', async () => {
     const { wrapper } = await mountPopup()
 
-    // 첫 행(가의사, idx 0)을 세 번째(idx 2)로 이동 → 나,다,가 순
+    // 첫 행(가담당, idx 0)을 세 번째(idx 2)로 이동 → 나,다,가 순
     const state = wrapper.vm.$.setupState
     state.onDragStart(TEAM_ID, 0)
     state.onDrop(TEAM_ID, 2)

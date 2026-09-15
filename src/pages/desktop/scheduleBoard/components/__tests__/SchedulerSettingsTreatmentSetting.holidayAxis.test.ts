@@ -5,7 +5,7 @@
  *
  * 날짜 옆 '휴무' 라벨은 사업장 축이고 직원 리스트는 담당자 축이다(화면정의서 APB031 §2-1).
  * 예전에는 셀의 isOff 를 그대로 직원 전원에게 접어 내려, 사업장이 공휴일 휴무가면
- * 공휴일 진료('Y')로 정한 담당자까지 "(휴무)"으로 찍혔다. 지금은 라벨 판정이
+ * 공휴일 운영('Y')로 정한 담당자까지 "(휴무)"으로 찍혔다. 지금은 라벨 판정이
  * `offDayRules.isStaffOffOn` 하나로 모여 있고(§4-2), 화면은 직원별로 그것을 부른다.
  *
  * 이 파일이 고정하는 것 — `formatListEntries(doctorIds, date, dateKey)` 의 라벨:
@@ -79,9 +79,9 @@ import SchedulerSettingsTreatmentSetting from '@/pages/desktop/scheduleBoard/com
 import { useStaffStore } from '@/stores/staffStore'
 
 // ── fixture ────────────────────────────────────────────────
-const DOC_WORK = 301  // 공휴일에도 진료 (holidayOpenYn='Y')
+const DOC_WORK = 301  // 공휴일에도 운영 (holidayOpenYn='Y')
 const DOC_OFF = 302   // 공휴일은 휴무   (holidayOpenYn='N')
-const NAME_WORK = '진료의'
+const NAME_WORK = '운영의'
 const NAME_OFF = '휴무의'
 
 /* 사업장 — 월 09:00~18:00 / 화 10:00~17:00 */
@@ -115,9 +115,9 @@ function setupMocks(staff: any[], overrides: any[] = []) {
       payload: {
         teams: [{
           id     : '1',
-          name   : '1진료팀',
+          name   : '1팀',
           doctors: [
-            { staffId: DOC_WORK, staffName: '공휴일진료' },
+            { staffId: DOC_WORK, staffName: '공휴일운영' },
             { staffId: DOC_OFF, staffName: '공휴일휴무' },
           ],
         }],
@@ -196,7 +196,7 @@ describe('설정 화면 공휴일 — 직원별 holidayOpenYn 이 사업장 휴�
     expect(entryOf(wrapper, DOC_OFF, HOLIDAY).isOff).toBe(true)
   })
 
-  it('공휴일이 아닌 같은 요일은 두 담당자 모두 진료다 (공휴일 축이 평일까지 물들이지 않는다)', async () => {
+  it('공휴일이 아닌 같은 요일은 두 담당자 모두 운영다 (공휴일 축이 평일까지 물들이지 않는다)', async () => {
     const wrapper = await mountSetting()
 
     expect(labelOf(wrapper, DOC_WORK, PLAIN_TUE)).toBe(`${NAME_WORK} 10:00 ~ 17:00`)
@@ -204,7 +204,7 @@ describe('설정 화면 공휴일 — 직원별 holidayOpenYn 이 사업장 휴�
   })
 
   /* 판정 1단계(일자 지정)가 2단계(공휴일)를 이긴다 — 공휴일 휴무로 정한 담당자도
-   * 그 날짜만 진료로 지정했으면 시간이 보이고, 그 줄만 지정으로 강조된다. */
+   * 그 날짜만 운영으로 지정했으면 시간이 보이고, 그 줄만 지정으로 강조된다. */
   it("★일자 지정은 holidayOpenYn='N' 을 이긴다 — 시간이 보이고 그 줄만 강조된다", async () => {
     setupMocks(
         [staffRow(DOC_WORK, NAME_WORK, 'Y'), staffRow(DOC_OFF, NAME_OFF, 'N')],
@@ -242,13 +242,13 @@ describe('설정 화면 매월 N번째 휴무 — 같은 요일이라도 그 주
     expect(entryOf(wrapper, DOC_WORK, MONTHLY_OFF_MON).isOff).toBe(true)
   })
 
-  it('같은 요일이라도 3번째 월요일은 진료다 — 규칙이 그 요일 전체를 덮지 않는다', async () => {
+  it('같은 요일이라도 3번째 월요일은 운영다 — 규칙이 그 요일 전체를 덮지 않는다', async () => {
     const wrapper = await mountSetting()
 
     expect(labelOf(wrapper, DOC_WORK, PLAIN_MON)).toBe(`${NAME_WORK} 09:00 ~ 13:00`)
   })
 
-  it('매월 규칙은 그 담당자 것이다 — 규칙 없는 담당자는 같은 날 진료다', async () => {
+  it('매월 규칙은 그 담당자 것이다 — 규칙 없는 담당자는 같은 날 운영다', async () => {
     const wrapper = await mountSetting()
 
     // DOC_OFF 는 월요일 미설정이라 사업장 월요일 값을 따른다

@@ -75,7 +75,7 @@ src/pages/desktop/scheduler/
 
 ## 🔀 예약 / 방문 화면 분기 (`dataType`)
 
-`APPOINTMENT`(예약장부)와 `TREATMENT`(코드상 "진료" — 완료·미이행·대기 상태를 다루는 방문 장부) 두 모드다. **이 표가 분기 매트릭스의 SSOT** 다. `docs/reference/03` 은 링크만 한다.
+`APPOINTMENT`(예약장부)와 `TREATMENT`(코드상 "방문" — 완료·미이행·대기 상태를 다루는 방문 장부) 두 모드다. **이 표가 분기 매트릭스의 SSOT** 다. `docs/reference/03` 은 링크만 한다.
 
 | 항목 | APPOINTMENT | TREATMENT |
 |------|-------------|-----------|
@@ -85,8 +85,8 @@ src/pages/desktop/scheduler/
 | DateStrip | 오늘 기준 +30일(`headerWindowDays`) | 선택일 기준 -30일, 오늘이 끝 |
 | `>` 버튼 | 항상 표시 | 오늘 도달 시 숨김 |
 | 상태 필터 | `APPOINTMENT_STATUS_TYPE`: 예약(00) / 취소(03) | `TREATMENT_STATUS_TYPE`: 대기(05) / 완료(01) / 미이행(02) / 취소(03) |
-| ⋮ popover | 변경 / 취소 / 초기화 / 예약 삭제 | 접수대기 / 완료 / 미이행 / 취소 / 초기화 / 진료 삭제 |
-| hover 퀵액션 | 없음 | 00→접수(05), 05→완료(01) |
+| ⋮ popover | 변경 / 취소 / 초기화 / 예약 삭제 | 대기 / 완료 / 미이행 / 취소 / 초기화 / 방문 삭제 |
+| hover 퀵액션 | 없음 | 00→대기(05), 05→완료(01) |
 | ReservationPopup | 전체 수정 | 과거: 메모만, 현재 이후: 전체 수정 |
 | API type | `reservation` | `treatment` |
 | viewMode | 항상 DAY (UI 숨김) | 항상 DAY |

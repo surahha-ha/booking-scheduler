@@ -6,10 +6,10 @@ import { institutionToWeekly, workHoursRowToDailySchedule, useStaffStore } from 
 /**
  * 운영시간 신(新) 계약 (2026-07 · 운영시간 원천 전환)
  *  - 원천 분리 2조회: getSiteWorkHours(사업장, 사업장 strict) + getStaffWorkHours(담당자, 자체 TB).
- *  - 3세션(오전/오후/야간) 폐기 → 진료는 **시작~종료 단일 구간**. USE_YN 필드 없음.
- *    시작·종료가 null 이면 그 요일은 진료하지 않는다(= weekly 생략 → 상위 fallback).
+ *  - 3세션(오전/오후/야간) 폐기 → 운영은 **시작~종료 단일 구간**. USE_YN 필드 없음.
+ *    시작·종료가 null 이면 그 요일은 운영하지 않는다(= weekly 생략 → 상위 fallback).
  *  - 휴게(점심·저녁)는 **사업장(site)만 소유**한다. 담당자 행에는 휴게 필드가 없다.
- *    대신 같은 요일의 기관 휴게를 담당자 운영시간에 얹고(clamp), 의사 컬럼에도 음영을 그린다.
+ *    대신 같은 요일의 기관 휴게를 담당자 운영시간에 얹고(clamp), 담당자 컬럼에도 음영을 그린다.
  *  - 세션 gap 이 사라졌으므로 CLOSED break 는 더 이상 생성되지 않는다.
  */
 
@@ -30,7 +30,7 @@ vi.mock('@/api/publicHolidayApi', () => ({ fetchPublicHolidays: vi.fn(async () =
 vi.mock('notivue', () => ({ push: { error: vi.fn(), success: vi.fn() } }))
 
 // ── fixtures ──────────────────────────────────────────────
-/** 사업장 요일 1행 — 진료 시작~종료 + 휴게 1(점심)·2(저녁). 미설정은 null. */
+/** 사업장 요일 1행 — 운영 시작~종료 + 휴게 1(점심)·2(저녁). 미설정은 null. */
 function inst(dayCd: number, over: Partial<SiteDayHours> = {}): SiteDayHours {
   return {
     dayCd,
@@ -41,7 +41,7 @@ function inst(dayCd: number, over: Partial<SiteDayHours> = {}): SiteDayHours {
   }
 }
 
-/** 담당자 요일 1행 — 진료 시작~종료만. 휴게 필드 없음. */
+/** 담당자 요일 1행 — 운영 시작~종료만. 휴게 필드 없음. */
 function row(over: Partial<WorkHoursRow> = {}): WorkHoursRow {
   return { dayCd: 1, staffOpenHm: null, staffCloseHm: null, ...over }
 }
@@ -57,7 +57,7 @@ function siteResponse(site: SiteDayHours[], holidayHours: SiteWorkHoursResponse[
 
 // ════════════════════════════════════════════════════════════
 describe('institutionToWeekly — 기관 운영시간 요일별 N행 → weekly', () => {
-  it('진료 09~18 + 점심 13~14 → open 단일구간 + LUNCH break', () => {
+  it('운영 09~18 + 점심 13~14 → open 단일구간 + LUNCH break', () => {
     const w = institutionToWeekly([inst(1, {
       openHm: '0900', closeHm: '1800',
       lunchStartHm: '1300', lunchEndHm: '1400',
@@ -105,7 +105,7 @@ describe('institutionToWeekly — 기관 운영시간 요일별 N행 → weekly'
     expect(d.breaks![1]).toMatchObject({ start: '18:00', end: '18:30', type: 'DINNER' })
   })
 
-  it('운영시간 밖 휴게는 잘린다 — 진료 09~13, 점심 13~14 → 휴게 없음 / 진료 09~13:30 이면 13:00~13:30 만', () => {
+  it('운영시간 밖 휴게는 잘린다 — 운영 09~13, 점심 13~14 → 휴게 없음 / 운영 09~13:30 이면 13:00~13:30 만', () => {
     const outside = institutionToWeekly([inst(1, {
       openHm: '0900', closeHm: '1300', lunchStartHm: '1300', lunchEndHm: '1400',
     })])[1]!
@@ -128,8 +128,8 @@ describe('institutionToWeekly — 기관 운영시간 요일별 N행 → weekly'
     expect(d.breaks!.every(b => b.type !== 'CLOSED')).toBe(true)
   })
 
-  it('진료 시작/종료가 null 인 요일 → weekly 에서 생략 (그 요일 휴무 → 상위 fallback)', () => {
-    // 휴게만 있고 진료 구간이 없는 행도 마찬가지(진료 안 함)
+  it('운영 시작/종료가 null 인 요일 → weekly 에서 생략 (그 요일 휴무 → 상위 fallback)', () => {
+    // 휴게만 있고 운영 구간이 없는 행도 마찬가지(운영 안 함)
     expect(institutionToWeekly([inst(1)])).toEqual({})
     expect(institutionToWeekly([inst(1, { lunchStartHm: '1300', lunchEndHm: '1400' })])).toEqual({})
     expect(institutionToWeekly([inst(1, { openHm: '0900' })])).toEqual({}) // 한쪽만 있는 중간 상태도 휴무
@@ -144,7 +144,7 @@ describe('institutionToWeekly — 기관 운영시간 요일별 N행 → weekly'
 
 // ════════════════════════════════════════════════════════════
 describe('workHoursRowToDailySchedule — 담당자 요일 1행 + 기관 휴게 얹기', () => {
-  it('의사 09~18 + 기관 점심 13~14 → 의사 daily.breaks 에 LUNCH 13~14 (의사 컬럼에도 휴게가 그려진다)', () => {
+  it('담당자 09~18 + 기관 점심 13~14 → 담당자 daily.breaks 에 LUNCH 13~14 (담당자 컬럼에도 휴게가 그려진다)', () => {
     const d = workHoursRowToDailySchedule(
       row({ staffOpenHm: '0900', staffCloseHm: '1800' }),
       [lunch('13:00', '14:00')],
@@ -155,7 +155,7 @@ describe('workHoursRowToDailySchedule — 담당자 요일 1행 + 기관 휴게 
     expect(d.dayOffYn).toBe('N')
   })
 
-  it('기관 점심+저녁 → 둘 다 의사 daily 에 얹힌다 (시작 시각 순)', () => {
+  it('기관 점심+저녁 → 둘 다 담당자 daily 에 얹힌다 (시작 시각 순)', () => {
     const d = workHoursRowToDailySchedule(
       row({ staffOpenHm: '0900', staffCloseHm: '2100' }),
       [lunch('13:00', '14:00'), dinner('18:00', '18:30')],
@@ -165,7 +165,7 @@ describe('workHoursRowToDailySchedule — 담당자 요일 1행 + 기관 휴게 
     expect(d.breaks![1]).toMatchObject({ start: '18:00', end: '18:30', type: 'DINNER' })
   })
 
-  it('의사 운영시간 밖 기관 휴게는 잘린다 — 의사 09~13 + 점심 13~14 → 휴게 없음', () => {
+  it('담당자 운영시간 밖 기관 휴게는 잘린다 — 담당자 09~13 + 점심 13~14 → 휴게 없음', () => {
     const d = workHoursRowToDailySchedule(
       row({ staffOpenHm: '0900', staffCloseHm: '1300' }),
       [lunch('13:00', '14:00')],
@@ -174,7 +174,7 @@ describe('workHoursRowToDailySchedule — 담당자 요일 1행 + 기관 휴게 
     expect(d.breaks).toBeNull()
   })
 
-  it('부분 겹침 휴게는 겹치는 만큼만 — 의사 09~13:30 + 점심 13~14 → 13:00~13:30', () => {
+  it('부분 겹침 휴게는 겹치는 만큼만 — 담당자 09~13:30 + 점심 13~14 → 13:00~13:30', () => {
     const d = workHoursRowToDailySchedule(
       row({ staffOpenHm: '0900', staffCloseHm: '1330' }),
       [lunch('13:00', '14:00')],
@@ -183,7 +183,7 @@ describe('workHoursRowToDailySchedule — 담당자 요일 1행 + 기관 휴게 
     expect(d.breaks![0]).toMatchObject({ start: '13:00', end: '13:30', type: 'LUNCH' })
   })
 
-  it('기관 휴게가 없으면 의사도 휴게 없음 — 단일 구간 통짜', () => {
+  it('기관 휴게가 없으면 담당자도 휴게 없음 — 단일 구간 통짜', () => {
     const noBreaks = workHoursRowToDailySchedule(row({ staffOpenHm: '0900', staffCloseHm: '1800' }), [])!
     expect(noBreaks.open).toEqual({ start: '09:00', end: '18:00' })
     expect(noBreaks.breaks).toBeNull()
@@ -193,11 +193,11 @@ describe('workHoursRowToDailySchedule — 담당자 요일 1행 + 기관 휴게 
     expect(noArg.breaks).toBeNull()
   })
 
-  it('시작/종료 null → undefined (그 요일 미진료 → 기관 site fallback)', () => {
+  it('시작/종료 null → undefined (그 요일 미운영 → 기관 site fallback)', () => {
     expect(workHoursRowToDailySchedule(row())).toBeUndefined()
-    // 기관 휴게가 있어도 진료 구간이 없으면 daily 자체가 없다(휴게만 있는 요일은 만들지 않는다)
+    // 기관 휴게가 있어도 운영 구간이 없으면 daily 자체가 없다(휴게만 있는 요일은 만들지 않는다)
     expect(workHoursRowToDailySchedule(row(), [lunch('13:00', '14:00')])).toBeUndefined()
-    // 한쪽만 있는 중간 상태도 미진료
+    // 한쪽만 있는 중간 상태도 미운영
     expect(workHoursRowToDailySchedule(row({ staffOpenHm: '0900' }))).toBeUndefined()
   })
 })
@@ -214,7 +214,7 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
     staff: [
       {
         staffId: 101,
-        staffName: '김의사',
+        staffName: '김담당',
         // 월 09~18(기관과 동일), 토 09~13, 일 휴무
         times: [
           row({ dayCd: 0 }),
@@ -224,7 +224,7 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
       },
       {
         staffId: 102,
-        staffName: '이의사',
+        staffName: '이담당',
         // 월 오전만(09~13) → 기관 점심(13~14)이 운영시간 밖이라 잘려 사라진다
         times: [row({ dayCd: 1, staffOpenHm: '0900', staffCloseHm: '1300' })],
       },
@@ -252,24 +252,24 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
     expect(weekly[0]).toBeUndefined()
   })
 
-  it('담당자 weekly: 같은 요일 기관 휴게가 의사 daily 에 병합된다 (의사 컬럼 휴게 음영의 근거)', async () => {
+  it('담당자 weekly: 같은 요일 기관 휴게가 담당자 daily 에 병합된다 (담당자 컬럼 휴게 음영의 근거)', async () => {
     const store = useStaffStore()
     await store.loadSchedule()
 
-    const kim = store.doctorRules['김의사']!.weekly!
+    const kim = store.doctorRules['김담당']!.weekly!
     expect(kim[1]!.open).toEqual({ start: '09:00', end: '18:00' })
     expect(kim[1]!.breaks).toHaveLength(1)
     expect(kim[1]!.breaks![0]).toMatchObject({ start: '13:00', end: '14:00', type: 'LUNCH' })
   })
 
-  it('담당자 weekly: 기관 휴게 없는 요일(토)은 의사도 휴게 없음 / 운영시간 밖이면 잘려 사라진다', async () => {
+  it('담당자 weekly: 기관 휴게 없는 요일(토)은 담당자도 휴게 없음 / 운영시간 밖이면 잘려 사라진다', async () => {
     const store = useStaffStore()
     await store.loadSchedule()
 
     // 토요일: 기관에 휴게 자체가 없음
-    expect(store.doctorRules['김의사']!.weekly![6]!.breaks).toBeNull()
-    // 이의사 월요일 09~13 → 기관 점심(13~14)이 운영시간 밖 → 휴게 없음
-    const lee = store.doctorRules['이의사']!.weekly!
+    expect(store.doctorRules['김담당']!.weekly![6]!.breaks).toBeNull()
+    // 이담당 월요일 09~13 → 기관 점심(13~14)이 운영시간 밖 → 휴게 없음
+    const lee = store.doctorRules['이담당']!.weekly!
     expect(lee[1]!.open).toEqual({ start: '09:00', end: '13:00' })
     expect(lee[1]!.breaks).toBeNull()
   })
@@ -277,17 +277,17 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
   /**
    * ★2026-07-29 정정. 예전엔 시각 null 행을 버려(키 없음) 미설정과 같이 취급했는데,
    * times 에는 **정한 요일만** 실려 오므로 그 행은 미설정이 아니라 **명시적 휴무**이다.
-   * 버리면 쉬는 의사 컬럼이 기관 운영시간으로 열린다 → null 로 담아 fallback 을 막는다.
+   * 버리면 쉬는 담당자 컬럼이 기관 운영시간으로 열린다 → null 로 담아 fallback 을 막는다.
    */
   it('담당자 휴무 요일(시작/종료 null)은 weekly 에 null 로 담긴다 — 미설정(키 없음)과 구분', async () => {
     const store = useStaffStore()
     await store.loadSchedule()
 
-    // 김의사 일요일(dayCd 0): 행은 있고 시각만 null → 명시적 휴무
-    expect(store.doctorRules['김의사']!.weekly![0]).toBeNull()
-    // 이의사: 월요일 행 하나만 → 나머지 요일은 행 자체가 없다(미설정 → 기관 fallback)
-    expect(Object.keys(store.doctorRules['이의사']!.weekly!)).toEqual(['1'])
-    expect(store.doctorRules['이의사']!.weekly![0]).toBeUndefined()
+    // 김담당 일요일(dayCd 0): 행은 있고 시각만 null → 명시적 휴무
+    expect(store.doctorRules['김담당']!.weekly![0]).toBeNull()
+    // 이담당: 월요일 행 하나만 → 나머지 요일은 행 자체가 없다(미설정 → 기관 fallback)
+    expect(Object.keys(store.doctorRules['이담당']!.weekly!)).toEqual(['1'])
+    expect(store.doctorRules['이담당']!.weekly![0]).toBeUndefined()
   })
 
   it('시간축(min/max)은 7요일 전체의 최소~최대 (요일별 편차 흡수, 30분 스냅)', async () => {
@@ -347,8 +347,8 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
   /**
    * ★원천별 독립 판정(allSettled) — 한쪽 장애로 성공한 쪽까지 폐기하지 않는다.
    * 다만 부분 적용은 **한 방향만**: staff 실패 → site 만 반영 / site 실패 → 둘 다 보류.
-   * (의사 weekly 는 기관 휴게를 병합해 만들므로, site 없이 staff 만 반영하면 휴게 음영이 빠진
-   *  의사 컬럼이 그려져 점심시간에 예약이 잡힌다.)
+   * (담당자 weekly 는 기관 휴게를 병합해 만들므로, site 없이 staff 만 반영하면 휴게 음영이 빠진
+   *  담당자 컬럼이 그려져 점심시간에 예약이 잡힌다.)
    * 실패는 workTimeLoadFailed 로 표면화한다 — 무음 fallback 은 장애를 "미설정"으로 위장시킨다.
    */
   describe('원천별 부분 실패', () => {
@@ -396,7 +396,7 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
       expect(store.workTimeLoadFailed).toEqual({ site: false, staff: false })
     })
 
-    it('site 장애(reject) + staff 성공 → 둘 다 보류 (휴게 음영 없는 의사 컬럼을 그리지 않는다)', async () => {
+    it('site 장애(reject) + staff 성공 → 둘 다 보류 (휴게 음영 없는 담당자 컬럼을 그리지 않는다)', async () => {
       mocks.getSiteWorkHours.mockRejectedValueOnce(new Error('service unavailable'))
       const store = useStaffStore()
       await store.loadSchedule()
@@ -422,7 +422,7 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
       await store.loadSchedule() // 2회차 = 기본 mock(정상 응답)
       expect(store.workTimeLoadFailed).toEqual({ site: false, staff: false })
       expect(store.hospitalRules.weekly![1]!.open).toEqual({ start: '09:00', end: '18:00' })
-      expect(store.doctorRules['김의사']!.weekly![1]!.open).toEqual({ start: '09:00', end: '18:00' })
+      expect(store.doctorRules['김담당']!.weekly![1]!.open).toEqual({ start: '09:00', end: '18:00' })
       expect(store.treatmentMinHour).toBe(9)
       expect(store.treatmentMaxHour).toBe(18)
     })
@@ -430,18 +430,18 @@ describe('loadWorkHours — site(기관) + staff(담당자, 기관 휴게 병합
     it('성공 로드 후 staff 만 실패하면 직전 성공값이 그대로 남는다 (통삭제 금지)', async () => {
       const store = useStaffStore()
       await store.loadSchedule()
-      expect(Object.keys(store.doctorRules).sort()).toEqual(['김의사', '이의사'])
+      expect(Object.keys(store.doctorRules).sort()).toEqual(['김담당', '이담당'])
 
       mocks.getStaffWorkHours.mockRejectedValueOnce(new Error('service unavailable'))
       await store.loadSchedule()
 
-      // 의사 목록·요일별 값 모두 직전 성공값 유지
-      expect(Object.keys(store.doctorRules).sort()).toEqual(['김의사', '이의사'])
-      const kim = store.doctorRules['김의사']!.weekly!
+      // 담당자 목록·요일별 값 모두 직전 성공값 유지
+      expect(Object.keys(store.doctorRules).sort()).toEqual(['김담당', '이담당'])
+      const kim = store.doctorRules['김담당']!.weekly!
       expect(kim[1]!.open).toEqual({ start: '09:00', end: '18:00' })
       expect(kim[1]!.breaks![0]).toMatchObject({ start: '13:00', end: '14:00', type: 'LUNCH' })
       expect(kim[0]).toBeNull()
-      expect(store.doctorRules['이의사']!.weekly![1]!.open).toEqual({ start: '09:00', end: '13:00' })
+      expect(store.doctorRules['이담당']!.weekly![1]!.open).toEqual({ start: '09:00', end: '13:00' })
       // 실패는 감추지 않는다
       expect(store.workTimeLoadFailed).toEqual({ site: false, staff: true })
     })

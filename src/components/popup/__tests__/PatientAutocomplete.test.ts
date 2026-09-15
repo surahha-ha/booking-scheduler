@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  *
- * PatientAutocomplete — 고객명 자동완성 입력칸(예약/진료 등록 팝업 · 장부 상단 최근 예약 검색).
+ * PatientAutocomplete — 고객명 자동완성 입력칸(예약/방문 등록 팝업 · 장부 상단 최근 예약 검색).
  *
  * ★핵심 규약: 검색 발사(@search)는 IME 조합 상태와 무관하다.
  *   한글 첫 글자는 다음 글자를 칠 때까지 조합이 끝나지 않는다. compositionend 를 기다리면

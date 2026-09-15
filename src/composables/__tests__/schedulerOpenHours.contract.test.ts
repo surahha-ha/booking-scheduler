@@ -6,7 +6,7 @@
  *
  * 고정하는 것은 **아무도 그 요일을 정하지 않은 칸**의 처리다. 실제로 사고가 난 자리다:
  *   - 사업장이 매주 쉬는 요일에는 운영시간 행 자체가 없다
- *   - 그래서 "시간이 없다"는 이유로 밴드가 닫히고, 축 상속을 끊어 진료로 정한 담당자까지 막혔다
+ *   - 그래서 "시간이 없다"는 이유로 밴드가 닫히고, 축 상속을 끊어 운영으로 정한 담당자까지 막혔다
  * 지금은 양쪽 모두 기본 09:00~18:00 으로 연다 — **정하지 않음**과 **휴무로 정함**은 다르다.
  *
  * ★이 파일이 깨지면 값을 맞추지 말고 **어느 쪽이 옳은지 먼저 정한다.** 양쪽을 각자 고쳐서
@@ -41,7 +41,7 @@ describe('기본 운영시간 상수 — 문자열과 분이 갈리지 않는다
     expect(DEFAULT_OPERATING_END_MIN).toBe(toMin(DEFAULT_OPERATING_END))
   })
 
-  it('병원 표준 09:00~18:00 이다', () => {
+  it('사업장 표준 09:00~18:00 이다', () => {
     expect(DEFAULT_OPERATING_START).toBe('09:00')
     expect(DEFAULT_OPERATING_END).toBe('18:00')
     expect([DEFAULT_OPERATING_START_MIN, DEFAULT_OPERATING_END_MIN]).toEqual([540, 1080])
@@ -64,12 +64,12 @@ describe('아무도 정하지 않은 요일 — 예약검증과 밴드가 같은
       blockOptions: { lunchBlock: true, blockedTime: true, closedDay: true },
       selectedDoctors: new Set(['kim']),
       cellDuration: 30,
-      doctorsRef: [{ id: 'kim', text: '김의사' }],
+      doctorsRef: [{ id: 'kim', text: '김담당' }],
       options: { priority: 'DOCTOR_FIRST', mergePolicy: 'FALLBACK' },
     })
   }
 
-  /* 밴드 쪽 같은 상황 — 의사별·요일별 운영시간이 통째로 비어 있다. */
+  /* 밴드 쪽 같은 상황 — 담당자별·요일별 운영시간이 통째로 비어 있다. */
   const bandHours = () =>
     resolveUnitHours(
       { hoursByDoctor: {}, hoursByWeekday: {}, holidayHours: {}, holidayDates: [] } as never,

@@ -24,7 +24,7 @@ const props = defineProps({
   inheritedWeekdays: {type: Set, default: () => new Set()},
   /* [{weekday, option, label}] — 반복 휴무 칩 */
   chips: {type: Array, default: () => []},
-  /* [{type, label, ranges: [...]}] — 특정일자 칩을 휴무/진료로 묶은 것 */
+  /* [{type, label, ranges: [...]}] — 특정일자 칩을 휴무/운영으로 묶은 것 */
   dateGroups: {type: Array, default: () => []},
   /* 공휴일에 쉬는가. 담당자 미설정이면 부모가 사업장 값을 넣어 준다(§4-5-5) */
   holidayOff: {type: Boolean, default: false},
@@ -174,7 +174,7 @@ onBeforeUnmount(() => {
         </p>
 
         <!-- 목록이 길어질 수 있어 전부 노출하되(숨기면 저장에서도 빠져 원천 행이 지워진다)
-             진료/휴무 구분선 + 스크롤로 정리한다. -->
+             운영/휴무 구분선 + 스크롤로 정리한다. -->
         <div v-else class="schedulerTreatmentSetting__specificDates">
           <template v-for="group in dateGroups" :key="`override-type-${ownerKey}-${group.type}`">
             <p
@@ -287,7 +287,7 @@ onBeforeUnmount(() => {
     gap: 4px;
   }
 
-  /* 진료/휴무 구분 머리글. 이 목록에서 가장 먼저 읽혀야 하는 정보라 색으로 갈라 준다. */
+  /* 운영/휴무 구분 머리글. 이 목록에서 가장 먼저 읽혀야 하는 정보라 색으로 갈라 준다. */
   &__specificDatesGroup {
     position: sticky;
     top: 0;

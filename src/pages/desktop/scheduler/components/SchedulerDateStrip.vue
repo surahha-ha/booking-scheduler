@@ -40,7 +40,7 @@
         >{{ cell.dayOfMonth }}</button>
       </template>
 
-      <!-- 연두 > (진료 화면 + 오늘이면 숨김) -->
+      <!-- 연두 > (방문 화면 + 오늘이면 숨김) -->
       <button v-show="!isNextDisabled" aria-label="다음 날짜 보기" class="scheduleDateStrip__dayNav scheduleDateStrip__dayNav--next" type="button" @click="emit('shift-next')">
         <span aria-hidden="true" class="scheduleDateStrip__dayNavIcon" />
       </button>
@@ -93,7 +93,7 @@
       </template>
     </template>
 
-    <!-- 노란 > (진료 화면: 오늘 이후 이동 불가이면 숨김) -->
+    <!-- 노란 > (방문 화면: 오늘 이후 이동 불가이면 숨김) -->
     <button v-show="!isNextDisabled" aria-label="다음 월 표시" class="scheduleDateStrip__monthNav scheduleDateStrip__monthNav--next" type="button" @click="emit('expand-next-month')">
       <span aria-hidden="true" class="scheduleDateStrip__monthNavIcon" />
     </button>
@@ -108,7 +108,7 @@ import { yearLabelFor } from '@/utils/dateUtils'
 
 const MONTH_LABELS = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월']
 const MONTH_RANGE = 12
-// 명세 9-1: 진료 줄달력 좌측 월 버튼 = strip 시작월 + 이전 2개월 = 3개
+// 명세 9-1: 방문 줄달력 좌측 월 버튼 = strip 시작월 + 이전 2개월 = 3개
 const PAST_MONTH_BUTTON_COUNT = 3
 
 const props = defineProps({
@@ -171,7 +171,7 @@ const stripDayCells = computed(() => {
 
 // 왼쪽 바깥 월 버튼
 // 예약 화면: strip 시작일이 속한 월 1개
-// 진료 화면: strip 이전 월을 여러 개 (최대 MONTH_RANGE개)
+// 방문 화면: strip 이전 월을 여러 개 (최대 MONTH_RANGE개)
 const leftMonthButtons = computed(() => {
   const stripStart = dayjs(props.stripWindowStart)
 
@@ -184,7 +184,7 @@ const leftMonthButtons = computed(() => {
     }])
   }
 
-  // 진료 화면: strip에 포함된 월을 제외하고, strip 직전부터 역순 수집
+  // 방문 화면: strip에 포함된 월을 제외하고, strip 직전부터 역순 수집
   // 결과: 가장 오래된 월(왼쪽) → strip에 가까운 월(오른쪽)
   // 예: 오늘 4/14, strip 3/16~4/14 → strip에 3월,4월 포함
   //     → 왼쪽 mm월: 5월 6월 7월 ... 1월 2월 (12개, 3월/4월 제외)
@@ -345,7 +345,7 @@ function isDateDisabled(date) {
   return date > props.maxDate
 }
 
-// 진료 화면: maxDate가 strip 안에 포함되면 다음 월 이동 버튼 숨김
+// 방문 화면: maxDate가 strip 안에 포함되면 다음 월 이동 버튼 숨김
 const isNextDisabled = computed(() => {
   if (!props.maxDate) return false
   const stripEnd = dayjs(props.stripWindowStart).add(props.headerWindowDays - 1, 'day').format('YYYY-MM-DD')

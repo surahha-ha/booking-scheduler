@@ -46,7 +46,7 @@ const {dialogOpen, withDialog} = useDialogGuard();
 // 그 순간엔 보이지 않으므로 다이얼로그가 스스로 말해야 한다.
 function noItemGroupMsg(emptyGrps) {
   const names = emptyGrps.map((g) => g.serviceGroupName).join(', ');
-  return `진료항목이 없는 그룹: ${names}\n진료항목을 등록하거나 그룹을 삭제하세요.`;
+  return `서비스 항목이 없는 그룹: ${names}\n서비스 항목을 등록하거나 그룹을 삭제하세요.`;
 }
 const store = useServiceItemStore();
 const {groups, userGroups} = storeToRefs(store);
@@ -107,7 +107,7 @@ const groupNameDraft = ref('');
 // 편집 진입 시점의 원본 — 변경 없으면 UPDATE 를 보내지 않는다.
 // (무변경 UPDATE 는 수정일시를 갱신해 BE 정렬상 목록 맨 위로 올려버린다)
 const groupNameOriginal = ref('');
-// 4-4 진료항목 입력 auto-grow: 드래프트 배열(안정 id key → 커밋 시 다른 칸 포커스 보존).
+// 4-4 서비스 항목 입력 auto-grow: 드래프트 배열(안정 id key → 커밋 시 다른 칸 포커스 보존).
 let _draftSeq = 0;
 function makeDraft() { return {id: ++_draftSeq, value: ''}; }
 const newItemDrafts = ref([makeDraft()]);
@@ -326,7 +326,7 @@ async function selectGroup(grp) {
   // 탈출구는 안내대로 둘 — 항목을 등록하거나 그룹을 삭제한다(둘 다 이 경로를 타지 않는다).
   const current = selectedGroup.value;
   if (current && current.serviceGroupId !== grp.serviceGroupId && !hasSelectableItems(current)) {
-    await withDialog(() => dialog.alert(noItemGroupMsg([current]), {title: '진료항목'}));
+    await withDialog(() => dialog.alert(noItemGroupMsg([current]), {title: '서비스 항목'}));
     return;
   }
 
@@ -394,8 +394,8 @@ async function commitEditGroup() {
 
 async function deleteGroup(grp) {
   const ok = await withDialog(() => dialog.confirm(
-      '그룹 삭제 시,\n내부 진료항목이 모두 삭제됩니다.\n삭제하시겠습니까?',
-      {title: '진료항목 그룹 삭제'},
+      '그룹 삭제 시,\n내부 서비스 항목이 모두 삭제됩니다.\n삭제하시겠습니까?',
+      {title: '서비스 항목 그룹 삭제'},
   ));
   if (!ok) return;
   try {
@@ -459,7 +459,7 @@ async function commitItemDraft(d, refocus = false) {
   }
   if (!selectedGroup.value) return;
   if (isDuplicateItemNm(name)) {
-    push.error('이미 동일한 이름의 진료항목이 존재합니다.');
+    push.error('이미 동일한 이름의 서비스 항목이 존재합니다.');
     return;
   }
   d.value = ''; // 즉시 비움 → Enter(제거)→blur 중복 커밋 방지(재진입 시 name='' early return)
@@ -485,7 +485,7 @@ async function commitItemDraft(d, refocus = false) {
     }
   } catch (e) {
     d.value = name; // 실패 시 입력 복원
-    push.error(extractErrorMessage(e, '진료항목 추가에 실패했습니다.'));
+    push.error(extractErrorMessage(e, '서비스 항목 추가에 실패했습니다.'));
   } finally {
     inFlightItemCommits.delete(req);
   }
@@ -514,19 +514,19 @@ async function commitEditItem() {
   if (!name) return;
   if (name === itemNameOriginal.value.trim()) return; // 무변경 → UPDATE 생략
   if (isDuplicateItemNm(name, id)) {
-    push.error('이미 동일한 이름의 진료항목이 존재합니다.');
+    push.error('이미 동일한 이름의 서비스 항목이 존재합니다.');
     return;
   }
   try {
     await store.updateItem(id, {serviceItemName: name});
   } catch (e) {
-    push.error(extractErrorMessage(e, '진료항목 수정에 실패했습니다.'));
+    push.error(extractErrorMessage(e, '서비스 항목 수정에 실패했습니다.'));
   }
 }
 
 async function deleteItem(item) {
   // 그룹 삭제와 같은 자리의 같은 버튼이다 — 한쪽만 묻고 한쪽은 바로 지우면 실수로 지운다.
-  const ok = await withDialog(() => dialog.confirm('삭제하시겠습니까?', {title: '진료항목 삭제'}));
+  const ok = await withDialog(() => dialog.confirm('삭제하시겠습니까?', {title: '서비스 항목 삭제'}));
   if (!ok) return;
   try {
     await store.deleteItem(item.serviceItemId);
@@ -555,7 +555,7 @@ async function handleCancel({commitDrafts = true} = {}) {
     await flushItemDrafts(commitDrafts);
     const current = selectedGroup.value;
     if (current && !hasSelectableItems(current)) {
-      await withDialog(() => dialog.alert(noItemGroupMsg([current]), {title: '진료항목'}));
+      await withDialog(() => dialog.alert(noItemGroupMsg([current]), {title: '서비스 항목'}));
       return;
     }
     emit('close');
@@ -586,7 +586,7 @@ async function handleCancel({commitDrafts = true} = {}) {
       >
         <!-- 헤더 -->
         <div class="tisp-header schedule-popup__header">
-          <span class="tisp-title schedule-popup__title">진료항목 설정</span>
+          <span class="tisp-title schedule-popup__title">서비스 항목 설정</span>
           <button class="tisp-closeBtn schedule-popup__close-button" type="button" aria-label="닫기" @click="handleCancel()">×</button>
         </div>
 
@@ -887,7 +887,7 @@ async function handleCancel({commitDrafts = true} = {}) {
   color: #B52A25;
 }
 
-/* 진료항목 삭제는 텍스트형이 아닌 무테두리 아이콘 버튼으로 표시한다. */
+/* 서비스 항목 삭제는 텍스트형이 아닌 무테두리 아이콘 버튼으로 표시한다. */
 .tisp-item-delete-button {
   width: 20px;
   padding: 0;

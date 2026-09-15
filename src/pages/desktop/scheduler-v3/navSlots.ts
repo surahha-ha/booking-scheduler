@@ -3,7 +3,7 @@
  *
  * 모델: 좌측 끝 = selectedDate(날짜). 윈도우 = 전역 sub-col 시퀀스의 [colOffset, colOffset+budget).
  * 헤더 담당자 <> 는 윈도우를 budget 칸 이동 후 "착지 컬럼의 날짜"로 selectedDate 를 재고정 →
- * 데이터 재조회로 밀도가 변해도 좌측 날짜가 안 끌려감(점프 차단). within-day offset 으로 의사 多 페이징 보존.
+ * 데이터 재조회로 밀도가 변해도 좌측 날짜가 안 끌려감(점프 차단). within-day offset 으로 담당자 多 페이징 보존.
  *
  * 여기 함수들은 reactive 상태(navigation/store)에 의존하지 않는 순수함수다. .vue 는 이 결과로
  * selectedDate/colOffset 을 설정만 한다.

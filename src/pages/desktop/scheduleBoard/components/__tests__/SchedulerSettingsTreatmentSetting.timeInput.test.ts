@@ -14,8 +14,8 @@
  *  ② 저장 버튼 — 실제로 막는 곳. 입력은 그때까지 상태에 그대로 남아 있다.
  *  commit 자체는 검증하지 않는다: 스크롤·리사이즈로도 들어오는 경로라 막을 자리가 아니다.
  *
- * 둘 다 비운 것은 막지 않는다. 그건 정상적인 의사 표현이다:
- *   진료행 = 그 요일 휴무 / 휴게행 = 휴게 없음
+ * 둘 다 비운 것은 막지 않는다. 그건 정상적인 담당자 표현이다:
+ *   운영행 = 그 요일 휴무 / 휴게행 = 휴게 없음
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -171,7 +171,7 @@ describe('운영시간 입력 완결성 — 요일 편집 popover(commit 경로)
     expect(state.institutionWeeklyDayMap.get(MONDAY)).toEqual([{ kind: 'WORK', start: '10:00', end: '17:00' }])
   })
 
-  it('둘 다 비운 것은 그 요일 휴무가라는 정상 의사 표현 — entry 가 지워진다', async () => {
+  it('둘 다 비운 것은 그 요일 휴무라는 정상 담당자 표현 — entry 가 지워진다', async () => {
     const wrapper = await mountSetting()
     const state = wrapper.vm.$.setupState
     openWeekdayDraft(state, {})
@@ -328,7 +328,7 @@ describe('운영시간 입력 완결성 — 바깥 클릭과 [X] 출구', () => 
     expect(state.institutionWeeklyDayMap.get(MONDAY)).toEqual([{ kind: 'WORK', start: '10:00', end: '17:00' }])
   })
 
-  it('둘 다 비운 것은 그 요일 휴무가라는 정상 의사 표현 — 막지 않는다', async () => {
+  it('둘 다 비운 것은 그 요일 휴무라는 정상 담당자 표현 — 막지 않는다', async () => {
     const wrapper = await mountSetting()
     const state = wrapper.vm.$.setupState
     openWeekdayDraft(state, {})
@@ -339,7 +339,7 @@ describe('운영시간 입력 완결성 — 바깥 클릭과 [X] 출구', () => 
     expect(dialogMock.alert).not.toHaveBeenCalled()
   })
 
-  /* 매월 n번째만 쉬는 요일은 나머지 주에 진료하므로 둘 다 비우는 것이 "휴무"이 아니다 — 저장 게이트
+  /* 매월 n번째만 쉬는 요일은 나머지 주에 운영하므로 둘 다 비우는 것이 "휴무"이 아니다 — 저장 게이트
    * 4단과 같은 판정·같은 문구를 바깥 클릭에서도 돌린다(닫을 때와 저장할 때 다르게 말하지 않는다). */
   it('★매월 n번째만 휴무인 요일을 둘 다 비운 채 바깥을 누르면 붙잡고 몇 번째인지까지 말한다', async () => {
     mocks.getSiteWorkHours.mockResolvedValue({
@@ -361,7 +361,7 @@ describe('운영시간 입력 완결성 — 바깥 클릭과 [X] 출구', () => 
     expect(state.weekdayEditor.open, '고칠 자리를 붙잡아 둔다').toBe(true)
     expect(dialogMock.alert).toHaveBeenCalledTimes(1)
     expect(dialogMock.alert.mock.calls[0][0])
-      .toBe('월요일은 매월 2번째 휴무가라 나머지 주에 진료합니다.\n운영시간을 입력해 주세요.')
+      .toBe('월요일은 매월 2번째 휴무라 나머지 주에 운영합니다.\n운영시간을 입력해 주세요.')
     expect(state.editorSlotInvalid(state.weekdayEditor, 'WORK', 'start'), '빈 운영시간 시작칸이 붉다').toBe(true)
     expect(state.editorSlotInvalid(state.weekdayEditor, 'WORK', 'end'), '빈 운영시간 종료칸이 붉다').toBe(true)
     expect(state.editorSlotInvalid(state.weekdayEditor, 'LUNCH', 'start'), '휴게시간은 대상이 아니다').toBe(false)
@@ -450,7 +450,7 @@ describe('운영시간 입력 완결성 — 저장 최종 가드', () => {
     setActivePinia(createPinia())
     useStaffStore()
     mocks.getTeams.mockResolvedValue({
-      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: 11, staffName: '김의사' }] }] } },
+      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: 11, staffName: '김담당' }] }] } },
     })
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {
@@ -462,7 +462,7 @@ describe('운영시간 입력 완결성 — 저장 최종 가드', () => {
       data: {
         code: 'succeed',
         payload: {
-          staff: [{ staffId: 11, staffName: '김의사', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1300' }] }],
+          staff: [{ staffId: 11, staffName: '김담당', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1300' }] }],
           overrides: [],
         },
       },
@@ -657,7 +657,7 @@ describe('미완성 입력 — 사업장 popover 는 저장 게이트가 잡는�
     expect(mocks.saveTreatmentSettings).toHaveBeenCalledTimes(1)
   })
 
-  /* popover 는 이미 닫혀 있다 — 요일 버튼 테두리만으로는 진료/휴게1/휴게2 · 시작/종료 중 어느 칸인지 모른다.
+  /* popover 는 이미 닫혀 있다 — 요일 버튼 테두리만으로는 운영/휴게1/휴게2 · 시작/종료 중 어느 칸인지 모른다.
    * 그 요일 popover 를 다시 열어 빈 칸을 보이고, 안내 [확인] 뒤 포커스가 그 칸에 있어야 한다. */
   it('★저장이 막히면 그 요일 popover 가 자동으로 다시 열리고 비어 있는 칸에 포커스가 간다', async () => {
     const wrapper = await mountSetting(true)
@@ -771,9 +771,9 @@ describe('미완성 입력 — 일자 지정은 그 셀 편집기를 다시 연�
     setActivePinia(createPinia())
     // 셀 entry 는 이름을 staffStore.doctors 에서 찾는다 — 없으면 그 줄이 렌더되지 않아
     // 저장 게이트가 되짚을 앵커(cellEntryEls)도 생기지 않는다
-    useStaffStore().doctors.push({ id: `${DOC}`, text: '김의사', staffId: DOC } as any)
+    useStaffStore().doctors.push({ id: `${DOC}`, text: '김담당', staffId: DOC } as any)
     mocks.getTeams.mockResolvedValue({
-      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: DOC, staffName: '김의사' }] }] } },
+      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: DOC, staffName: '김담당' }] }] } },
     })
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {
@@ -933,7 +933,7 @@ describe('오류 표시 — data-invalid / aria-invalid 동행', () => {
     setActivePinia(createPinia())
     useStaffStore()
     mocks.getTeams.mockResolvedValue({
-      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: 11, staffName: '김의사' }] }] } },
+      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: 11, staffName: '김담당' }] }] } },
     })
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {
@@ -945,7 +945,7 @@ describe('오류 표시 — data-invalid / aria-invalid 동행', () => {
       data: {
         code: 'succeed',
         payload: {
-          staff: [{ staffId: 11, staffName: '김의사', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1300' }] }],
+          staff: [{ staffId: 11, staffName: '김담당', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1300' }] }],
           overrides: [],
         },
       },
@@ -1103,7 +1103,7 @@ describe('시간 텍스트 입력 — 저장 최종 가드 (담당자 7행)', ()
     setActivePinia(createPinia())
     useStaffStore()
     mocks.getTeams.mockResolvedValue({
-      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: 11, staffName: '김의사' }] }] } },
+      data: { code: 'succeed', payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: 11, staffName: '김담당' }] }] } },
     })
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {
@@ -1115,7 +1115,7 @@ describe('시간 텍스트 입력 — 저장 최종 가드 (담당자 7행)', ()
       data: {
         code: 'succeed',
         payload: {
-          staff: [{ staffId: 11, staffName: '김의사', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1300' }] }],
+          staff: [{ staffId: 11, staffName: '김담당', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1300' }] }],
           overrides: [],
         },
       },

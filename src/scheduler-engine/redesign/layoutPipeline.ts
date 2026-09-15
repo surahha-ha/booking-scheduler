@@ -208,9 +208,9 @@ function normalizeDisplayInfo(raw: string[] | undefined): string[] {
 }
 
 // ════════════════════════════════════════════════════════════
-// 8. buildUnitSequence — (날짜,의사) 시퀀스 + slots (REDESIGN §4 단계 3, §8)
+// 8. buildUnitSequence — (날짜,담당자) 시퀀스 + slots (REDESIGN §4 단계 3, §8)
 //    slots = customSlots[key] ?? max(1, min(maxConcurrent(unitAppts), slotDivision))
-//    진료(TREATMENT)=selectedDate 1일, 예약(APPOINTMENT)=forward HORIZON_DAYS.
+//    운영(TREATMENT)=selectedDate 1일, 예약(APPOINTMENT)=forward HORIZON_DAYS.
 //    날짜-major 순서: (d0,docA),(d0,docB),...,(d1,docA),...
 // ════════════════════════════════════════════════════════════
 
@@ -220,13 +220,13 @@ export function buildUnitSequence(
   apptsByUnitKey: Record<string, CardInput[]>,
   opts?: { horizonDays?: number },
 ): Unit[] {
-  // 의사 필터 ([] = 전체). 입력 순서 보존.
+  // 담당자 필터 ([] = 전체). 입력 순서 보존.
   const filterSet = new Set(cfg.selectedDoctorIds)
   const activeDoctors = filterSet.size === 0
     ? doctors
     : doctors.filter(d => filterSet.has(d.id))
 
-  // 날짜 지평: 진료=1일, 예약=forward horizon
+  // 날짜 지평: 운영=1일, 예약=forward horizon
   const horizon = cfg.dataType === 'TREATMENT'
     ? 1
     : Math.max(1, opts?.horizonDays ?? HORIZON_DAYS)
@@ -247,7 +247,7 @@ export function buildUnitSequence(
 /**
  * unit 칸수(레인폭): customSlots override 최우선.
  * - 모델 A(기본): max(1, min(maxConcurrent, N)) — 동시겹침 수만큼(빈=1). 겹침이 늘면 컬럼이 넓어진다.
- * - 모델 B2     : max(1, N) 고정 — 데이터 무관(빈 의사도 N). 폭이 안 변해 밀림 0, 대신 빈 레인 상시.
+ * - 모델 B2     : max(1, N) 고정 — 데이터 무관(빈 담당자도 N). 폭이 안 변해 밀림 0, 대신 빈 레인 상시.
  *   B2 라고 카드가 풀폭이 되지는 않는다 — 카드폭은 두 모델 모두 레인폭(widthPx/slots) 그대로다.
  */
 function resolveSlots(cfg: LayoutConfig, key: string, appts: CardInput[] | undefined): number {
@@ -270,10 +270,10 @@ function resolveSlots(cfg: LayoutConfig, key: string, appts: CardInput[] | undef
 // ════════════════════════════════════════════════════════════
 
 /**
- * unit 의 운영시간: 의사별·요일별 우선, 없으면 요일별 기관공통 fallback, 둘 다 없으면 빈.
+ * unit 의 운영시간: 담당자별·요일별 우선, 없으면 요일별 기관공통 fallback, 둘 다 없으면 빈.
  *
- * 공휴일 진료일(holidayDates)에도 **담당자 설정이 먼저다** — 그 의사가 그 요일을 정해 뒀으면
- * (진료든 휴무가든) 그 값을 쓰고, **미설정일 때만** 사업장 공휴일 운영시간을 쓴다.
+ * 공휴일 운영일(holidayDates)에도 **담당자 설정이 먼저다** — 그 담당자가 그 요일을 정해 뒀으면
+ * (운영든 휴무가든) 그 값을 쓰고, **미설정일 때만** 사업장 공휴일 운영시간을 쓴다.
  * 다만 **휴게는 운영시간과 갈린다** — 휴게는 사업장만 소유하므로, 담당자 운영시간을 쓰는
  * 경우에도 휴게는 그 날짜의 기관 값(= 공휴일 휴게)으로 간다.
  * 예약검증(useSchedulerRules.pickDailySchedule)과 같은 규칙이어야 "밴드는 열렸는데 클릭하면
@@ -281,7 +281,7 @@ function resolveSlots(cfg: LayoutConfig, key: string, appts: CardInput[] | undef
  *
  * 기관 공휴일 시간도 미설정(세션 0)이면 요일 축으로 폴백한다: 밴드는 "표시 범위"라 비워 두면
  * 그날만 시간축이 기본값(09~18)으로 튄다. 그 날 예약이 열려 있는지는 useSchedulerRules 가
- * 따로 판정하며, **미설정이면 그날은 종일진료**라 전 셀이 열린다 — 진료하기로 한 의도를
+ * 따로 판정하며, **미설정이면 그날은 종일운영**이라 전 셀이 열린다 — 운영하기로 한 의도를
  * 시간 미입력이 뒤집지 않는다. 밴드가 요일 축을 그대로 쓰는 것이 그 판정과도 맞는다.
  */
 export function resolveUnitHours(cfg: LayoutConfig, unit: Unit): UnitHours {
@@ -311,7 +311,7 @@ export function resolveUnitHours(cfg: LayoutConfig, unit: Unit): UnitHours {
     const h = cfg.holidayHours
     const holidaySet = !!(h.morning || h.afternoon || h.night)
     if (doctorHours) {
-      /* 진료 시작·종료는 담당자 값이지만 **휴게는 그 날짜의 기관 값**을 쓴다 — 휴게는 사업장만
+      /* 운영 시작·종료는 담당자 값이지만 **휴게는 그 날짜의 기관 값**을 쓴다 — 휴게는 사업장만
        * 소유하고, doctorHours 에 실려 오는 휴게는 어댑터가 병합한 **요일별** 휴게이기 때문이다
        * (weekRowsToWeekdayHours). 공휴일 휴게를 따로 정했는데 평일 휴게가 쓰이면 그 설정이 죽는다.
        * 휴무(세션 없음)인 담당자에는 얹지 않는다 — 쉬는 날에 휴게 band 가 생긴다. */
@@ -332,7 +332,7 @@ function hasSession(h: UnitHours): boolean {
   return !!(h.morning || h.afternoon || h.night)
 }
 
-// 병원 표준 운영시간 09:00~18:00 은 constants/operatingHours 가 소유한다. 여기서는 두 곳에 쓴다.
+// 사업장 표준 운영시간 09:00~18:00 은 constants/operatingHours 가 소유한다. 여기서는 두 곳에 쓴다.
 //  ① 운영시간 미설정(별도 테이블 데이터 없음) 시 기본 운영시간
 //     — V2(scheduler/ operatingRange) 의 'weekly 없으면 09~18 fallback' 과 동일. 이때는 운영 band 다.
 //  ② 시간축 최소 창 — 운영시간이 이보다 좁아도 timeline 첫 판은 항상 09~18 을 덮는다(아래 rawStart/rawEnd).
@@ -784,7 +784,7 @@ export function computeRects(
 // ════════════════════════════════════════════════════════════
 // 컬럼 픽셀 레이아웃 — PageColumn → leftPx/widthPx (REDESIGN §하단 가로=페이징)
 //   예약(stretch=false): denom=budget 고정 — 원래 칸 비율 유지. 우측 잔여는 다음 페이지(forward)로 채움.
-//   진료(stretch=true) : denom=Σsubcol — 조회 끝(오늘)이라 forward 확장 불가 → 컬럼을 화면 폭 가득 펴서 empty 제거.
+//   운영(stretch=true) : denom=Σsubcol — 조회 끝(오늘)이라 forward 확장 불가 → 컬럼을 화면 폭 가득 펴서 empty 제거.
 // ════════════════════════════════════════════════════════════
 
 export interface ColumnPixels {
@@ -806,7 +806,7 @@ export function computeColumnPixels(
   stretch = false,
 ): ColumnPixels[] {
   // 예약: denom=budget 고정(펴짐 없음). 잔여 칸 우측은 다음 unit/페이지가 이어짐.
-  // 진료: denom=Σsubcol → full width 펴짐(empty 영역 없음). 풀 페이지는 Σ=budget 이라 동일(무변화).
+  // 운영: denom=Σsubcol → full width 펴짐(empty 영역 없음). 풀 페이지는 Σ=budget 이라 동일(무변화).
   const filled = pageColumns.reduce((s, c) => s + c.subColCount, 0)
   const denom = stretch && filled > 0 ? filled : Math.max(1, budget)
   /* 경계는 정수 픽셀(columnEdgePx) — 폭이 소수점이면 헤더 세로선과 본문 세로선이 어긋나 보인다.
@@ -922,7 +922,7 @@ export function runLayout(input: RunLayoutInput): RunLayoutResult {
   const prevSlotOffset = pageColumns.length > 0
     ? prevWindowStart(units, pageColumns[0].unitIndex, config.budget)
     : null
-  // 진료(TREATMENT)는 조회 끝(오늘)이라 forward 확장 불가 → 컬럼을 full width 로 펴서 empty 제거.
+  // 운영(TREATMENT)는 조회 끝(오늘)이라 forward 확장 불가 → 컬럼을 full width 로 펴서 empty 제거.
   const pixels = computeColumnPixels(pageColumns, config.budget, config.availableWidth, config.dataType === 'TREATMENT')
 
   // 컬럼별 unit/카드/배치 — 배치는 "화면에 그리는 칸 수"(subColCount)로 한다.

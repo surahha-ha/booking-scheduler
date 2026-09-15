@@ -146,9 +146,9 @@ test.describe('SchedulerV2 - 데이터 적재', () => {
 });
 
 test.describe('SchedulerV2 - 헤더', () => {
-  test('10. 헤더에 날짜 행과 의사 행이 렌더된다', async ({ authedPage: page }) => {
+  test('10. 헤더에 날짜 행과 담당자 행이 렌더된다', async ({ authedPage: page }) => {
     // V3 는 날짜축 헤더 <>(header-row--date .header-nav)·본문 page-nav 를 설계상 숨김(display:none).
-    // 날짜 이동 UI 는 DateStrip(‹/›) 이 담당 → 테스트 4 가 커버. 여기선 V3 헤더 구조(날짜+의사 행) 스모크.
+    // 날짜 이동 UI 는 DateStrip(‹/›) 이 담당 → 테스트 4 가 커버. 여기선 V3 헤더 구조(날짜+담당자 행) 스모크.
     await page.goto('/book');
     const header = page.locator('.scheduler-header');
     await expect(header).toBeVisible();

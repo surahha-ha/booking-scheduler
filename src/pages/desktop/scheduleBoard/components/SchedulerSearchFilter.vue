@@ -75,15 +75,15 @@ const treatmentStatusButtons = toButtons(TREATMENT_STATUS_TYPE);
 const activeStatusButtons = computed(() =>
     selectedDataType.value === 'TREATMENT' ? treatmentStatusButtons : appointmentStatusButtons
 );
-// 진료 팀 표시 필터 (이름 통일): 미지정 = 담당자 목록 − 팀멤버 / 특정팀 = 그 팀멤버 (SF-3b)
-// #1 비공개(openYn='N') 의사도 목록 포함 — isPrivate 플래그 동반(UiDoctorFilter '비공개' 뱃지).
+// 팀 표시 필터 (이름 통일): 미지정 = 담당자 목록 − 팀멤버 / 특정팀 = 그 팀멤버 (SF-3b)
+// #1 비공개(openYn='N') 담당자도 목록 포함 — isPrivate 플래그 동반(UiDoctorFilter '비공개' 뱃지).
 const doctorButtons = computed(() => {
   const visible = resolveVisibleDoctors(selectedTeamName.value, doctors.value, teams.value);
   return visible.map((d) => ({ value: d.id, label: d.text, isPrivate: d.openYn === 'N' }));
 });
 
 // '미지정'(팀 미소속) 그룹에 담당자가 하나도 없으면 팀 셀렉트에서 그 선택지를 감춘다 —
-// 골라도 의사 목록·컬럼이 0개인 빈 선택지라 고를 이유가 없다.
+// 골라도 담당자 목록·컬럼이 0개인 빈 선택지라 고를 이유가 없다.
 const hasUnassignedDoctors = computed(
     () => resolveVisibleDoctors(null, doctors.value, teams.value).length > 0
 );
@@ -225,9 +225,9 @@ function onSettingsSaved() {
 }
 
 // ============================================================================
-// 진료 팀 필터 (SF-3a)
+// 팀 필터 (SF-3a)
 // ============================================================================
-/* 팀 마스터 로딩 — 팀 미설정이면 빈 배열 → 셀렉트박스 숨김(AS-IS 전체 의사) */
+/* 팀 마스터 로딩 — 팀 미설정이면 빈 배열 → 셀렉트박스 숨김(AS-IS 전체 담당자) */
 onMounted(() => {
   staffStore.loadTeams();
 });
@@ -250,7 +250,7 @@ function onTeamChange(e) {
 </script>
 
 <template>
-  <div aria-label="예약 및 진료 검색 필터" class="scheduleSearchFilter" role="group">
+  <div aria-label="예약 및 운영 검색 필터" class="scheduleSearchFilter" role="group">
     <UiSwitchButton
         v-model="treatmentStateYesOrNo"
         :width="80"
@@ -258,7 +258,7 @@ function onTeamChange(e) {
         on-label="운영중"
     />
 
-    <!-- 예약 | 진료 -->
+    <!-- 예약 | 운영 -->
     <div class="scheduleSearchFilter__item">
       <UiSegmentedControl
           :items="dataTypeButtons"
@@ -281,11 +281,11 @@ function onTeamChange(e) {
       <UiDateNavigator/>
     </div>
 
-    <!-- 5) 진료 팀 + 진료의사 -->
+    <!-- 5) 팀 + 운영담당 -->
     <div class="scheduleSearchFilter__item scheduleSearchFilter__item--divider scheduleSearchFilter__doctorGroup">
       <!-- 팀 셀렉트박스 — 항상 노출. 기본 '미지정' = 기존 담당자 목록(이름키). 팀 있으면 옵션 추가 -->
       <select
-          aria-label="진료 팀 선택"
+          aria-label="팀 선택"
           class="scheduleSearchFilter__teamSelect"
           :value="selectedTeamName ?? ''"
           @change="onTeamChange"
@@ -425,7 +425,7 @@ function onTeamChange(e) {
   color: rgba(0, 0, 0, 0.3);
 }
 
-/* 진료 팀 셀렉트박스 + 의사 필터 묶음 */
+/* 팀 셀렉트박스 + 담당자 필터 묶음 */
 .scheduleSearchFilter__doctorGroup {
   display: inline-flex;
   align-items: center;

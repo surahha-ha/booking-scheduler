@@ -7,7 +7,7 @@
  *
  *  1) 프리필 통일 — popover 입력칸의 기본값은 셀에 보이던 값과 같아야 한다.
  *     담당자의 그 요일이 미설정이면 사업장의 그 요일 운영시간이 들어온다.
- *     (예전에는 popover 만 raw dayMap 을 읽어, 셀엔 "김의사 09:00 ~ 18:00" 인데 열면 빈칸이었다.)
+ *     (예전에는 popover 만 raw dayMap 을 읽어, 셀엔 "김담당 09:00 ~ 18:00" 인데 열면 빈칸이었다.)
  *
  *  2) 열어보기만 하면 지정이 생기지 않는다 — 확인 버튼 없는 즉시반영 UX 라 바깥 클릭도 커밋이다.
  *     프리필과 값이 같으면 지정 없음을 유지한다. 지정이 생기면 그 날짜가 그 시각으로 굳어
@@ -74,7 +74,7 @@ const siteRows = [
 
 /* 이 담당자는 **월요일 1건**만 등록돼 있다 — 화요일은 미설정(기관 값 상속) */
 const staffMondayOnly = [
-  { staffId: DOC, staffName: '홍의사', times: [{ dayCd: MON, staffOpenHm: '0900', staffCloseHm: '1300' }] },
+  { staffId: DOC, staffName: '홍담당', times: [{ dayCd: MON, staffOpenHm: '0900', staffCloseHm: '1300' }] },
 ]
 
 const mounted: any[] = []
@@ -87,7 +87,7 @@ function setupMocks(staff: any[], overrides: any[] = []) {
   mocks.getTeams.mockResolvedValue({
     data: {
       code   : 'succeed',
-      payload: { teams: [{ id: 1, name: '1진료팀', doctors: [{ staffId: DOC, staffName: '홍의사' }] }] },
+      payload: { teams: [{ id: 1, name: '1팀', doctors: [{ staffId: DOC, staffName: '홍담당' }] }] },
     },
   })
   mocks.getSiteWorkHours.mockResolvedValue({
@@ -263,7 +263,7 @@ describe('캘린더 셀 — 지정된 줄만 하이라이트', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     // 셀 entry 는 이름을 staffStore.doctors 에서 찾는다 — 없으면 entry 자체가 만들어지지 않는다
-    useStaffStore().doctors.push({ id: `${DOC}`, text: '홍의사', staffId: DOC } as any)
+    useStaffStore().doctors.push({ id: `${DOC}`, text: '홍담당', staffId: DOC } as any)
   })
 
   it('★지정이 걸린 (직원, 날짜) 만 isDesignated 다', async () => {
@@ -274,14 +274,14 @@ describe('캘린더 셀 — 지정된 줄만 하이라이트', () => {
     const state = wrapper.vm.$.setupState
 
     const designated = state.formatListEntries([DOC], dayjs(TUE_DATE), TUE_DATE)
-    expect(designated[0].label, '지정값이 라벨에도 반영된다').toBe('홍의사 14:00 ~ 19:00')
+    expect(designated[0].label, '지정값이 라벨에도 반영된다').toBe('홍담당 14:00 ~ 19:00')
     expect(designated[0].isDesignated).toBe(true)
 
     const plain = state.formatListEntries([DOC], dayjs(MON_DATE), MON_DATE)
     expect(plain[0].isDesignated, '요일 반복만 따르는 날은 강조하지 않는다').toBe(false)
   })
 
-  it('기관 휴무일에도 진료로 지정한 줄은 시간이 보인다 — 지정이 기관 휴무를 이긴다(§4-2 1단계)', async () => {
+  it('기관 휴무일에도 운영으로 지정한 줄은 시간이 보인다 — 지정이 기관 휴무를 이긴다(§4-2 1단계)', async () => {
     setupMocks(staffMondayOnly, [
       { staffId: DOC, date: TUE_DATE, overrideOpenHm: '1400', overrideCloseHm: '1900' },
     ])
@@ -290,7 +290,7 @@ describe('캘린더 셀 — 지정된 줄만 하이라이트', () => {
     state.dateOverrides.set(TUE_DATE, 'OFF') // 사업장 일자 휴무 — 예전에는 이 날 전원이 (휴무)으로 접혔다
 
     const entries = state.formatListEntries([DOC], dayjs(TUE_DATE), TUE_DATE)
-    expect(entries[0].label, '지정 진료 시간이 기관 휴무를 덮지 않고 그대로 보인다').toBe('홍의사 14:00 ~ 19:00')
+    expect(entries[0].label, '지정 운영 시간이 기관 휴무를 덮지 않고 그대로 보인다').toBe('홍담당 14:00 ~ 19:00')
     expect(entries[0].isOff).toBe(false)
     expect(entries[0].isDesignated, '직원별 표기가 갈리는 날일수록 지정 강조가 필요하다').toBe(true)
   })

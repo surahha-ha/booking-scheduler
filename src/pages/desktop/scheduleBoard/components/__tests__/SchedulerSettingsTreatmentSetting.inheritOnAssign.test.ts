@@ -52,7 +52,7 @@ import SchedulerSettingsTreatmentSetting from '@/pages/desktop/scheduleBoard/com
 import { useStaffStore } from '@/stores/staffStore'
 
 // ── fixture ────────────────────────────────────────────────
-const A1 = 101, A2 = 102          // 보철팀 (A1 = 첫 직원)
+const A1 = 101, A2 = 102          // 관리팀 (A1 = 첫 직원)
 const C1 = 301, C2 = 302          // 어느 팀에도 없는 신규 배치 대상
 const TEAM_A = '1'
 const K = (no: number) => `STAFF:${no}`
@@ -72,7 +72,7 @@ beforeEach(() => {
 
   const staff = useStaffStore()
   staff.doctors.push(
-    { id: `${A1}`, text: '김의사', staffId: A1 } as any,
+    { id: `${A1}`, text: '김담당', staffId: A1 } as any,
     { id: `${A2}`, text: '이직원', staffId: A2 } as any,
     { id: `${C1}`, text: '신입일', staffId: C1 } as any,
     { id: `${C2}`, text: '신입이', staffId: C2 } as any,
@@ -84,9 +84,9 @@ beforeEach(() => {
       payload: {
         teams: [{
           id     : Number(TEAM_A),
-          name   : '보철팀',
+          name   : '관리팀',
           doctors: [
-            { staffId: A1, staffName: '김의사' },
+            { staffId: A1, staffName: '김담당' },
             { staffId: A2, staffName: '이직원' },
           ],
         }],

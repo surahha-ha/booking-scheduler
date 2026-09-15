@@ -83,7 +83,7 @@ describe('useSchedulerFilterStore — 날짜 이동과 조회 창', () => {
     expect(toBookApiParams(store).startDate).toBe('20260921')
   })
 
-  it('진료장부로 바꾸며 오늘로 돌아올 때도 조회 범위가 오늘부터다', () => {
+  it('방문장부로 바꾸며 오늘로 돌아올 때도 조회 범위가 오늘부터다', () => {
     const store = landedOn('2026-09-21')
     const before = store.searchVersion
 

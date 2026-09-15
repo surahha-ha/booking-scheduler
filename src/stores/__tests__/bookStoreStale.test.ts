@@ -36,7 +36,7 @@ vi.mock('@/api/bookApi', () => ({
 }));
 
 const oimStub = vi.hoisted(() => ({
-    doctors: [{id: '김의사', text: '김의사', staffId: 1, openYn: 'Y'}],
+    doctors: [{id: '김담당', text: '김담당', staffId: 1, openYn: 'Y'}],
     teams: [],
     hospitalRules: {weekly: {1: [{start: '09:00', end: '18:00'}]}},
     doctorRules: {},

@@ -36,8 +36,8 @@ import UnassignedDataModal from '@/components/popup/UnassignedDataModal.vue'
 const DOC_A = 101
 const DOC_B = 202
 const doctors = [
-  { staffId: DOC_A, name: '가의사' },
-  { staffId: DOC_B, name: '나의사' },
+  { staffId: DOC_A, name: '가담당' },
+  { staffId: DOC_B, name: '나담당' },
 ]
 
 /** Teleport(body) 라 wrapper.find 로는 안 잡힌다 — 문서에서 직접 찾는다. */
@@ -80,12 +80,12 @@ describe('UnassignedDataModal — 공용 미지정 데이터 적용 모달', () 
 
   it('prop 으로 받은 담당자만 렌더한다(스토어 직접 조회 없음)', async () => {
     mount(UnassignedDataModal, {
-      props: { visible: true, doctors: [{ staffId: 999, name: '편집중의사' }] },
+      props: { visible: true, doctors: [{ staffId: 999, name: '편집중담당' }] },
     })
     await flushPromises()
 
-    expect(document.body.textContent).toContain('편집중의사')
-    expect(document.body.textContent).not.toContain('가의사')
+    expect(document.body.textContent).toContain('편집중담당')
+    expect(document.body.textContent).not.toContain('가담당')
   })
 
   it('적용 → assignUnassigned(선택값) 호출 + applied/close emit + triggerSearch', async () => {

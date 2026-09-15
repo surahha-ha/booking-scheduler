@@ -56,7 +56,7 @@ describe('mock adapter × 공통 인터셉터 end-to-end', () => {
         expect(items.length).toBeGreaterThan(0);
     });
 
-    // 진료는 시작~종료 단일 구간(3세션 폐기). 휴게(lunch/dinner)는 기관(site)만 소유한다.
+    // 운영은 시작~종료 단일 구간(3세션 폐기). 휴게(lunch/dinner)는 기관(site)만 소유한다.
     // BE 계약 전환: 번들 all → 원천 분리 2조회(work-hours/site · work-hours/staff).
     it('운영시간(site) — 요일별 단일 구간 + 휴게 + 휴무 규칙 strict 번들로 저장 게이트를 통과시킨다', async () => {
         const api = buildApiLikeDnsCore();
@@ -83,7 +83,7 @@ describe('mock adapter × 공통 인터셉터 end-to-end', () => {
         expect(res.data.payload.recurringOffRules).toContainEqual({dayCd: 0, repeatTy: 'WEEKLY', monthlyNth: null});
     });
 
-    it('운영시간(staff) — 담당자 행은 진료 시작/종료만 갖는다(휴게 필드/USE_YN 없음)', async () => {
+    it('운영시간(staff) — 담당자 행은 운영 시작/종료만 갖는다(휴게 필드/USE_YN 없음)', async () => {
         const api = buildApiLikeDnsCore();
         const res: any = await api.get('/api/booking/v2/schedule/work-hours/staff');
         const staff = res.data.payload.staff[0];

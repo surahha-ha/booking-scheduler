@@ -66,10 +66,10 @@ const SOME_MONDAY = '2026-07-06'
 /** 아무도 토요일 운영시간을 정하지 않았다 — 사업장 값을 따라야 하는 날 */
 const SOME_SATURDAY = '2026-07-11'
 
-/** 보철팀 2명 · 교정팀 1명 · 어느 팀에도 없는 1명(orphan) */
-const A1 = 101 // 보철팀
-const A2 = 102 // 보철팀
-const B1 = 201 // 교정팀
+/** 관리팀 2명 · 점검팀 1명 · 어느 팀에도 없는 1명(orphan) */
+const A1 = 101 // 관리팀
+const A2 = 102 // 관리팀
+const B1 = 201 // 점검팀
 const ORPHAN = 999
 
 const TEAM_A = 1
@@ -89,9 +89,9 @@ const siteRows = [
 
 /** 네 명 모두 월요일 운영시간을 각자 정해 둔다 — 라벨이 누구 것인지 구분되게 */
 const staffRows = [
-  { staffId: A1, staffName: '김의사', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1300' }] },
+  { staffId: A1, staffName: '김담당', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1300' }] },
   { staffId: A2, staffName: '이직원', times: [{ dayCd: MONDAY, staffOpenHm: '0900', staffCloseHm: '1400' }] },
-  { staffId: B1, staffName: '박의사', times: [{ dayCd: MONDAY, staffOpenHm: '1000', staffCloseHm: '1900' }] },
+  { staffId: B1, staffName: '박담당', times: [{ dayCd: MONDAY, staffOpenHm: '1000', staffCloseHm: '1900' }] },
   { staffId: ORPHAN, staffName: '무소속', times: [{ dayCd: MONDAY, staffOpenHm: '0800', staffCloseHm: '1200' }] },
 ]
 
@@ -124,9 +124,9 @@ beforeEach(() => {
   // 캘린더 셀은 이름을 staffStore.doctors 에서 찾는다 — 없으면 entry 자체가 만들어지지 않는다
   const staff = useStaffStore()
   staff.doctors.push(
-    { id: `${A1}`, text: '김의사', staffId: A1 } as any,
+    { id: `${A1}`, text: '김담당', staffId: A1 } as any,
     { id: `${A2}`, text: '이직원', staffId: A2 } as any,
-    { id: `${B1}`, text: '박의사', staffId: B1 } as any,
+    { id: `${B1}`, text: '박담당', staffId: B1 } as any,
     { id: `${ORPHAN}`, text: '무소속', staffId: ORPHAN } as any,
   )
 
@@ -137,16 +137,16 @@ beforeEach(() => {
         teams: [
           {
             id     : TEAM_A,
-            name   : '보철팀',
+            name   : '관리팀',
             doctors: [
-              { staffId: A1, staffName: '김의사' },
+              { staffId: A1, staffName: '김담당' },
               { staffId: A2, staffName: '이직원' },
             ],
           },
           {
             id     : TEAM_B,
-            name   : '교정팀',
-            doctors: [{ staffId: B1, staffName: '박의사' }],
+            name   : '점검팀',
+            doctors: [{ staffId: B1, staffName: '박담당' }],
           },
         ],
       },
@@ -170,7 +170,7 @@ describe('운영시간 조회 단위 — 팀', () => {
     wrapper.vm.$.setupState.toggleTreatmentExpansion(`team:${TEAM_A}`)
     await wrapper.vm.$nextTick()
 
-    expect(cellNames(wrapper)).toEqual(['김의사', '이직원'])
+    expect(cellNames(wrapper)).toEqual(['김담당', '이직원'])
   })
 
   it('다른 팀을 고르면 그 팀 소속으로 바뀐다', async () => {
@@ -178,13 +178,13 @@ describe('운영시간 조회 단위 — 팀', () => {
     wrapper.vm.$.setupState.toggleTreatmentExpansion(`team:${TEAM_B}`)
     await wrapper.vm.$nextTick()
 
-    expect(cellNames(wrapper)).toEqual(['박의사'])
+    expect(cellNames(wrapper)).toEqual(['박담당'])
   })
 
   it('사업장 모드에는 팀 미소속(orphan)까지 전원이 나온다 — 팀 모드와 대비', async () => {
     const wrapper = await mountSetting()
     // 미선택 = 사업장 모드
-    expect(cellNames(wrapper)).toEqual(['김의사', '이직원', '박의사', '무소속'])
+    expect(cellNames(wrapper)).toEqual(['김담당', '이직원', '박담당', '무소속'])
   })
 
   it('라벨 판정은 사업장 모드와 같다 — 같은 날짜가 단위에 따라 달라지지 않는다', async () => {
@@ -224,7 +224,7 @@ describe('운영시간 조회 단위 — 팀', () => {
     await wrapper.vm.$nextTick()
 
     expect(state.getCalendarOwner().scope).toBe('STAFF')
-    expect(cellNames(wrapper)).toEqual(['김의사'])
+    expect(cellNames(wrapper)).toEqual(['김담당'])
   })
 
   /* ── 미설정 요일의 사업장 폴백 ──────────────────────────────
@@ -240,7 +240,7 @@ describe('운영시간 조회 단위 — 팀', () => {
 
     const entries = cellEntries(wrapper, SOME_SATURDAY)
     expect(entries).toHaveLength(1)
-    expect(entries[0].label).toBe('김의사 09:00 ~ 13:00')
+    expect(entries[0].label).toBe('김담당 09:00 ~ 13:00')
     expect(entries[0].isOff).toBe(false)
   })
 
@@ -258,7 +258,7 @@ describe('운영시간 조회 단위 — 팀', () => {
     const asTeam = labelOf(`team:${TEAM_A}`)
     const asInstitution = labelOf(null)
 
-    expect(asStaff).toBe('김의사 09:00 ~ 13:00')
+    expect(asStaff).toBe('김담당 09:00 ~ 13:00')
     expect(asTeam).toBe(asStaff)
     expect(asInstitution).toBe(asStaff)
   })
@@ -270,6 +270,6 @@ describe('운영시간 조회 단위 — 팀', () => {
     await wrapper.vm.$nextTick()
 
     expect(state.getCalendarOwner().scope).toBe('INSTITUTION')
-    expect(cellNames(wrapper)).toEqual(['김의사', '이직원', '박의사', '무소속'])
+    expect(cellNames(wrapper)).toEqual(['김담당', '이직원', '박담당', '무소속'])
   })
 })

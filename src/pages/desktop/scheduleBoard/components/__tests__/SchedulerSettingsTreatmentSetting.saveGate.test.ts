@@ -16,7 +16,7 @@
  *  site 번들    : !siteLoadFailed
  *
  * 요일 3상태 — times[] 는 정한 요일 행만 담는다(7행으로 채우지 않는다):
- *   행 없음 = 미설정(사업장 운영시간을 따른다) / 행 + 시각 = 진료 / 행 + null = 명시적 휴무
+ *   행 없음 = 미설정(사업장 운영시간을 따른다) / 행 + 시각 = 운영 / 행 + null = 명시적 휴무
  *
  * 지키는 것(데이터 파괴 방지 + 부당한 저장 차단 방지):
  *  ① 팀 조회 실패 → payload 에 teams/workingHours 없음. 보내면 BE 가 delete 후 재삽입할 게 없어 팀 전멸.
@@ -76,7 +76,7 @@ import SchedulerSettingsTreatmentSetting from '@/pages/desktop/scheduleBoard/com
 const STAFF_SET = 101    // 운영시간을 설정한 담당자
 const STAFF_UNSET = 202  // 한 번도 설정하지 않은 담당자(행 자체가 없음) → 화면엔 사업장 값이 보인다
 
-/** 사업장: 월~금 09:00~18:00 진료 (site 조회 성공 시) */
+/** 사업장: 월~금 09:00~18:00 운영 (site 조회 성공 시) */
 const siteRows = [1, 2, 3, 4, 5].map(dayCd => ({
   dayCd,
   openHm: '0900',
@@ -84,7 +84,7 @@ const siteRows = [1, 2, 3, 4, 5].map(dayCd => ({
   lunchStartHm: null, lunchEndHm: null, dinnerStartHm: null, dinnerEndHm: null,
 }))
 
-/* ★토·일은 **매주 휴무로 정해 둔** 상태다 — 진료행만 월~금으로 두고 주말을 비워 놓으면
+/* ★토·일은 **매주 휴무로 정해 둔** 상태다 — 운영행만 월~금으로 두고 주말을 비워 놓으면
  * "운영시간을 정하지 않은 요일"이 되어, 화면이 그 요일을 '매주 휴무'으로 자동 보정하려고
  * site 파트를 dirty 로 만든다(missingTimeWeekdays). 이 파일의 관심사는 파트별 게이트이므로
  * 그 보정이 끼어들지 않게 주말을 명시적 휴무로 채운다. 자동 보정 자체의 검증은
@@ -95,21 +95,21 @@ const weekendOffRules = [
 ]
 
 /* BE 는 저장된 요일 행만 내려준다 — 7행으로 채우지 않는다.
- *   행 없음 = 미설정 / 행 + 시각 = 진료 / 행 + null = 명시적 휴무
+ *   행 없음 = 미설정 / 행 + 시각 = 운영 / 행 + null = 명시적 휴무
  * 이 셋을 구분하지 못하면 "안 정한 요일"이 "휴무로 정한 요일"로 굳는다. */
 const setTimes = Array.from({ length: 7 }, (_, dayCd) => ({
   dayCd, staffOpenHm: '1000', staffCloseHm: '1700',
 }))
 /** 미설정 — 행이 하나도 없다 */
 const unsetTimes: Array<{ dayCd: number; staffOpenHm: string | null; staffCloseHm: string | null }> = []
-/** 월요일만 진료로 정하고, 화요일은 휴무로 정한 상태(나머지 5요일은 미설정) */
+/** 월요일만 운영으로 정하고, 화요일은 휴무로 정한 상태(나머지 5요일은 미설정) */
 const partialTimes = [
   { dayCd: 1, staffOpenHm: '1000', staffCloseHm: '1700' },
   { dayCd: 2, staffOpenHm: null, staffCloseHm: null },
 ]
 
-/* 공휴일 운영시간 — 이 파일의 site dirty 레버가 toggleHoliday(공휴일 휴무→진료)라서 값이 필요하다.
- * 공휴일 진료로 저장하려면 운영시간이 있어야 하고(공휴일 운영시간 테이블 의 시작·종료시분이 NOT NULL),
+/* 공휴일 운영시간 — 이 파일의 site dirty 레버가 toggleHoliday(공휴일 휴무→운영)라서 값이 필요하다.
+ * 공휴일 운영으로 저장하려면 운영시간이 있어야 하고(공휴일 운영시간 테이블 의 시작·종료시분이 NOT NULL),
  * 없으면 onSave 가 안내만 띄우고 막는다. 이 파일의 관심사는 파트별 게이트이므로 정상값을 쥐어 준다.
  * 그 가드 자체의 검증은 SchedulerSettingsTreatmentSetting.holidayTime.test.ts 에 있다. */
 const holidayHoursRow = {
@@ -126,8 +126,8 @@ function okStaff() {
       code: 'succeed',
       payload: {
         staff: [
-          { staffId: STAFF_SET, staffName: '설정의사', times: setTimes },
-          { staffId: STAFF_UNSET, staffName: '미설정의사', times: unsetTimes },
+          { staffId: STAFF_SET, staffName: '설정담당', times: setTimes },
+          { staffId: STAFF_UNSET, staffName: '미설정담당', times: unsetTimes },
         ],
         overrides: [],
       },
@@ -309,7 +309,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
     expect(unset.times, '사업장 09:00~18:00 을 끌어다 채우지 않는다').toEqual([])
   })
 
-  // ── ★요일 3상태 — 미설정 / 진료 / 휴무 ─────────────────
+  // ── ★요일 3상태 — 미설정 / 운영 / 휴무 ─────────────────
   //
   // 한 원인에서 나온 두 증상을 함께 막는다:
   //  ① 조회 왕복에서 "휴무로 정한 요일"이 미설정으로 강등되던 것
@@ -320,7 +320,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
         data: {
           code: 'succeed',
           payload: {
-            staff: [{ staffId: STAFF_SET, staffName: '부분설정의사', times: partialTimes }],
+            staff: [{ staffId: STAFF_SET, staffName: '부분설정담당', times: partialTimes }],
             overrides: [],
           },
         },
@@ -608,9 +608,9 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
   })
 
   it('운영시간 미설정 거래처(succeed + 빈 목록 payload)도 장애가 아니다', async () => {
-    /* ★holidayClosedYn 은 false(공휴일 진료)에서 시작한다 — 이 거래처는 아무것도 설정하지 않은 상태라
-     * 공휴일 운영시간도 없다. 아래 toggleHoliday 가 "진료 → 휴무" 방향으로 가야 공휴일 시간 필수
-     * 가드에 걸리지 않는다(가드는 "진료로 저장할 때"만 본다). 반대 방향이면 시간이 필요해진다. */
+    /* ★holidayClosedYn 은 false(공휴일 운영)에서 시작한다 — 이 거래처는 아무것도 설정하지 않은 상태라
+     * 공휴일 운영시간도 없다. 아래 toggleHoliday 가 "운영 → 휴무" 방향으로 가야 공휴일 시간 필수
+     * 가드에 걸리지 않는다(가드는 "운영으로 저장할 때"만 본다). 반대 방향이면 시간이 필요해진다. */
     mocks.getSiteWorkHours.mockResolvedValue({
       data: { code: 'succeed', payload: { site: [], recurringOffRules: [], workDates: [], offDates: [], holidayClosedYn: false } },
     })
@@ -634,10 +634,10 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
     expect(payload.teams).toBeTruthy()
   })
 
-  /* 매월 n번째만 쉬는 요일은 나머지 주에 진료하므로 운영시간이 있어야 한다. 규칙이 없는 요일처럼
+  /* 매월 n번째만 쉬는 요일은 나머지 주에 운영하므로 운영시간이 있어야 한다. 규칙이 없는 요일처럼
    * 자동 '매주 휴무'으로 보정하면 사용자가 고른 매월 규칙이 사라지고, 미설정으로 두면 보드가 기본
    * 운영시간으로 열린다 — 둘 다 아니라 저장을 막고 그 요일을 가리킨다(배너 둘째 줄과 같은 문구). */
-  it('★매월 n번째만 휴무인 요일에 운영시간이 없으면 저장을 막는다 — 나머지 주에 진료하는 요일이다', async () => {
+  it('★매월 n번째만 휴무인 요일에 운영시간이 없으면 저장을 막는다 — 나머지 주에 운영하는 요일이다', async () => {
     const FRIDAY = 5
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {
@@ -659,7 +659,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
     expect(mocks.saveTreatmentSettings, '저장 API 미호출').not.toHaveBeenCalled()
     expect(dialogMock.alert).toHaveBeenCalledTimes(1)
     expect(dialogMock.alert.mock.calls[0][0])
-        .toBe('금요일은 매월 1번째 휴무가라 나머지 주에 진료합니다.\n운영시간을 입력해 주세요.')
+        .toBe('금요일은 매월 1번째 휴무라 나머지 주에 운영합니다.\n운영시간을 입력해 주세요.')
     expect(setupState(wrapper).expandedTreatmentKey, '사업장 패널을 펼쳐 그 요일을 가리킨다').toBe('institution')
     expect(setupState(wrapper).ownerWeekdayInvalid('INSTITUTION', FRIDAY), '금요일 버튼이 붉게 켜진다').toBe(true)
     expect(setupState(wrapper).ownerWeekdayInvalid('INSTITUTION', 1), '시간이 있는 요일은 아니다').toBe(false)
@@ -695,7 +695,7 @@ describe('운영일정 설정 저장 — 파트별(teams / workingHours / site) 
     expect(mocks.saveTreatmentSettings, '저장 API 미호출').not.toHaveBeenCalled()
     expect(dialogMock.alert).toHaveBeenCalledTimes(1)
     expect(dialogMock.alert.mock.calls[0][0])
-        .toBe('목요일은 매월 3번째, 금요일은 매월 1번째 휴무가라 나머지 주에 진료합니다.\n운영시간을 입력해 주세요.')
+        .toBe('목요일은 매월 3번째, 금요일은 매월 1번째 휴무라 나머지 주에 운영합니다.\n운영시간을 입력해 주세요.')
     expect(setupState(wrapper).ownerWeekdayInvalid('INSTITUTION', THURSDAY), '목요일도 붉게').toBe(true)
     expect(setupState(wrapper).ownerWeekdayInvalid('INSTITUTION', FRIDAY), '금요일도 붉게').toBe(true)
   })

@@ -4,7 +4,7 @@
  * 카드는 엔진이 unit 키(`날짜__담당자키`)로 칸에 놓는다. 집계도 같은 키로 예약을 고르므로 두 수가 정의상 같다.
  * 상태 필터도 같은 자리에서 — 목록은 모든 상태를 받고, 카드가 보이는 상태(toDisplayStatus)로 거른다.
  *
- * 기대값 출처: boardStatistics.ts 주석 + 상수 주석(예약 00 · 취소 03 · 진료완료 01 · 미이행 02 · 접수대기 05) +
+ * 기대값 출처: boardStatistics.ts 주석 + 상수 주석(예약 00 · 취소 03 · 완료 01 · 미이행 02 · 대기 05) +
  * toDisplayStatus 규칙(예약장부는 00·03 만 구분, 나머지는 예약으로 표기).
  */
 
@@ -30,16 +30,16 @@ const D2 = '2026-09-08'
 const D3 = '2026-09-10' // 조회 창 안이지만 화면에는 없는 날짜
 
 const appts = [
-  appt('1', D1, '김원장', '00', 'Y'),
-  appt('2', D1, '김원장', '03'),
-  appt('3', D1, '김원장', '01'), // 진료완료 — 예약장부에서는 '예약'으로 그려진다
-  appt('4', D2, '김원장', '00'),
-  appt('5', D1, '박원장', '00'), // 화면에 없는 담당자(경계 칸 밖)
-  appt('6', D3, '김원장', '03'), // 화면에 없는 날짜(창 안)
+  appt('1', D1, '김대표', '00', 'Y'),
+  appt('2', D1, '김대표', '03'),
+  appt('3', D1, '김대표', '01'), // 완료 — 예약장부에서는 '예약'으로 그려진다
+  appt('4', D2, '김대표', '00'),
+  appt('5', D1, '박대표', '00'), // 화면에 없는 담당자(경계 칸 밖)
+  appt('6', D3, '김대표', '03'), // 화면에 없는 날짜(창 안)
 ]
 
-/** 페이지 컬럼 = 김원장 9/7·9/8 만 보이는 화면 */
-const visible = [`${D1}__김원장`, `${D2}__김원장`]
+/** 페이지 컬럼 = 김대표 9/7·9/8 만 보이는 화면 */
+const visible = [`${D1}__김대표`, `${D2}__김대표`]
 
 describe('countBoardStatistics', () => {
   it('그려진 칸의 예약만 센다 — 창 안이어도 화면에 없는 날짜·담당자는 빠진다', () => {
@@ -47,12 +47,12 @@ describe('countBoardStatistics', () => {
     expect(s.state['전체']).toBe(4) // 1,2,3,4
   })
 
-  it('예약장부는 카드가 보이는 상태로 센다 — 진료완료(01)는 예약 칩에 든다', () => {
+  it('예약장부는 카드가 보이는 상태로 센다 — 완료(01)는 예약 칩에 든다', () => {
     const s = countBoardStatistics(appts, visible, 'APPOINTMENT')
     expect(s.state).toEqual({ 전체: 4, 예약: 3, 취소: 1 })
   })
 
-  it('진료장부는 실제 상태로 센다 — 00(예약)은 칩이 없어 전체에만 든다', () => {
+  it('방문장부는 실제 상태로 센다 — 00(예약)은 칩이 없어 전체에만 든다', () => {
     const s = countBoardStatistics(appts, visible, 'TREATMENT')
     // 칩 라벨은 용어 사전(ko.json terms.status)의 값 — 05 대기 · 01 완료
     expect(s.state).toEqual({ 전체: 4, 대기: 0, 완료: 1, 미이행: 0, 취소: 1 })
@@ -63,7 +63,7 @@ describe('countBoardStatistics', () => {
     expect(s.member).toEqual({ Y: 1, N: 3 })
 
     // 회원번호만 있고 여부가 N 인 건 — 카드는 회원 뱃지를 달므로 숫자도 회원으로 센다(리뷰 F4).
-    const withNo = [{ ...appt('7', D1, '김원장', '00', 'N'), memberNo: 12345 }]
+    const withNo = [{ ...appt('7', D1, '김대표', '00', 'N'), memberNo: 12345 }]
     expect(countBoardStatistics(withNo, visible, 'APPOINTMENT').member).toEqual({ Y: 1, N: 0 })
   })
 
@@ -75,7 +75,7 @@ describe('countBoardStatistics', () => {
   })
 
   it('칸 키 규칙은 엔진(unitKeyOf)과 한 벌이다 — 규칙이 갈리면 카드는 있는데 숫자에서 빠진다', () => {
-    const only = [appt('9', D1, '김원장', '00')]
+    const only = [appt('9', D1, '김대표', '00')]
     expect(countBoardStatistics(only, [unitKeyOf(only[0])], 'APPOINTMENT').state['전체']).toBe(1)
   })
 })
@@ -85,12 +85,12 @@ describe('filterByStatus', () => {
     expect(filterByStatus(appts, [], 'APPOINTMENT')).toBe(appts)
   })
 
-  it('예약장부 "예약" 필터는 진료완료(01)도 통과시킨다 — 카드가 예약으로 보이는 것과 같은 규칙', () => {
+  it('예약장부 "예약" 필터는 완료(01)도 통과시킨다 — 카드가 예약으로 보이는 것과 같은 규칙', () => {
     const ids = filterByStatus(appts, ['APPOINTMENT'], 'APPOINTMENT').map(a => a.id)
     expect(ids).toEqual(['1', '3', '4', '5'])
   })
 
-  it('진료장부 "진료완료" 필터는 01 만', () => {
+  it('방문장부 "완료" 필터는 01 만', () => {
     const ids = filterByStatus(appts, ['COMPLETE'], 'TREATMENT').map(a => a.id)
     expect(ids).toEqual(['3'])
   })

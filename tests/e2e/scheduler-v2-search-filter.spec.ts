@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test';
  *
  * 검증:
  *   - SchedulerSearchFilter가 마운트되고 핵심 UI 요소 노출
- *   - 의사 필터, 상태 필터, 회원유형 토글, 검색 입력 동작
+ *   - 담당자 필터, 상태 필터, 회원유형 토글, 검색 입력 동작
  *   - 키워드 입력 후 검색 트리거 시 API 호출 발생
  *
  * 단, 검색 결과의 정확성(특정 카드만 보임 등)은 LIVE was 데이터에 의존하므로
@@ -89,7 +89,7 @@ test.describe('SchedulerV2 - 검색 필터', () => {
     expect(initiallyActive).toBeGreaterThanOrEqual(1);
   });
 
-  test('35. 의사 필터가 노출되고 클릭 가능하다', async ({ authedPage: page }) => {
+  test('35. 담당자 필터가 노출되고 클릭 가능하다', async ({ authedPage: page }) => {
     await navigate(page);
     // UiDoctorFilter는 별도 클래스, scheduleSearchFilter__item 안에 있음
     const filterArea = page.locator('.scheduleSearchFilter__item');

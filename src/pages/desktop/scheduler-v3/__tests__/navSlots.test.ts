@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { dateAtSlot, reanchorArgsForSlot, totalSlotsOf } from '../navSlots'
 
-// 의사 5명(06-01) + 3명(06-02), 각 1칸 = 8 slots. 의사 多 → 하루가 budget 초과(within-day 페이징)를 모사.
+// 담당자 5명(06-01) + 3명(06-02), 각 1칸 = 8 slots. 담당자 多 → 하루가 budget 초과(within-day 페이징)를 모사.
 const overflowUnits = [
   { date: '2026-06-01', slots: 1 }, // slot 0  A
   { date: '2026-06-01', slots: 1 }, // slot 1  B
@@ -41,8 +41,8 @@ describe('dateAtSlot — 전역 slot → {date, startSlot}', () => {
   })
 })
 
-describe('reanchorArgsForSlot — within-day 페이징(의사 多)', () => {
-  it('🔑 #1 within-day: budget4, 헤더> (target=4) → 06-01 유지·offset 4 (5번째 의사 E 노출)', () => {
+describe('reanchorArgsForSlot — within-day 페이징(담당자 多)', () => {
+  it('🔑 #1 within-day: budget4, 헤더> (target=4) → 06-01 유지·offset 4 (5번째 담당자 E 노출)', () => {
     // colOffset 0 에서 06-01 A~D 보던 중 헤더 > → target = 0+4 = 4
     expect(reanchorArgsForSlot(overflowUnits, 4, 'x')).toEqual({ date: '2026-06-01', offset: 4 })
     // → selectedDate 06-01 유지, colOffset 4 → 06-01 E + 06-02 A,B,C (좌측 날짜 안 끌림)

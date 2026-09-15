@@ -2,11 +2,11 @@
  * 담당자 축 휴무 판정(계획서 §4-2) 단위테스트.
  *
  * 이 규칙의 핵심은 **"휴무로 정함"과 "아직 정하지 않음"이 다른 상태**라는 것이다.
- * 둘 다 진료 구간이 없지만, 미설정은 사업장 값을 따라야 하고 휴무는 그 자체가 답이다.
- * 여기서 미설정을 휴무로 접으면 사업장이 진료하는 날에도 담당자가 통째로 쉬는 것으로 표시된다.
+ * 둘 다 운영 구간이 없지만, 미설정은 사업장 값을 따라야 하고 휴무는 그 자체가 답이다.
+ * 여기서 미설정을 휴무로 접으면 사업장이 운영하는 날에도 담당자가 통째로 쉬는 것으로 표시된다.
  *
  * 구체적인 지정이 일반 규칙을 이긴다 — 날짜 지정 > 공휴일 휴무 > 매월 N번째 > 요일.
- * ★공휴일 진료('Y')는 "공휴일이라는 이유로는 쉬지 않는다"는 뜻일 뿐이라 아래 판정을 덮지 않는다.
+ * ★공휴일 운영('Y')는 "공휴일이라는 이유로는 쉬지 않는다"는 뜻일 뿐이라 아래 판정을 덮지 않는다.
  */
 
 import dayjs from 'dayjs';
@@ -83,14 +83,14 @@ describe('resolveStaffDayState — 우선순위', () => {
         expect(resolveStaffDayState(WED_2ND, context)).toBe('WORK');
     });
 
-    it('요일 설정은 빈 목록이면 매주 휴무, 구간이 있으면 진료다', () => {
+    it('요일 설정은 빈 목록이면 매주 휴무, 구간이 있으면 운영다', () => {
         expect(resolveStaffDayState(WED_2ND, {weekdayBlocks: []})).toBe('OFF');
         expect(resolveStaffDayState(WED_2ND, {weekdayBlocks: [WORK]})).toBe('WORK');
     });
 
-    it('★매월 N번째 규칙은 그 요일 진료 설정보다 구체적이라 그 날짜만 이긴다', () => {
+    it('★매월 N번째 규칙은 그 요일 운영 설정보다 구체적이라 그 날짜만 이긴다', () => {
         const context = {
-            weekdayBlocks   : [WORK],                      // 수요일은 진료
+            weekdayBlocks   : [WORK],                      // 수요일은 운영
             monthlyOffRules : [{dayCd: 3, monthlyNth: 2}],  // 단, 2번째 수요일은 휴무
         };
 
@@ -104,14 +104,14 @@ describe('resolveStaffDayState — 공휴일', () => {
         expect(resolveStaffDayState(WED_2ND, {isHoliday: true, holidayOpenYn: 'N'})).toBe('OFF');
     });
 
-    it("★공휴일 진료(Y)는 진료를 확정하지 않는다 — '공휴일이라는 이유로는 쉬지 않는다'는 뜻이다", () => {
+    it("★공휴일 운영(Y)는 운영을 확정하지 않는다 — '공휴일이라는 이유로는 쉬지 않는다'는 뜻이다", () => {
         // 요일도 매월도 정한 것이 없으면 미설정으로 내려간다.
         expect(resolveStaffDayState(WED_2ND, {isHoliday: true, holidayOpenYn: 'Y'})).toBe('INHERIT');
-        // 그 요일을 진료로 정해 뒀으면 진료다.
+        // 그 요일을 운영으로 정해 뒀으면 운영다.
         expect(resolveStaffDayState(WED_2ND, {isHoliday: true, holidayOpenYn: 'Y', weekdayBlocks: [WORK]})).toBe('WORK');
     });
 
-    it('★공휴일 진료여부가 null 이면 미설정이다 — 휴무로 단정하지 않는다', () => {
+    it('★공휴일 운영 여부가 null 이면 미설정이다 — 휴무로 단정하지 않는다', () => {
         expect(resolveStaffDayState(WED_2ND, {isHoliday: true, holidayOpenYn: null})).toBe('INHERIT');
     });
 
@@ -139,8 +139,8 @@ describe('isStaffOffOn — 사업장 상속', () => {
     });
 
     it('담당자가 정했으면 사업장 판정과 무관하게 그 값이 이긴다', () => {
-        expect(isStaffOffOn(WED_2ND, {weekdayBlocks: []}, false)).toBe(true);   // 기관은 진료, 담당자만 휴무
-        expect(isStaffOffOn(WED_2ND, {weekdayBlocks: [WORK]}, true)).toBe(false); // 기관은 휴무, 담당자만 진료
+        expect(isStaffOffOn(WED_2ND, {weekdayBlocks: []}, false)).toBe(true);   // 기관은 운영, 담당자만 휴무
+        expect(isStaffOffOn(WED_2ND, {weekdayBlocks: [WORK]}, true)).toBe(false); // 기관은 휴무, 담당자만 운영
     });
 });
 
@@ -226,7 +226,7 @@ describe('isEveryWeekOff', () => {
         expect(isEveryWeekOff(monthly(1, 2, 3, 4, 5))).toBe(true);
     });
 
-    it('하나라도 빠지면 매주가 아니다 — 그 주에는 진료한다', () => {
+    it('하나라도 빠지면 매주가 아니다 — 그 주에는 운영한다', () => {
         expect(isEveryWeekOff(monthly(1, 2, 3, 4))).toBe(false);
         expect(isEveryWeekOff(monthly(3))).toBe(false);
     });

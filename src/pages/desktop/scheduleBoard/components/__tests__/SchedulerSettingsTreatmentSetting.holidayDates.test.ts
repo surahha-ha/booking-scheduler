@@ -4,7 +4,7 @@
  * 공휴일 날짜의 특정일자 취급 — **원천(사업장 설정)이 가진 일자별 행을 숨기지 않는다.**
  *
  * 사업장 설정는 공휴일 정책을 두 군데에 쓴다:
- *   공휴일 진료 플래그             → 공휴일 체크박스 (정책 플래그)
+ *   공휴일 방문 플래그             → 공휴일 체크박스 (정책 플래그)
  *   일자별 운영시간 테이블      → 그 정책을 개별 일자로 전개한 행들
  *
  * 이 앱은 이 둘을 각각 그대로 신뢰한다 — 체크박스는 플래그에서, 특정일자는 일자별 행의
@@ -119,9 +119,9 @@ describe('공휴일 날짜의 특정일자 취급', () => {
     expect(aug[1]).toMatchObject({ startKey: '2026-08-15', endKey: '2026-08-15', isHoliday: true })
   })
 
-  /* ★연도가 아니라 **진료/휴무**으로 묶는다 (2026-08-03).
+  /* ★연도가 아니라 **운영/휴무**으로 묶는다 (2026-08-03).
    * 종전에는 연도로 묶고 칩마다 "(휴무)"을 붙였는데, 정작 중요한 구분이 괄호 안에 묻혀 안 보였다. */
-  it('진료/휴무로 묶여 구분선이 생긴다 — 휴무가 먼저', async () => {
+  it('운영/휴무로 묶여 구분선이 생긴다 — 휴무가 먼저', async () => {
     const groups = state(await mountSetting()).specificDatesByType
 
     expect(groups.map((g: any) => g.type)).toEqual(['OFF'])
@@ -129,7 +129,7 @@ describe('공휴일 날짜의 특정일자 취급', () => {
     expect(groups[0].ranges).toHaveLength(3)   // 08-14 · 08-15 · 2027-01-01 전부 휴무 지정
   })
 
-  it('진료 지정이 섞이면 휴무 → 진료 순으로 두 그룹이 된다', async () => {
+  it('운영 지정이 섞이면 휴무 → 운영 순으로 두 그룹이 된다', async () => {
     const wrapper = await mountSetting()
     state(wrapper).dateOverrides = new Map([
       ['2026-08-14', 'OFF'],
@@ -138,7 +138,7 @@ describe('공휴일 날짜의 특정일자 취급', () => {
     await wrapper.vm.$nextTick()
 
     const groups = state(wrapper).specificDatesByType
-    expect(groups.map((g: any) => g.label)).toEqual(['휴무', '진료'])
+    expect(groups.map((g: any) => g.label)).toEqual(['휴무', '운영'])
     expect(groups[0].ranges[0].startKey).toBe('2026-08-14')
     expect(groups[1].ranges[0].startKey).toBe('2026-08-20')
   })
@@ -169,7 +169,7 @@ describe('공휴일 날짜의 특정일자 취급', () => {
     expect(state(wrapper).dateOverrides.has('2026-08-14'), '옆 날짜는 남는다').toBe(true)
   })
 
-  it('★공휴일 날짜도 달력에서 토글할 수 있다 — 임시진료 지정', async () => {
+  it('★공휴일 날짜도 달력에서 토글할 수 있다 — 임시운영 지정', async () => {
     const wrapper = await mountSetting()
     // 개천절: 공휴일 체크박스 ON 이라 기본은 휴무, override 는 없다
     expect(state(wrapper).isDisplayedOff(dayjs('2026-10-03')), '기본은 휴무').toBe(true)

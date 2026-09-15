@@ -156,14 +156,14 @@ describe('날짜 유틸', () => {
 })
 
 // ════════════════════════════════════════════════════════════
-describe('buildUnitSequence — (날짜,의사) 시퀀스 + slots', () => {
+describe('buildUnitSequence — (날짜,담당자) 시퀀스 + slots', () => {
   const doctors = [
-    { id: 'A', name: '김의사' },
-    { id: 'B', name: '이의사' },
-    { id: 'C', name: '박의사' },
+    { id: 'A', name: '김담당' },
+    { id: 'B', name: '이담당' },
+    { id: 'C', name: '박담당' },
   ]
 
-  it('TREATMENT: selectedDate 1일 × 의사', () => {
+  it('TREATMENT: selectedDate 1일 × 담당자', () => {
     const cfg = deriveLayoutConfig(baseSettings(), baseSite(), baseView({ dataType: 'TREATMENT' }), baseFilter, baseEnv)
     const units = buildUnitSequence(cfg, doctors, {})
     expect(units).toHaveLength(3)
@@ -171,17 +171,17 @@ describe('buildUnitSequence — (날짜,의사) 시퀀스 + slots', () => {
     expect(units.map(u => u.doctorId)).toEqual(['A', 'B', 'C'])
   })
 
-  it('APPOINTMENT: forward horizon × 의사, 날짜-major 순서', () => {
+  it('APPOINTMENT: forward horizon × 담당자, 날짜-major 순서', () => {
     const cfg = derive()
     const units = buildUnitSequence(cfg, doctors, {}, { horizonDays: 2 })
-    expect(units).toHaveLength(6) // 2일 × 3의사
+    expect(units).toHaveLength(6) // 2일 × 3담당자
     expect(units.map(u => u.key)).toEqual([
       '2026-06-01__A', '2026-06-01__B', '2026-06-01__C',
       '2026-06-02__A', '2026-06-02__B', '2026-06-02__C',
     ])
   })
 
-  it('의사 필터 적용 ([] = 전체)', () => {
+  it('담당자 필터 적용 ([] = 전체)', () => {
     const cfg = derive({}, {}, { selectedDoctorIds: ['B'] })
     const units = buildUnitSequence(cfg, doctors, {}, { horizonDays: 1 })
     expect(units.map(u => u.doctorId)).toEqual(['B'])
@@ -221,7 +221,7 @@ describe('computeOperatingRange — 운영시간 union → bands', () => {
   function unit(doctorId: string, weekday = 1): Unit {
     return { key: `2026-06-01__${doctorId}`, date: '2026-06-01', doctorId, doctorName: doctorId, weekday, slots: 1 }
   }
-  // 테스트 unit 은 weekday=1 → 의사별·요일별 shape 로 래핑
+  // 테스트 unit 은 weekday=1 → 담당자별·요일별 shape 로 래핑
   function cfgWith(hoursByDoctorWd1: Record<string, UnitHours>) {
     const hoursByDoctor: Record<string, Record<number, UnitHours>> = {}
     for (const id of Object.keys(hoursByDoctorWd1)) hoursByDoctor[id] = { 1: hoursByDoctorWd1[id] }
@@ -294,7 +294,7 @@ describe('computeOperatingRange — 운영시간 union → bands', () => {
     expect(r.endMin).toBe(1440)
   })
 
-  it('union: 의사별 다른 세션 합집합, 사이 gap = 휴게(라벨 없음)', () => {
+  it('union: 담당자별 다른 세션 합집합, 사이 gap = 휴게(라벨 없음)', () => {
     const cfg = cfgWith({
       A: { morning: { start: 540, end: 720 } },
       B: { afternoon: { start: 780, end: 1080 } },
@@ -307,7 +307,7 @@ describe('computeOperatingRange — 운영시간 union → bands', () => {
     expect(breaks.every(b => b.breakLabel === undefined)).toBe(true)
   })
 
-  it('한 의사가 점심을 관통 운영하면 그 구간은 휴게 아님', () => {
+  it('한 담당자가 점심을 관통 운영하면 그 구간은 휴게 아님', () => {
     const cfg = cfgWith({
       A: { morning: { start: 540, end: 720 }, afternoon: { start: 780, end: 1080 }, lunch: { start: 720, end: 780 } },
       B: { morning: { start: 540, end: 1080 } }, // 직진
@@ -350,7 +350,7 @@ describe('computeOperatingRange — 운영시간 union → bands', () => {
   it('한쪽만 최소 창 밖: 시작 07:00 / 종료 15:00 → 07:00~18:00', () => {
     const cfg = cfgWith({ A: { morning: { start: 420, end: 900 } } })
     const r = computeOperatingRange(cfg, [unit('A')])
-    expect(r.startMin).toBe(420) // 07:00 (진료시작)
+    expect(r.startMin).toBe(420) // 07:00 (운영시작)
     expect(r.endMin).toBe(1080) // 18:00 (최소 창)
   })
 
@@ -372,7 +372,7 @@ describe('computeOperatingRange — 운영시간 union → bands', () => {
     expect(afterHours.every(b => b.isBreak && b.breakLabel === undefined)).toBe(true)
   })
 
-  it('예약 envelope: 시작이 진료시작보다 이르면 timeline 이 앞으로도 확장', () => {
+  it('예약 envelope: 시작이 운영시작보다 이르면 timeline 이 앞으로도 확장', () => {
     const cfg = cfgWith({ A: { morning: { start: 540, end: 1080 } } }) // 09:00~18:00
     const r = computeOperatingRange(cfg, [unit('A')], { min: 480, max: 1080 }) // 08:00 예약
     expect(r.startMin).toBe(480) // 08:00
@@ -1001,7 +1001,7 @@ describe('computeColumnPixels — 페이징 폭 분배 (denom=budget 고정, 원
     expect(px.map(p => p.leftPx)).toEqual([0, 100, 300])
   })
 
-  it('stretch=true(진료): 합<budget 이면 denom=Σsubcol → full width 펴짐(empty 제거)', () => {
+  it('stretch=true(운영): 합<budget 이면 denom=Σsubcol → full width 펴짐(empty 제거)', () => {
     const cols = [
       { unitIndex: 0, subColStart: 0, subColCount: 2, slotsStartIdx: 0, unitSlots: 2 },
       { unitIndex: 1, subColStart: 0, subColCount: 2, slotsStartIdx: 2, unitSlots: 2 },
@@ -1054,10 +1054,10 @@ describe('computeColumnPixels — 페이징 폭 분배 (denom=budget 고정, 원
 })
 
 describe('runLayout — end-to-end 합성', () => {
-  const doctors = [{ id: 'A', name: '김의사' }, { id: 'B', name: '이의사' }]
+  const doctors = [{ id: 'A', name: '김담당' }, { id: 'B', name: '이담당' }]
   const wd = weekdayOf('2026-06-01')
 
-  it('2의사 1일: 컬럼/band/rect 일괄 산출, slots=동시예약', () => {
+  it('2담당자 1일: 컬럼/band/rect 일괄 산출, slots=동시예약', () => {
     const result = runLayout({
       settings: { slotUnitMinutes: 30, totalColumnCount: 8, displayInfo: ['NAME'] },
       site: { hoursByWeekday: { [wd]: { morning: { start: 540, end: 720 } } } },
@@ -1103,7 +1103,7 @@ describe('runLayout — end-to-end 합성', () => {
       env: { availableWidth: 1000 },
       doctors,
       apptsByUnitKey: {
-        '2026-06-01__A': [{ id: 'late', startMin: 1140, endMin: 1200 }], // 19:00~20:00 (진료 밖)
+        '2026-06-01__A': [{ id: 'late', startMin: 1140, endMin: 1200 }], // 19:00~20:00 (운영 밖)
       },
       horizonDays: 1,
     })
@@ -1139,7 +1139,7 @@ describe('runLayout — end-to-end 합성', () => {
 
 describe('runLayout — slotOffset (date-anchored 윈도우, 신 모델)', () => {
   const doctors = [{ id: 'A', name: '김' }, { id: 'B', name: '이' }]
-  // 06-01,02,03 × 2의사 × (빈예약→slots1) = 6 slots. viewStep5 → budget = 8+2(3-5) = 4.
+  // 06-01,02,03 × 2담당자 × (빈예약→slots1) = 6 slots. viewStep5 → budget = 8+2(3-5) = 4.
   const base = {
     settings: { slotUnitMinutes: 30, totalColumnCount: 8 },
     site: {},
@@ -1190,7 +1190,7 @@ describe('runLayout — slotOffset (date-anchored 윈도우, 신 모델)', () =>
 // #13 칸수배정 모델 — B2(레인폭 N고정·혼자=풀폭) vs A(동시건수)
 // ════════════════════════════════════════════════════════════
 describe('layoutMode B2 — 레인폭 N고정', () => {
-  const doctors = [{ id: 'A', name: '김의사' }, { id: 'B', name: '이의사' }, { id: 'C', name: '박의사' }]
+  const doctors = [{ id: 'A', name: '김담당' }, { id: 'B', name: '이담당' }, { id: 'C', name: '박담당' }]
 
   it('deriveLayoutConfig: layoutMode 미전달 → A(기존 동작 보존)', () => {
     expect(derive().layoutMode).toBe('A')
@@ -1199,12 +1199,12 @@ describe('layoutMode B2 — 레인폭 N고정', () => {
     expect(derive({}, { layoutMode: 'X' as unknown as 'A' }).layoutMode).toBe('A')
   })
 
-  it('B2: 빈 의사도 slots=N (A 는 빈=1)', () => {
+  it('B2: 빈 담당자도 slots=N (A 는 빈=1)', () => {
     const cfgB2 = derive({}, { slotDivision: 3, layoutMode: 'B2' })
     const cfgA = derive({}, { slotDivision: 3 })
     const b2 = buildUnitSequence(cfgB2, doctors, {}, { horizonDays: 1 })
     const a = buildUnitSequence(cfgA, doctors, {}, { horizonDays: 1 })
-    expect(b2.every(u => u.slots === 3)).toBe(true) // 빈 의사도 N
+    expect(b2.every(u => u.slots === 3)).toBe(true) // 빈 담당자도 N
     expect(a.every(u => u.slots === 1)).toBe(true) // A 는 동시0 → 1
   })
 
@@ -1228,7 +1228,7 @@ describe('layoutMode B2 — 레인폭 N고정', () => {
   })
 
   const wd = weekdayOf('2026-06-01')
-  const oneDoctor = [{ id: 'A', name: '김의사' }]
+  const oneDoctor = [{ id: 'A', name: '김담당' }]
 
   it('B2 runLayout: 레인폭=N(3) 고정, 카드는 항상 1 sub-column(혼자도 풀폭 아님)', () => {
     const r = runLayout({
@@ -1289,7 +1289,7 @@ describe('layoutMode B2 — 레인폭 N고정', () => {
 describe('resolveUnitHours — 공휴일 운영시간 (날짜 축)', () => {
   const HOLIDAY = '2026-01-01'
   const holidayWd = weekdayOf(HOLIDAY)
-  const doctors = [{ id: 'A', name: '김의사' }]
+  const doctors = [{ id: 'A', name: '김담당' }]
 
   /**
    * 관찰 대상은 "그날 운영시간으로 무엇이 뽑혔나"다 → **운영 band(isBreak=false) 의 바깥 경계**를 본다.
@@ -1316,7 +1316,7 @@ describe('resolveUnitHours — 공휴일 운영시간 (날짜 축)', () => {
   const weekdayHours = { [holidayWd]: { morning: { start: 540, end: 1080 } } }
   const holidayHours: UnitHours = { morning: { start: 600, end: 900 } }
 
-  it('공휴일 진료일: 요일 시간 대신 공휴일 운영시간으로 밴드를 그린다', () => {
+  it('공휴일 운영일: 요일 시간 대신 공휴일 운영시간으로 밴드를 그린다', () => {
     const r = bandRange(
       { hoursByWeekday: weekdayHours, holidayHours, holidayDates: [HOLIDAY] },
       HOLIDAY,
@@ -1325,7 +1325,7 @@ describe('resolveUnitHours — 공휴일 운영시간 (날짜 축)', () => {
   })
 
   it('★담당자가 정한 요일이면 공휴일에도 담당자 시간이 이긴다 (예약검증과 같은 규칙)', () => {
-    // 09:00~17:00 인 의사 A → 공휴일이라고 기관 10:00~15:00 으로 좁히지 않는다.
+    // 09:00~17:00 인 담당자 A → 공휴일이라고 기관 10:00~15:00 으로 좁히지 않는다.
     // 한쪽만 기관 시간을 쓰면 "밴드는 열렸는데 클릭하면 운영종료"가 난다.
     const r = bandRange(
       {
@@ -1437,9 +1437,9 @@ describe('resolveUnitHours — 공휴일 운영시간 (날짜 축)', () => {
 describe('runLayout — 페이지 경계 unit 압축 (이월 없음)', () => {
   const wd = weekdayOf('2026-06-01')
   const doctors = [
-    { id: 'A', name: '가의사' },
-    { id: 'B', name: '나의사' },
-    { id: 'C', name: '다의사' },
+    { id: 'A', name: '가담당' },
+    { id: 'B', name: '나담당' },
+    { id: 'C', name: '다담당' },
   ]
   // budget 은 totalColumns(6) + 2×(3-viewStep 5) = 2 로 좁힌다 → 경계 압축이 반드시 발생.
   function run(slotOffset: number) {
@@ -1518,7 +1518,7 @@ describe('resolveUnitHours — 담당자 특정일자 운영시간 (dateHoursByD
    */
   const D = '2026-08-13'
   const wd = weekdayOf(D)
-  const doctors = [{ id: 'A', name: '김의사' }]
+  const doctors = [{ id: 'A', name: '김담당' }]
 
   function bandRange(site: SiteInput) {
     const r = runLayout({
@@ -1567,20 +1567,20 @@ describe('resolveUnitHours — 담당자 특정일자 운영시간 (dateHoursByD
 
   it('★사업장 지정일자 시간이 있어도 매주 휴무(빈 UnitHours) 담당자의 밴드는 비어 있다 — 자기 매주 휴무 > 사업장 상속', () => {
     // 예약검증(pickDailySchedule)과 같은 규칙 — 밴드만 기관 지정 시각으로 열리면 "밴드는 열렸는데 클릭하면 휴무" 이 된다.
-    const u: Unit = { key: `${D}__A`, doctorId: 'A', date: D, weekday: wd, doctorName: '김의사', slots: 1 }
+    const u: Unit = { key: `${D}__A`, doctorId: 'A', date: D, weekday: wd, doctorName: '김담당', slots: 1 }
     const dateHours = { [D]: { morning: { start: 600, end: 960 } } }
     const off = deriveLayoutConfig(baseSettings(), { hoursByDoctor: { A: { [wd]: {} } }, hoursByWeekday: weekdayHours, dateHours }, baseView({ selectedDate: D }), baseFilter, baseEnv)
     expect(resolveUnitHours(off, u), '매주 휴무').toEqual({})
     const unset = deriveLayoutConfig(baseSettings(), { hoursByDoctor: { A: {} }, hoursByWeekday: weekdayHours, dateHours }, baseView({ selectedDate: D }), baseFilter, baseEnv)
     expect(resolveUnitHours(unset, u), '미설정 → 기관 지정일자 시각').toEqual({ morning: { start: 600, end: 960 } })
     const work = deriveLayoutConfig(baseSettings(), { hoursByDoctor: doctorWeekday, hoursByWeekday: weekdayHours, dateHours }, baseView({ selectedDate: D }), baseFilter, baseEnv)
-    expect(resolveUnitHours(work, u), '진료 요일 → 담당자 시각(휴게만 그 날짜 기관 값)').toEqual({ morning: { start: 540, end: 1020 } })
+    expect(resolveUnitHours(work, u), '운영 요일 → 담당자 시각(휴게만 그 날짜 기관 값)').toEqual({ morning: { start: 540, end: 1020 } })
   })
 
   it('특정일자가 없는 담당자·날짜는 종전 규칙이다 (회귀 가드)', () => {
     const r = bandRange({ hoursByDoctor: doctorWeekday, hoursByWeekday: weekdayHours, dateHours: {}, dateHoursByDoctor: {} })
     expect(r).toEqual({ start: 540, end: 1020 })
-    const u: Unit = { key: `${D}__A`, doctorId: 'A', date: D, weekday: wd, doctorName: '김의사', slots: 1 }
+    const u: Unit = { key: `${D}__A`, doctorId: 'A', date: D, weekday: wd, doctorName: '김담당', slots: 1 }
     const h = resolveUnitHours(
       deriveLayoutConfig(baseSettings(), { hoursByDoctor: doctorWeekday, dateHours: {} }, baseView({ selectedDate: D }), baseFilter, baseEnv),
       u,

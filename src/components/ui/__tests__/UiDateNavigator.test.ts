@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  *
- * UiDateNavigator — 예약/진료 장부 상단의 "‹ 03월 08일 ~ 03월 14일 ›" 기간 이동 바.
+ * UiDateNavigator — 예약/방문 장부 상단의 "‹ 03월 08일 ~ 03월 14일 ›" 기간 이동 바.
  *
  * 이 컴포넌트는 props 가 없다. 모든 상태를 useSchedulerFilterStore 에서 직접 읽고 쓴다
  * (viewMode / periodDate / dataType). 그래서 검증은 "스토어를 이렇게 두면 화면이 이렇게 보이고,

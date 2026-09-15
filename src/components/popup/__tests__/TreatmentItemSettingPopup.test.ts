@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-// 진료항목 설정 팝업 — 그룹 전환·삭제 확인·중복 차단.
+// 서비스 항목 설정 팝업 — 그룹 전환·삭제 확인·중복 차단.
 //
 // 이 화면의 위험은 "다른 그룹 것을 건드린다"와 "실수로 지운다" 둘이다.
 // 그래서 빈 그룹 이탈 차단, 삭제 확인, 동일명 차단을 계약으로 고정한다.
@@ -24,11 +24,11 @@ const GROUP_EMPTY = 3
 
 function seedGroups() {
   return [
-    {serviceGroupId: GROUP_A, serviceGroupName: '교정', items: [
-      {serviceItemId: 11, serviceItemName: '교정상담'},
-      {serviceItemId: 12, serviceItemName: '교정검진'},
+    {serviceGroupId: GROUP_A, serviceGroupName: '점검', items: [
+      {serviceItemId: 11, serviceItemName: '정밀상담'},
+      {serviceItemId: 12, serviceItemName: '정밀진단'},
     ]},
-    {serviceGroupId: GROUP_B, serviceGroupName: '보철', items: [{serviceItemId: 21, serviceItemName: '크라운'}]},
+    {serviceGroupId: GROUP_B, serviceGroupName: '관리', items: [{serviceItemId: 21, serviceItemName: '크라운'}]},
     {serviceGroupId: GROUP_EMPTY, serviceGroupName: '빈그룹', items: []},
   ]
 }
@@ -153,7 +153,7 @@ describe('그룹 전환', () => {
     )
     // 전환은 그대로 일어난다 — 등록이 전환을 막지 않는다
     expect(groupRows()[1].classes()).toContain('is-active')
-    // 등록된 입력이 바뀐 그룹의 입력칸에 남아 있지 않다(남으면 다음 blur 에 보철로 또 들어간다)
+    // 등록된 입력이 바뀐 그룹의 입력칸에 남아 있지 않다(남으면 다음 blur 에 관리로 또 들어간다)
     expect((draftInputs()[0].element as HTMLInputElement).value).toBe('')
   })
 })
@@ -164,13 +164,13 @@ describe('빈 그룹은 두고 떠날 수 없다', () => {
 
     await groupRows()[2].trigger('click') // 빈그룹 선택
     await flushPromises()
-    await groupRows()[0].trigger('click') // 교정으로 이동 시도
+    await groupRows()[0].trigger('click') // 점검으로 이동 시도
     await flushPromises()
 
     // 어느 그룹이 비었는지 이름으로 말한다 — 다른 그룹에 막 등록한 사용자가
     // "등록하지 않았다"를 자기 등록이 안 된 것으로 읽은 결함.
     expect(mocks.alert).toHaveBeenCalledWith(
-      '진료항목이 없는 그룹: 빈그룹\n진료항목을 등록하거나 그룹을 삭제하세요.',
+      '서비스 항목이 없는 그룹: 빈그룹\n서비스 항목을 등록하거나 그룹을 삭제하세요.',
       expect.anything(),
     )
     // 전환되지 않았다 — 빈그룹 행이 여전히 활성
@@ -220,8 +220,8 @@ describe('빈 그룹 표시', () => {
   it('항목이 없는 그룹에만 라벨이 붙는다', async () => {
     await openPopup()
 
-    expect(rowMeta(0).exists()).toBe(false) // 교정 — 항목 있음
-    expect(rowMeta(1).exists()).toBe(false) // 보철 — 항목 있음
+    expect(rowMeta(0).exists()).toBe(false) // 점검 — 항목 있음
+    expect(rowMeta(1).exists()).toBe(false) // 관리 — 항목 있음
     expect(rowMeta(2).text()).toBe('항목 없음') // 빈그룹
   })
 
@@ -245,7 +245,7 @@ describe('빈 그룹 표시', () => {
     expect(rowMeta(2).exists()).toBe(true)
 
     const groups = await storeGroups()
-    groups.value[2].items = [{serviceItemId: 31, serviceItemName: '스케일링'}]
+    groups.value[2].items = [{serviceItemId: 31, serviceItemName: '출장점검'}]
     await flushPromises()
 
     expect(rowMeta(2).exists()).toBe(false)
@@ -264,7 +264,7 @@ describe('닫기 — 선택한 그룹이 비어 있으면 막는다', () => {
     await flushPromises()
 
     expect(mocks.alert).toHaveBeenCalledWith(
-      expect.stringContaining('진료항목이 없는 그룹: 빈그룹'),
+      expect.stringContaining('서비스 항목이 없는 그룹: 빈그룹'),
       expect.anything(),
     )
     expect(mocks.confirm).not.toHaveBeenCalled()
@@ -274,7 +274,7 @@ describe('닫기 — 선택한 그룹이 비어 있으면 막는다', () => {
   // 전체 그룹을 훑던 때는 다른 그룹 때문에 뜬 확인창을 자기 그룹 검증으로 읽었다(QA).
   // 판정은 그룹 전환 차단과 같이 "지금 선택한 그룹" 하나다.
   it('다른 그룹이 비어 있어도 선택한 그룹에 항목이 있으면 묻지 않는다', async () => {
-    const wrapper = await openPopup() // 첫 그룹(교정, 항목 있음)이 선택된다. 빈그룹은 시드에 있다
+    const wrapper = await openPopup() // 첫 그룹(점검, 항목 있음)이 선택된다. 빈그룹은 시드에 있다
 
     await footerCancel().trigger('click')
     await flushPromises()
@@ -294,11 +294,11 @@ describe('닫기 — 선택한 그룹이 비어 있으면 막는다', () => {
 
     await groupRows()[2].trigger('click') // 빈그룹 선택
     await flushPromises()
-    await draftInputs()[0].setValue('스케일링')
+    await draftInputs()[0].setValue('출장점검')
     document.body.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}))
     await flushPromises()
 
-    expect(mocks.createItem).toHaveBeenCalledWith({serviceGroupId: GROUP_EMPTY, serviceItemName: '스케일링'})
+    expect(mocks.createItem).toHaveBeenCalledWith({serviceGroupId: GROUP_EMPTY, serviceItemName: '출장점검'})
     expect(mocks.alert).not.toHaveBeenCalled()
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
@@ -312,7 +312,7 @@ describe('닫기 — 선택한 그룹이 비어 있으면 막는다', () => {
     await flushPromises()
 
     expect(mocks.alert.mock.calls[0][0]).toBe(
-      '진료항목이 없는 그룹: 빈그룹\n진료항목을 등록하거나 그룹을 삭제하세요.',
+      '서비스 항목이 없는 그룹: 빈그룹\n서비스 항목을 등록하거나 그룹을 삭제하세요.',
     )
     expect(mocks.confirm).not.toHaveBeenCalled()
   })
@@ -331,12 +331,12 @@ describe('닫기 — 선택한 그룹이 비어 있으면 막는다', () => {
   it('ESC 는 입력만 해둔 항목을 등록하지 않는다', async () => {
     const wrapper = await openOnEmptyGroup()
 
-    await draftInputs()[0].setValue('스케일링')
+    await draftInputs()[0].setValue('출장점검')
     document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))
     await flushPromises()
 
     expect(mocks.createItem).not.toHaveBeenCalled()
-    expect(mocks.alert.mock.calls[0][0]).toContain('진료항목이 없는 그룹: 빈그룹')
+    expect(mocks.alert.mock.calls[0][0]).toContain('서비스 항목이 없는 그룹: 빈그룹')
     expect(wrapper.emitted('close')).toBeUndefined()
   })
 
@@ -344,7 +344,7 @@ describe('닫기 — 선택한 그룹이 비어 있으면 막는다', () => {
   it('중복 항목명을 입력한 채 바깥을 클릭하면 중복 안내는 한 번만 뜬다', async () => {
     await openPopup()
 
-    await groupRows()[1].trigger('click') // 보철(크라운 보유) 선택
+    await groupRows()[1].trigger('click') // 관리(크라운 보유) 선택
     await flushPromises()
     await draftInputs()[0].setValue('크라운')
     document.body.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}))
@@ -468,7 +468,7 @@ describe('닫기 — 선택한 그룹이 비어 있으면 막는다', () => {
   })
 })
 
-describe('진료항목 삭제', () => {
+describe('서비스 항목 삭제', () => {
   it('확인을 받고 지운다', async () => {
     await openPopup()
 
@@ -490,24 +490,24 @@ describe('진료항목 삭제', () => {
   })
 })
 
-describe('진료항목 동일명 차단', () => {
+describe('서비스 항목 동일명 차단', () => {
   it('같은 그룹에 이미 있는 이름은 등록하지 않는다', async () => {
     const wrapper = await openPopup()
 
     const input = draftInputs()[0]
-    await input.setValue('교정상담')
+    await input.setValue('정밀상담')
     await input.trigger('keydown.enter')
     await flushPromises()
 
     expect(mocks.createItem).not.toHaveBeenCalled()
-    expect(mocks.error).toHaveBeenCalledWith('이미 동일한 이름의 진료항목이 존재합니다.')
+    expect(mocks.error).toHaveBeenCalledWith('이미 동일한 이름의 서비스 항목이 존재합니다.')
   })
 
   it('공백만 다른 이름도 같은 이름으로 본다', async () => {
     const wrapper = await openPopup()
 
     const input = draftInputs()[0]
-    await input.setValue('교정 상담')
+    await input.setValue('정밀 상담')
     await input.trigger('keydown.enter')
     await flushPromises()
 
@@ -531,13 +531,13 @@ describe('진료항목 동일명 차단', () => {
 // 등록 경로의 동일명 차단은 위에서 고정했지만 이름 **변경**(commitEditItem)은 별도 경로다 —
 // 자기 자신은 excludeId 로 빼야 하고, 그걸 빼먹으면 공백만 고친 자기 이름이 "중복"으로 막힌다.
 // 기대값 출처: isDuplicateItemNm(name, excludeId) 계약 + 등록 경로와 같은 문구.
-describe('진료항목 이름 변경 시 동일명 차단', () => {
+describe('서비스 항목 이름 변경 시 동일명 차단', () => {
   /** 우측 항목 행(입력 draft 행 제외) */
   const itemRows = () => q('.tisp-col:not(.tisp-col--group) .tisp-list .tisp-row')
       .filter((r) => r.find('.tisp-rowText').exists() || r.find('input.tisp-input').exists())
 
   async function renameFirstItemTo(name: string) {
-    const row = itemRows()[0] // 교정상담
+    const row = itemRows()[0] // 정밀상담
     await row.trigger('click') // startEditItem → 그 행이 input 으로 바뀐다
     await flushPromises()
     const input = row.find('input.tisp-input')
@@ -550,16 +550,16 @@ describe('진료항목 이름 변경 시 동일명 차단', () => {
   it('같은 그룹의 다른 항목 이름으로는 바꿀 수 없다', async () => {
     await openPopup()
 
-    await renameFirstItemTo('교정검진')
+    await renameFirstItemTo('정밀진단')
 
     expect(mocks.updateItem).not.toHaveBeenCalled()
-    expect(mocks.error).toHaveBeenCalledWith('이미 동일한 이름의 진료항목이 존재합니다.')
+    expect(mocks.error).toHaveBeenCalledWith('이미 동일한 이름의 서비스 항목이 존재합니다.')
   })
 
   it('공백만 다른 다른 항목 이름도 같은 이름으로 본다', async () => {
     await openPopup()
 
-    await renameFirstItemTo('교정 검진')
+    await renameFirstItemTo('정밀 진단')
 
     expect(mocks.updateItem).not.toHaveBeenCalled()
   })
@@ -567,18 +567,18 @@ describe('진료항목 이름 변경 시 동일명 차단', () => {
   it('자기 이름에서 공백만 고친 것은 자기 자신이라 통과한다 — excludeId', async () => {
     await openPopup()
 
-    await renameFirstItemTo('교정 상담')
+    await renameFirstItemTo('정밀 상담')
 
-    expect(mocks.updateItem).toHaveBeenCalledWith(11, {serviceItemName: '교정 상담'})
+    expect(mocks.updateItem).toHaveBeenCalledWith(11, {serviceItemName: '정밀 상담'})
     expect(mocks.error).not.toHaveBeenCalled()
   })
 
   it('새 이름이면 바꾼다', async () => {
     await openPopup()
 
-    await renameFirstItemTo('교정재상담')
+    await renameFirstItemTo('정밀재상담')
 
-    expect(mocks.updateItem).toHaveBeenCalledWith(11, {serviceItemName: '교정재상담'})
+    expect(mocks.updateItem).toHaveBeenCalledWith(11, {serviceItemName: '정밀재상담'})
   })
 })
 
@@ -594,13 +594,13 @@ describe('닫기 — 우상단 X 버튼과 바깥 클릭도 같은 안내로 막
     await flushPromises()
 
     expect(mocks.alert).toHaveBeenCalledTimes(1)
-    expect(mocks.alert.mock.calls[0][0]).toContain('진료항목이 없는 그룹: 빈그룹')
+    expect(mocks.alert.mock.calls[0][0]).toContain('서비스 항목이 없는 그룹: 빈그룹')
     expect(mocks.confirm).not.toHaveBeenCalled()
     expect(wrapper.emitted('close')).toBeUndefined()
   })
 
   it('X 버튼은 선택한 그룹에 항목이 있으면 바로 닫는다', async () => {
-    const wrapper = await openPopup() // 첫 그룹(교정, 항목 있음)
+    const wrapper = await openPopup() // 첫 그룹(점검, 항목 있음)
 
     await closeButton().trigger('click')
     await flushPromises()

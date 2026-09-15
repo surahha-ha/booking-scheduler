@@ -24,7 +24,7 @@ describe('hasSelectableItems', () => {
 });
 
 describe('isTreatmentItemSelectionValid', () => {
-    it('진료항목 미입력(그룹·항목 모두 없음)은 유효 — 선택값이다', () => {
+    it('서비스 항목 미입력(그룹·항목 모두 없음)은 유효 — 선택값이다', () => {
         expect(isTreatmentItemSelectionValid(GROUPS, null, null)).toBe(true);
     });
 

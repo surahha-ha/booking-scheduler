@@ -9,8 +9,8 @@
  *
  * 두 값의 역할이 갈린다 — 섞으면 안 된다:
  *   holidayClosedYn(공휴일 체크박스) = 공휴일에 **쉬는가**
- *   holidayHours               = 진료한다면 **몇 시부터 몇 시까지인가**
- * 그래서 휴무로 바꿔도 시간 값은 지우지 않는다. 지우면 다시 진료로 되돌렸을 때 시간이 사라진다.
+ *   holidayHours               = 운영한다면 **몇 시부터 몇 시까지인가**
+ * 그래서 휴무로 바꿔도 시간 값은 지우지 않는다. 지우면 다시 운영으로 되돌렸을 때 시간이 사라진다.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -58,13 +58,13 @@ import { useStaffStore } from '@/stores/staffStore'
 // ── fixture ────────────────────────────────────────────────
 const MONDAY = 1
 
-/** 사업장: 월요일 09:00~18:00 진료 */
+/** 사업장: 월요일 09:00~18:00 운영 */
 const siteRows = [{
   dayCd: MONDAY, openHm: '0900', closeHm: '1800',
   lunchStartHm: null, lunchEndHm: null, dinnerStartHm: null, dinnerEndHm: null,
 }]
 
-/** 공휴일: 10:00~16:00 진료, 휴게1 12:00~13:00 */
+/** 공휴일: 10:00~16:00 운영, 휴게1 12:00~13:00 */
 const holidayHoursRow = {
   openHm: '1000', closeHm: '1600',
   lunchStartHm: '1200', lunchEndHm: '1300',
@@ -122,7 +122,7 @@ describe('사업장 공휴일 운영시간 — 표기', () => {
     mocks.getUnassignedReservations.mockResolvedValue({ data: { payload: { assignable: false } } })
   })
 
-  it('공휴일 진료 — 조회한 시간과 휴게가 그대로 표기된다', async () => {
+  it('공휴일 운영 — 조회한 시간과 휴게가 그대로 표기된다', async () => {
     mocks.getSiteWorkHours.mockResolvedValue(siteResponse(holidayHoursRow, false))
     const wrapper = await openInstitution(await mountSetting())
 
@@ -131,7 +131,7 @@ describe('사업장 공휴일 운영시간 — 표기', () => {
     expect(text).toContain('12:00~13:00')
   })
 
-  it('공휴일 버튼은 마지막 칸에 있고, 진료면 열려 있다', async () => {
+  it('공휴일 버튼은 마지막 칸에 있고, 운영면 열려 있다', async () => {
     mocks.getSiteWorkHours.mockResolvedValue(siteResponse(holidayHoursRow, false))
     const wrapper = await openInstitution(await mountSetting())
 
@@ -149,7 +149,7 @@ describe('사업장 공휴일 운영시간 — 표기', () => {
     expect(holidayBtn(wrapper).attributes('disabled')).toBeDefined()
   })
 
-  it('★공휴일 진료인데 시간이 없으면 "미설정" — "휴무"이라 단정하지 않는다', async () => {
+  it('★공휴일 운영인데 시간이 없으면 "미설정" — "휴무"이라 단정하지 않는다', async () => {
     // 쉬기로 한 적이 없다. 시간을 아직 안 정했을 뿐이다.
     mocks.getSiteWorkHours.mockResolvedValue(siteResponse(null, false))
     const wrapper = await openInstitution(await mountSetting())
@@ -185,7 +185,7 @@ describe('사업장 공휴일 운영시간 — 저장 payload', () => {
   })
 
   it('★공휴일 휴무가어도 시간 값은 payload 에 보존된다', async () => {
-    // 지우고 보내면, 다시 진료로 되돌렸을 때 사업장 설정에서 시간이 사라져 있다.
+    // 지우고 보내면, 다시 운영으로 되돌렸을 때 사업장 설정에서 시간이 사라져 있다.
     mocks.getSiteWorkHours.mockResolvedValue(siteResponse(holidayHoursRow, true))
     const wrapper = await mountSetting()
 
@@ -266,11 +266,11 @@ describe('사업장 공휴일 운영시간 — 저장 payload', () => {
 })
 
 /**
- * ★공휴일 진료로 저장하려면 공휴일 운영시간이 있어야 한다 (2026-08-03).
+ * ★공휴일 운영으로 저장하려면 공휴일 운영시간이 있어야 한다 (2026-08-03).
  *
  * 공휴일 운영시간(공휴일 운영시간 테이블)은 시작·종료시분이 NOT NULL 이라 "시간 없는 공휴일 운영시간"
- * 행 자체가 저장될 수 없다. 시간을 비운 채 진료로 저장하면 사업장 설정·예약장부 양쪽에서 그날은
- * 휴무로 판정되므로, "진료함으로 설정했는데 실제로는 쉰다"는 상태가 조용히 만들어진다.
+ * 행 자체가 저장될 수 없다. 시간을 비운 채 운영으로 저장하면 사업장 설정·예약장부 양쪽에서 그날은
+ * 휴무로 판정되므로, "운영함으로 설정했는데 실제로는 쉰다"는 상태가 조용히 만들어진다.
  */
 describe('사업장 공휴일 운영시간 — 저장 가드', () => {
   beforeEach(() => {
@@ -285,12 +285,12 @@ describe('사업장 공휴일 운영시간 — 저장 가드', () => {
     mocks.saveTreatmentSettings.mockResolvedValue({ data: { code: 'succeed', message: '저장되었습니다.' } })
   })
 
-  it('★공휴일 진료로 바꿨는데 시간이 비어 있으면 저장하지 않고 안내한다', async () => {
+  it('★공휴일 운영으로 바꿨는데 시간이 비어 있으면 저장하지 않고 안내한다', async () => {
     mocks.getSiteWorkHours.mockResolvedValue(siteResponse(null, true)) // 휴무 + 시간 미설정
     const wrapper = await mountSetting()
     const state = wrapper.vm.$.setupState
 
-    state.includePublicHolidays = false // 공휴일 진료로 전환 → site 가 dirty
+    state.includePublicHolidays = false // 공휴일 운영으로 전환 → site 가 dirty
     await wrapper.vm.$nextTick()
     await state.onSave()
 
@@ -324,8 +324,8 @@ describe('사업장 공휴일 운영시간 — 저장 가드', () => {
   })
 
   it('★공휴일 휴무(체크 ON)으로 저장할 때는 시간이 없어도 막지 않는다', async () => {
-    // 쉬기로 했으면 운영시간을 정할 이유가 없다. 가드는 "진료함"일 때만이다.
-    mocks.getSiteWorkHours.mockResolvedValue(siteResponse(null, false)) // 진료 + 시간 미설정
+    // 쉬기로 했으면 운영시간을 정할 이유가 없다. 가드는 "운영함"일 때만이다.
+    mocks.getSiteWorkHours.mockResolvedValue(siteResponse(null, false)) // 운영 + 시간 미설정
     const wrapper = await mountSetting()
     const state = wrapper.vm.$.setupState
 

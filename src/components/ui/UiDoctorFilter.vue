@@ -37,10 +37,10 @@ const {
   toggle
 } = doctorSelection;
 
-/* 표시할 의사가 없어도 '전체'는 켜진 채로 보여준다.
+/* 표시할 담당자가 없어도 '전체'는 켜진 채로 보여준다.
  * 규약상 빈 배열 = 전체라 선택 상태는 이미 '전체'인데, useCheckBoxSelection 은 항목이 0개면
  * "전원 선택"을 판정할 수 없어 false 를 준다. 그대로 쓰면 필터가 꺼진 것처럼 보인다.
- * ⚠️ buttonItems 가 비는 경로는 "담당자 원장 0명"이 아니다 — 그건 bookStore 게이트가
+ * ⚠️ buttonItems 가 비는 경로는 "담당자 대표 0명"이 아니다 — 그건 bookStore 게이트가
  *   사업장 설정로 내보내 이 화면에 도달하지 못한다. 실제 경로는 팀 표시 필터(resolveVisibleDoctors)의
  *   결과가 빌 때: 선택한 팀에 멤버가 0명 · 전원이 팀 소속이라 '미지정' 그룹이 빔. */
 const isAllDoctorsSelected = computed(
@@ -125,7 +125,7 @@ function next() {
             :class="['scheduleDoctorFilter__check', { 'is-checked': isAllDoctorsSelected }]"
             type="checkbox"
         >
-        <span class="scheduleDoctorFilter__label">의사</span>
+        <span class="scheduleDoctorFilter__label">담당자</span>
       </label>
 
       <label

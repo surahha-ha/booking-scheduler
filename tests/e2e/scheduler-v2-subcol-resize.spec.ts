@@ -9,7 +9,7 @@ import type { Page } from '@playwright/test';
  *   - 좌측 drag(dx < -threshold): N-1 (min 1)   ← 방향 반전(우=증가)
  *   - 우측 drag(dx > +threshold): N+1 (max 4)
  *   - threshold = subColWidth × 0.4
- *   - 진료 모드(TREATMENT)에서도 handle 노출 (칸수조절 drag 는 예약·진료 공통)
+ *   - 방문 모드(TREATMENT)에서도 handle 노출 (칸수조절 drag 는 예약·방문 공통)
  *
  * ⚠️ drag 로 N step 을 검증할 때는 단일 mousemove(steps 기본=1)로 이동한다.
  *    한 번의 mousemove = 최대 1 step 이라 threshold 를 크게 넘겨도 과증가하지 않아
@@ -62,8 +62,8 @@ test.describe('SchedulerV2 - Sub-Column Resize Handle', () => {
     // V3 기본 N=2 → − 버튼으로 N=1 로 내려 시나리오 성립.
     await decreaseBtn(page).click();
     await expect(page.locator('.schedulerToolbar__label')).toHaveText('1');
-    // N=1 정책 변경: column당 오른쪽 끝 handle 1개씩 → 의사 column 수만큼 handle
-    // 의사 수는 환경에 따라 달라지므로 >=1 검증
+    // N=1 정책 변경: column당 오른쪽 끝 handle 1개씩 → 담당자 column 수만큼 handle
+    // 담당자 수는 환경에 따라 달라지므로 >=1 검증
     const handles = await page.locator('.subcol-resize-handle').count();
     expect(handles).toBeGreaterThanOrEqual(1);
     // edge handle 클래스로도 검증
@@ -122,8 +122,8 @@ test.describe('SchedulerV2 - Sub-Column Resize Handle', () => {
     expect(after).toBeLessThan(before - 30);
   });
 
-  test('40. 진료 모드(TREATMENT)에서도 칸수조절 handle이 노출된다 (예약·진료 공통)', async ({ authedPage: page }) => {
-    // 칸수조절 drag 를 진료 화면에도 적용 → SubColResizeHandles 는 v-if 없이 항상 렌더.
+  test('40. 방문 모드(TREATMENT)에서도 칸수조절 handle이 노출된다 (예약·방문 공통)', async ({ authedPage: page }) => {
+    // 칸수조절 drag 를 방문 화면에도 적용 → SubColResizeHandles 는 v-if 없이 항상 렌더.
     await page.goto('/book?dataType=TREATMENT');
     await expect(page.locator('.scheduler-grid')).toBeVisible();
     await page.waitForTimeout(500);

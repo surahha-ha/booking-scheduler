@@ -29,7 +29,7 @@ function appt(id: string, doctorName: string, h: number, m: number, endH: number
     endDateTime: new Date(2026, 5, 1, endH, endM),
   }
 }
-/** 담당자 요일 1행 — 진료 시작~종료 단일 구간("HHmm"). 휴게 필드 없음(기관 소유). */
+/** 담당자 요일 1행 — 운영 시작~종료 단일 구간("HHmm"). 휴게 필드 없음(기관 소유). */
 function workRow(dayCd: number, over: Partial<WorkHoursRowSource> = {}): WorkHoursRowSource {
   return {
     dayCd,
@@ -65,9 +65,9 @@ describe('시간/날짜 변환', () => {
 
 describe('resolveDoctorKey — 조인 키 추상화', () => {
   it('현재: 이름. 미래: doctorId 우선', () => {
-    expect(resolveDoctorKey(appt('a', '김의사', 9, 0, 9, 30))).toBe('김의사')
-    expect(resolveDoctorKey(appt('a', '김의사', 9, 0, 9, 30, '101'))).toBe('101')
-    expect(resolveDoctorKey(appt('a', '김의사', 9, 0, 9, 30, ''))).toBe('김의사') // 빈 ID 폴백
+    expect(resolveDoctorKey(appt('a', '김담당', 9, 0, 9, 30))).toBe('김담당')
+    expect(resolveDoctorKey(appt('a', '김담당', 9, 0, 9, 30, '101'))).toBe('101')
+    expect(resolveDoctorKey(appt('a', '김담당', 9, 0, 9, 30, ''))).toBe('김담당') // 빈 ID 폴백
   })
 })
 
@@ -97,7 +97,7 @@ describe('dailyScheduleToUnitHours — 기관 open 을 휴게로 split', () => {
     expect(h.dinner).toEqual({ start: 1080, end: 1140 })
   })
   it('[레거시 가드] CLOSED break → 세션은 분리하되 lunch/dinner 미생성(=운영종료)', () => {
-    // ⚠️ CLOSED 는 3세션 시절 "OFF 된 세션이 만든 gap" 이었다. 진료가 시작~종료 단일 구간이 된 뒤로는
+    // ⚠️ CLOSED 는 3세션 시절 "OFF 된 세션이 만든 gap" 이었다. 운영이 시작~종료 단일 구간이 된 뒤로는
     //    새 데이터에서 생성되지 않는다(staffStore 가 안 만든다). 타입·소비 코드는 남아 있으므로 소비 경로만 가드.
     // open 09~21, 13:00~18:30 = CLOSED. 세션 morning(09~13)+night(18:30~21)로 분리되고
     // h.lunch/h.dinner 는 없어야 함 → 엔진이 13:00~18:30 을 비운영(운영종료) 음영으로 처리.
@@ -116,10 +116,10 @@ describe('dailyScheduleToUnitHours — 기관 open 을 휴게로 split', () => {
   })
 })
 
-// 담당자는 진료 시작~종료 단일 구간이고 휴게를 소유하지 않는다.
-// 세션은 **같은 요일의 기관 휴게**(institutionDay)를 빼서 나뉜다 → 의사 컬럼에도 휴게 음영이 그려진다.
+// 담당자는 운영 시작~종료 단일 구간이고 휴게를 소유하지 않는다.
+// 세션은 **같은 요일의 기관 휴게**(institutionDay)를 빼서 나뉜다 → 담당자 컬럼에도 휴게 음영이 그려진다.
 describe('workRowToUnitHours — 담당자 단일구간 + 기관 휴게', () => {
-  it('의사 09~18 + 기관 점심 13~14 → morning(09~13)/afternoon(14~18) 로 갈리고 lunch 라벨이 붙는다', () => {
+  it('담당자 09~18 + 기관 점심 13~14 → morning(09~13)/afternoon(14~18) 로 갈리고 lunch 라벨이 붙는다', () => {
     const h = workRowToUnitHours(
       workRow(1, { staffOpenHm: '0900', staffCloseHm: '1800' }),
       instDay({ start: '09:00', end: '18:00' }, { start: '13:00', end: '14:00', type: 'LUNCH' }),
@@ -161,7 +161,7 @@ describe('workRowToUnitHours — 담당자 단일구간 + 기관 휴게', () => 
     expect(noInst.afternoon).toBeUndefined()
   })
 
-  it('의사 운영시간 밖 휴게는 세션을 쪼개지 못한다 — 의사 09~13 + 기관 점심 13~14 → 세션 1개(09~13)', () => {
+  it('담당자 운영시간 밖 휴게는 세션을 쪼개지 못한다 — 담당자 09~13 + 기관 점심 13~14 → 세션 1개(09~13)', () => {
     const h = workRowToUnitHours(
       workRow(1, { staffOpenHm: '0900', staffCloseHm: '1300' }),
       instDay({ start: '09:00', end: '18:00' }, { start: '13:00', end: '14:00', type: 'LUNCH' }),
@@ -174,7 +174,7 @@ describe('workRowToUnitHours — 담당자 단일구간 + 기관 휴게', () => 
     expect(h.lunch).toEqual({ start: 780, end: 840 })
   })
 
-  it('부분 겹침 휴게 — 의사 09~13:30 + 점심 13~14 → 세션 09~13 하나(13:00~13:30 은 휴게로 소비)', () => {
+  it('부분 겹침 휴게 — 담당자 09~13:30 + 점심 13~14 → 세션 09~13 하나(13:00~13:30 은 휴게로 소비)', () => {
     const h = workRowToUnitHours(
       workRow(1, { staffOpenHm: '0900', staffCloseHm: '1330' }),
       instDay({ start: '09:00', end: '18:00' }, { start: '13:00', end: '14:00', type: 'LUNCH' }),
@@ -192,27 +192,27 @@ describe('workRowToUnitHours — 담당자 단일구간 + 기관 휴게', () => 
 
 // ════════════════════════════════════════════════════════════
 describe('buildRunLayoutInput — name 모드', () => {
-  const doctors: DoctorSource[] = [{ id: '김의사', text: '김의사' }, { id: '이의사', text: '이의사' }]
+  const doctors: DoctorSource[] = [{ id: '김담당', text: '김담당' }, { id: '이담당', text: '이담당' }]
   const weekly = { [WD]: { open: { start: '09:00', end: '18:00' }, breaks: [{ start: '12:00', end: '13:00', type: 'LUNCH' as const }] } }
 
-  it('이름으로 그룹핑 + hoursByWeekday + 의사 매핑', () => {
+  it('이름으로 그룹핑 + hoursByWeekday + 담당자 매핑', () => {
     const input = buildRunLayoutInput({
       mode: { kind: 'name' },
       settings: baseSettings,
       viewState: baseView,
       env: baseEnv,
       doctors,
-      appts: [appt('a1', '김의사', 9, 0, 9, 30), appt('b1', '이의사', 10, 0, 10, 30)],
+      appts: [appt('a1', '김담당', 9, 0, 9, 30), appt('b1', '이담당', 10, 0, 10, 30)],
       weekly,
     })
-    expect(input.doctors).toEqual([{ id: '김의사', name: '김의사' }, { id: '이의사', name: '이의사' }])
-    expect(input.apptsByUnitKey['2026-06-01__김의사']).toEqual([{ id: 'a1', startMin: 540, endMin: 570 }])
-    expect(input.apptsByUnitKey['2026-06-01__이의사'][0].id).toBe('b1')
+    expect(input.doctors).toEqual([{ id: '김담당', name: '김담당' }, { id: '이담당', name: '이담당' }])
+    expect(input.apptsByUnitKey['2026-06-01__김담당']).toEqual([{ id: 'a1', startMin: 540, endMin: 570 }])
+    expect(input.apptsByUnitKey['2026-06-01__이담당'][0].id).toBe('b1')
     expect(input.site.hoursByWeekday[WD].morning).toEqual({ start: 540, end: 720 })
     expect(input.site.hoursByDoctor).toEqual({})
   })
 
-  it('doctorWeeklyById 주입 → hoursByDoctor 채움(담당자 우선), 미주입 의사는 키 부재(기관 fallback)', () => {
+  it('doctorWeeklyById 주입 → hoursByDoctor 채움(담당자 우선), 미주입 담당자는 키 부재(기관 fallback)', () => {
     const input = buildRunLayoutInput({
       mode: { kind: 'name' },
       settings: baseSettings,
@@ -221,16 +221,16 @@ describe('buildRunLayoutInput — name 모드', () => {
       doctors,
       appts: [],
       weekly,
-      // 김의사만 담당자 운영시간 08:00~14:00(점심 12~13). 이의사는 미설정.
+      // 김담당만 담당자 운영시간 08:00~14:00(점심 12~13). 이담당는 미설정.
       doctorWeeklyById: {
-        김의사: { [WD]: instDay({ start: '08:00', end: '14:00' }, { start: '12:00', end: '13:00', type: 'LUNCH' }) },
+        김담당: { [WD]: instDay({ start: '08:00', end: '14:00' }, { start: '12:00', end: '13:00', type: 'LUNCH' }) },
       },
     })
-    // 김의사: 담당자 시간이 밴드 소스로 주입됨(기관 09~18 과 구분되는 08~12 / 13~14).
-    expect(input.site.hoursByDoctor['김의사'][WD].morning).toEqual({ start: 480, end: 720 })
-    expect(input.site.hoursByDoctor['김의사'][WD].afternoon).toEqual({ start: 780, end: 840 })
-    // 이의사: doctorWeeklyById 에 없음 → hoursByDoctor 키 부재 → 엔진이 hoursByWeekday(기관)로 fallback.
-    expect(input.site.hoursByDoctor['이의사']).toBeUndefined()
+    // 김담당: 담당자 시간이 밴드 소스로 주입됨(기관 09~18 과 구분되는 08~12 / 13~14).
+    expect(input.site.hoursByDoctor['김담당'][WD].morning).toEqual({ start: 480, end: 720 })
+    expect(input.site.hoursByDoctor['김담당'][WD].afternoon).toEqual({ start: 780, end: 840 })
+    // 이담당: doctorWeeklyById 에 없음 → hoursByDoctor 키 부재 → 엔진이 hoursByWeekday(기관)로 fallback.
+    expect(input.site.hoursByDoctor['이담당']).toBeUndefined()
     // 기관 hoursByWeekday 는 그대로.
     expect(input.site.hoursByWeekday[WD].morning).toEqual({ start: 540, end: 720 })
   })
@@ -242,7 +242,7 @@ describe('buildRunLayoutInput — name 모드', () => {
       viewState: baseView,
       env: baseEnv,
       doctors,
-      appts: [appt('a1', '김의사', 9, 0, 9, 30), appt('b1', '이의사', 10, 0, 10, 30)],
+      appts: [appt('a1', '김담당', 9, 0, 9, 30), appt('b1', '이담당', 10, 0, 10, 30)],
       weekly,
       horizonDays: 1,
     })
@@ -253,7 +253,7 @@ describe('buildRunLayoutInput — name 모드', () => {
 })
 
 describe('buildRunLayoutInput — team 모드 (이름 필터 + staffId 식별자)', () => {
-  const team: TeamSource = { id: 1, name: 'A팀', doctors: [{ staffId: 101, staffName: '김의사' }, { staffId: 102, staffName: '이의사' }] }
+  const team: TeamSource = { id: 1, name: 'A팀', doctors: [{ staffId: 101, staffName: '김담당' }, { staffId: 102, staffName: '이담당' }] }
   // 담당자는 단일 구간(09~18). 휴게는 기관 weekly 에서 온다.
   const workHoursByStaffId = {
     101: [workRow(WD, { staffOpenHm: '0900', staffCloseHm: '1800' })],
@@ -270,25 +270,25 @@ describe('buildRunLayoutInput — team 모드 (이름 필터 + staffId 식별자
       env: baseEnv,
       doctors: [],
       appts: [
-        appt('a1', '김의사', 9, 0, 9, 30),
-        appt('b1', '이의사', 10, 0, 10, 30),
-        appt('c1', '박의사', 11, 0, 11, 30), // 팀 비소속 → 제외
+        appt('a1', '김담당', 9, 0, 9, 30),
+        appt('b1', '이담당', 10, 0, 10, 30),
+        appt('c1', '박담당', 11, 0, 11, 30), // 팀 비소속 → 제외
       ],
       workHoursByStaffId,
       weekly: instWeekly,
     })
-    expect(input.doctors).toEqual([{ id: '101', name: '김의사' }, { id: '102', name: '이의사' }])
+    expect(input.doctors).toEqual([{ id: '101', name: '김담당' }, { id: '102', name: '이담당' }])
     expect(input.apptsByUnitKey['2026-06-01__101'][0].id).toBe('a1')
     expect(input.apptsByUnitKey['2026-06-01__102'][0].id).toBe('b1')
-    // 박의사(c1) 는 어떤 키에도 없음
+    // 박담당(c1) 는 어떤 키에도 없음
     expect(Object.keys(input.apptsByUnitKey)).toHaveLength(2)
-    // 담당자별·요일별 운영시간 — 기관 점심(13~14)이 의사 세션을 가른다
+    // 담당자별·요일별 운영시간 — 기관 점심(13~14)이 담당자 세션을 가른다
     expect(input.site.hoursByDoctor['101'][WD].morning).toEqual({ start: 540, end: 780 })
     expect(input.site.hoursByDoctor['101'][WD].afternoon).toEqual({ start: 840, end: 1080 })
     expect(input.site.hoursByDoctor['101'][WD].lunch).toEqual({ start: 780, end: 840 })
   })
 
-  it('의사 운영시간이 기관 휴게 전에 끝나면 세션은 하나 — 오전만 진료(09~13)', () => {
+  it('담당자 운영시간이 기관 휴게 전에 끝나면 세션은 하나 — 오전만 운영(09~13)', () => {
     const input = buildRunLayoutInput({
       mode: { kind: 'team', team },
       settings: baseSettings,
@@ -310,13 +310,13 @@ describe('buildRunLayoutInput — team 모드 (이름 필터 + staffId 식별자
       viewState: baseView,
       env: baseEnv,
       doctors: [],
-      appts: [appt('a1', '김의사', 9, 0, 9, 30), appt('c1', '박의사', 11, 0, 11, 30)],
+      appts: [appt('a1', '김담당', 9, 0, 9, 30), appt('c1', '박담당', 11, 0, 11, 30)],
       workHoursByStaffId,
       weekly: instWeekly,
       horizonDays: 1,
     })
     const result = runLayout(input)
-    // 컬럼은 팀 멤버 2명, 박의사 예약(c1) 은 제외 → rect 는 a1 만
+    // 컬럼은 팀 멤버 2명, 박담당 예약(c1) 은 제외 → rect 는 a1 만
     expect(result.columns.map(c => c.unit.doctorId)).toEqual(['101', '102'])
     expect(result.rects.map(r => r.id)).toEqual(['a1'])
   })

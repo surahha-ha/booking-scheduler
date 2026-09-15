@@ -11,7 +11,7 @@
  * 월 캘린더(formatListEntries)는 처음부터 요일 단위였어서 화면끼리 서로 어긋나 있었다.
  *
  * 세 상태는 요일마다 독립이다(BE SiteService.getStaffWorkHours 규약):
- *   행 없음 = 미설정(기관 값 상속) / 행 + 시각 = 진료 / 행 + 시각 null = 휴무(빈칸, 상속 안 함)
+ *   행 없음 = 미설정(기관 값 상속) / 행 + 시각 = 운영 / 행 + 시각 null = 휴무(빈칸, 상속 안 함)
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -71,7 +71,7 @@ const siteRows = [
 
 /* 실제 stage 데이터 모양 — 이 담당자는 **월요일 1건**만 등록돼 있다. */
 const staffMondayOnly = [
-  { staffId: DOC, staffName: '홍의사', times: [{ dayCd: MON, staffOpenHm: '0900', staffCloseHm: '1300' }] },
+  { staffId: DOC, staffName: '홍담당', times: [{ dayCd: MON, staffOpenHm: '0900', staffCloseHm: '1300' }] },
 ]
 
 const mounted: any[] = []
@@ -94,7 +94,7 @@ function setupMocks(staff: any[]) {
   mocks.getTeams.mockResolvedValue({
     data: {
       code   : 'succeed',
-      payload: { teams: [{ id: 1, name: '1진료팀', doctors: [{ staffId: DOC, staffName: '홍의사' }] }] },
+      payload: { teams: [{ id: 1, name: '1팀', doctors: [{ staffId: DOC, staffName: '홍담당' }] }] },
     },
   })
   mocks.getSiteWorkHours.mockResolvedValue({
@@ -172,7 +172,7 @@ describe('담당자 운영시간 — 요일 단위 사업장 기본값 상속', 
 
   it('★명시적 휴무(행 있음 + 시각 null)인 요일은 빈칸 — 기관 값을 상속하지 않는다', async () => {
     setupMocks([{
-      staffId: DOC, staffName: '홍의사',
+      staffId: DOC, staffName: '홍담당',
       times: [
         { dayCd: MON, staffOpenHm: '0900', staffCloseHm: '1300' },
         { dayCd: TUE, staffOpenHm: null, staffCloseHm: null },   // 화요일은 쉬기로 정했다
@@ -281,11 +281,11 @@ describe('휴게시간 열 — 사업장 값을 요일별로 읽기 전용 표�
     expect(staffBreakText(DOC, WED, 'LUNCH'), '기관이 그 요일 휴게를 안 가짐').toBe('-')
   })
 
-  it('진료가 없는 요일은 휴게도 의미가 없어 "-" 다', async () => {
+  it('운영이 없는 요일은 휴게도 의미가 없어 "-" 다', async () => {
     const wrapper = await mountSetting()
     const { staffBreakText } = wrapper.vm.$.setupState
 
-    expect(staffBreakText(DOC, SUN, 'LUNCH'), '기관·담당자 모두 일요일 진료 없음').toBe('-')
+    expect(staffBreakText(DOC, SUN, 'LUNCH'), '기관·담당자 모두 일요일 운영 없음').toBe('-')
   })
 
   it('표에 휴게시간 열이 렌더된다 (요약 줄은 사라졌다)', async () => {

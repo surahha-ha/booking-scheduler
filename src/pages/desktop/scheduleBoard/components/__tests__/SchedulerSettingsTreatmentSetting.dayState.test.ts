@@ -5,7 +5,7 @@
  *
  * 운영시간은 세 상태를 가진다:
  *   미설정 = 아직 정하지 않음 → 사업장 운영시간을 따른다
- *   진료   = 시작·종료를 정함
+ *   운영   = 시작·종료를 정함
  *   휴무   = 명시적으로 쉬기로 정함
  *
  * 예전에는 이 셋을 두 가지 모양("시각 있음 / 없음")에 눌러 담았다. 그래서 캘린더 셀이
@@ -14,7 +14,7 @@
  * 운영하는 직원의 시간과 휴무 직원의 (휴무)만 정의한다).
  *
  * 상태를 나르는 규약은 BE 응답의 행 존재 여부다(SiteService.getStaffWorkHours):
- *   행 없음 = 미설정 / 행 + 시각 = 진료 / 행 + null = 휴무
+ *   행 없음 = 미설정 / 행 + 시각 = 운영 / 행 + null = 휴무
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -66,7 +66,7 @@ const MONDAY = 1
 /** 조회 결과가 아니라 요일만 쓰는 캘린더 키 — override 가 없으므로 요일 설정이 답이 된다 */
 const SOME_MONDAY = '2026-07-06'
 
-/** 사업장: 월요일 09:00~18:00 진료 */
+/** 사업장: 월요일 09:00~18:00 운영 */
 const siteRows = [{
   dayCd: MONDAY, openHm: '0900', closeHm: '1800',
   lunchStartHm: null, lunchEndHm: null, dinnerStartHm: null, dinnerEndHm: null,
@@ -76,7 +76,7 @@ function staffResponse(times: Array<{ dayCd: number; staffOpenHm: string | null;
   return {
     data: {
       code: 'succeed',
-      payload: { staff: [{ staffId: DOC, staffName: '김의사', times }], overrides: [] },
+      payload: { staff: [{ staffId: DOC, staffName: '김담당', times }], overrides: [] },
     },
   }
 }
@@ -98,16 +98,16 @@ function label(wrapper: any) {
   return entry.label
 }
 
-describe('요일 3상태 표기 — 미설정 / 진료 / 휴무', () => {
+describe('요일 3상태 표기 — 미설정 / 운영 / 휴무', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     // 캘린더 셀은 이름을 staffStore.doctors 에서 찾는다 — 없으면 entry 자체가 만들어지지 않는다
-    useStaffStore().doctors.push({ id: `${DOC}`, text: '김의사', staffId: DOC })
+    useStaffStore().doctors.push({ id: `${DOC}`, text: '김담당', staffId: DOC })
     mocks.getTeams.mockResolvedValue({
       data: {
         code   : 'succeed',
-        payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: DOC, staffName: '김의사' }] }] },
+        payload: { teams: [{ id: 1, name: '1구역', doctors: [{ staffId: DOC, staffName: '김담당' }] }] },
       },
     })
     mocks.getSiteWorkHours.mockResolvedValue({
@@ -117,17 +117,17 @@ describe('요일 3상태 표기 — 미설정 / 진료 / 휴무', () => {
     mocks.getUnassignedReservations.mockResolvedValue({ data: { payload: { assignable: false } } })
   })
 
-  it('진료 — 담당자가 정한 시간이 그대로 표기된다', async () => {
+  it('운영 — 담당자가 정한 시간이 그대로 표기된다', async () => {
     mocks.getStaffWorkHours.mockResolvedValue(
       staffResponse([{ dayCd: MONDAY, staffOpenHm: '1000', staffCloseHm: '1700' }]))
 
-    expect(label(await mountSetting())).toBe('김의사 10:00 ~ 17:00')
+    expect(label(await mountSetting())).toBe('김담당 10:00 ~ 17:00')
   })
 
   it('미설정 — 정한 적이 없으면 사업장 운영시간으로 표기된다', async () => {
     mocks.getStaffWorkHours.mockResolvedValue(staffResponse([]))
 
-    expect(label(await mountSetting())).toBe('김의사 09:00 ~ 18:00')
+    expect(label(await mountSetting())).toBe('김담당 09:00 ~ 18:00')
   })
 
   it('★휴무 — 쉬기로 정한 요일은 사업장 값으로 대체되지 않는다', async () => {
@@ -135,7 +135,7 @@ describe('요일 3상태 표기 — 미설정 / 진료 / 휴무', () => {
     mocks.getStaffWorkHours.mockResolvedValue(
       staffResponse([{ dayCd: MONDAY, staffOpenHm: null, staffCloseHm: null }]))
 
-    expect(label(await mountSetting())).toBe('김의사 (휴무)')
+    expect(label(await mountSetting())).toBe('김담당 (휴무)')
   })
 
   /**
@@ -158,7 +158,7 @@ describe('요일 3상태 표기 — 미설정 / 진료 / 휴무', () => {
     mocks.getStaffWorkHours.mockResolvedValue(
       staffResponse([{ dayCd: MONDAY, staffOpenHm: null, staffCloseHm: null }]))
 
-    expect(label(await mountSetting()), '휴무는 원천 장애와 무관하게 확정된 답이다').toBe('김의사 (휴무)')
+    expect(label(await mountSetting()), '휴무는 원천 장애와 무관하게 확정된 답이다').toBe('김담당 (휴무)')
   })
 
   /* ★2026-08-20 규약 변경 — 운영시간 탭에서 시간을 비우는 것은 "미설정으로 되돌리기"다.
@@ -172,14 +172,14 @@ describe('요일 3상태 표기 — 미설정 / 진료 / 휴무', () => {
     wrapper.vm.$.setupState.setStaffWorkHours(DOC, MONDAY, 'end', '')
     await wrapper.vm.$nextTick()
 
-    expect(label(wrapper)).toBe('김의사 09:00 ~ 18:00')
+    expect(label(wrapper)).toBe('김담당 09:00 ~ 18:00')
   })
 })
 
 /**
  * 사업장 패널도 같은 규약을 따라야 한다 — 담당자만 3상태를 구별하면 두 표기가 어긋난다.
  *
- * 사업장은 휴무를 진료행이 아니라 **휴무일 탭의 매주 규칙(recurringOffRules WEEKLY)** 으로 표현한다.
+ * 사업장은 휴무를 운영행이 아니라 **휴무일 탭의 매주 규칙(recurringOffRules WEEKLY)** 으로 표현한다.
  * 그래서 두 상태의 겉모습이 실제로 다르다: 휴무 요일은 요일버튼이 잠기고(disabled),
  * 미설정 요일은 버튼이 열려 있어 지금 정할 수 있다. 표기도 갈라야 한다.
  */
@@ -190,7 +190,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
-    useStaffStore().doctors.push({ id: `${DOC}`, text: '김의사', staffId: DOC })
+    useStaffStore().doctors.push({ id: `${DOC}`, text: '김담당', staffId: DOC })
     mocks.getTeams.mockResolvedValue({
       data: { code: 'succeed', payload: { teams: [] } },
     })
@@ -198,7 +198,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
       data: {
         code: 'succeed',
         payload: {
-          site              : siteRows,                                 // 월요일만 진료 — 나머지 요일은 행 없음(미설정)
+          site              : siteRows,                                 // 월요일만 운영 — 나머지 요일은 행 없음(미설정)
           recurringOffRules : [{ dayCd: SUNDAY, repeatTy: 'WEEKLY' }],  // 일요일은 매주 휴무
           workDates: [], offDates: [], holidayClosedYn: true,
         },
@@ -232,7 +232,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
     return wrapper.findAll('.schedulerTreatmentSetting__hoursWeekdayBtn')[weekday]
   }
 
-  it('진료 — 등록된 요일은 시간이 그대로 표기된다', async () => {
+  it('운영 — 등록된 요일은 시간이 그대로 표기된다', async () => {
     const wrapper = await openInstitution(await mountSetting())
 
     expect(dayCellText(wrapper, MONDAY)).toContain('09:00~18:00')
@@ -266,10 +266,10 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
     const wrapper = await openInstitution(await mountSetting())
 
     const payload = wrapper.vm.$.setupState.buildPayload()
-    /* 월요일만 진료행이 있으므로 나머지 6요일이 대상이다. 일요일은 원래 매주 휴무가라 그대로. */
+    /* 월요일만 운영행이 있으므로 나머지 6요일이 대상이다. 일요일은 원래 매주 휴무라 그대로. */
     expect(payload.recurringOffRules).toEqual(
         [0, 2, 3, 4, 5, 6].map(dayCd => ({ dayCd, repeatTy: 'WEEKLY', monthlyNth: null })))
-    expect(payload.site.map((r: any) => r.dayCd), '휴무가 된 요일은 진료행으로 나가지 않는다')
+    expect(payload.site.map((r: any) => r.dayCd), '휴무가 된 요일은 운영행으로 나가지 않는다')
         .toEqual([MONDAY])
   })
 
@@ -304,7 +304,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
           { dayCd: WEDNESDAY, repeatTy: 'MONTHLY', monthlyNth: 3 },
         ])
 
-    /* 매월 n번째만 쉬는 요일은 나머지 주에 진료하므로 운영시간이 있어야 한다 — 자동 휴무 대상에서
+    /* 매월 n번째만 쉬는 요일은 나머지 주에 운영하므로 운영시간이 있어야 한다 — 자동 휴무 대상에서
      * 빠지는 대신 배너 둘째 줄이 그 요일을 따로 부르고, 저장은 게이트가 막는다. */
     expect(wrapper.vm.$.setupState.monthlyOnlyMissingTimeWeekdays, '수요일은 운영시간 필수 대상')
         .toEqual([WEDNESDAY])
@@ -314,7 +314,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
     const br = lines[1].element.querySelector('br')
     expect(br, '줄바꿈').not.toBeNull()
     expect(lines[1].element.textContent!.replace(/\s+/g, ' ').trim())
-        .toBe('수요일은 매월 1, 3번째 휴무가라 나머지 주에 진료합니다.운영시간을 입력해 주세요.')
+        .toBe('수요일은 매월 1, 3번째 휴무라 나머지 주에 운영합니다.운영시간을 입력해 주세요.')
     expect(br!.nextSibling!.textContent, '둘째 줄').toBe('운영시간을 입력해 주세요.')
     expect(lines[1].find('strong').text(), '몇 번째인지까지 말한다').toBe('수요일')
   })
@@ -348,7 +348,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
         .toEqual([1, 2, 3, 4, 5].map(monthlyNth => ({ dayCd: WEDNESDAY, repeatTy: 'MONTHLY', monthlyNth })))
   })
 
-  it('운영시간이 있는 요일에 매월 1~5번째를 전부 걸면 매주처럼 진료행이 나가지 않는다', async () => {
+  it('운영시간이 있는 요일에 매월 1~5번째를 전부 걸면 매주처럼 운영행이 나가지 않는다', async () => {
     mocks.getSiteWorkHours.mockResolvedValue({
       data: {
         code: 'succeed',
@@ -363,7 +363,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
 
     expect(dayCellText(wrapper, MONDAY), '시간이 있어도 휴무 규칙이 우선 — 매주와 같다').toBe('휴무')
     const payload = wrapper.vm.$.setupState.buildPayload()
-    expect(payload.site.map((r: any) => r.dayCd), '매주 휴무 요일과 같은 규약(진료행 제외)').toEqual([])
+    expect(payload.site.map((r: any) => r.dayCd), '매주 휴무 요일과 같은 규약(운영행 제외)').toEqual([])
     expect(payload.recurringOffRules.filter((r: any) => r.dayCd === MONDAY).length, '매월 다섯 행은 그대로').toBe(5)
   })
 
@@ -392,10 +392,10 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
     expect(state.monthlyOnlyMissingTimeWeekdays).toEqual([WEDNESDAY, FRIDAY])
     const line = wrapper.findAll('.schedulerTreatmentSetting__missingTimeLine')[1]
     expect(line.element.textContent!.replace(/\s+/g, ' ').trim())
-        .toBe('수요일은 매월 1, 3번째, 금요일은 매월 2번째 휴무가라 나머지 주에 진료합니다.운영시간을 입력해 주세요.')
+        .toBe('수요일은 매월 1, 3번째, 금요일은 매월 2번째 휴무라 나머지 주에 운영합니다.운영시간을 입력해 주세요.')
     expect(line.findAll('strong').map((s: any) => s.text()), '요일마다 굵게').toEqual(['수요일', '금요일'])
     expect(state.monthlyTimeRequiredMsg([WEDNESDAY, FRIDAY]))
-        .toBe('수요일은 매월 1, 3번째, 금요일은 매월 2번째 휴무가라 나머지 주에 진료합니다.\n운영시간을 입력해 주세요.')
+        .toBe('수요일은 매월 1, 3번째, 금요일은 매월 2번째 휴무라 나머지 주에 운영합니다.\n운영시간을 입력해 주세요.')
   })
 
   it('담당자도 같다 — 매월 1~5번째 전부인 요일은 그 담당자 행에서 "휴무"으로 잠긴다', async () => {
@@ -405,7 +405,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
         code: 'succeed',
         payload: {
           staff: [{
-            staffId: DOC, staffName: '김의사', times: [],
+            staffId: DOC, staffName: '김담당', times: [],
             monthlyOffRules: [1, 2, 3, 4, 5].map(monthlyNth => ({ dayCd: WEDNESDAY, monthlyNth })),
           }],
           overrides: [],
@@ -422,7 +422,7 @@ describe('사업장 운영시간 표기 — 휴무 vs 미설정', () => {
   it('배너가 저장될 요일을 미리 알린다 — payload 와 같은 값을 본다', async () => {
     const wrapper = await openInstitution(await mountSetting())
 
-    expect(wrapper.vm.$.setupState.missingTimeWeekdays, '일요일은 이미 휴무가라 빠진다')
+    expect(wrapper.vm.$.setupState.missingTimeWeekdays, '일요일은 이미 휴무라 빠진다')
         .toEqual([2, 3, 4, 5, 6])
     const notice = wrapper.find('.schedulerTreatmentSetting__missingTimeNotice')
     /* 둘째 줄과 같은 자리에서 <br> 로 줄을 나눈다 */

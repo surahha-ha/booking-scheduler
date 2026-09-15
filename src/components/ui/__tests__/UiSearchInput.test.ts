@@ -46,7 +46,7 @@ function recentItem(over: Record<string, unknown> = {}) {
     customerName         : '김고객',
     customerPhone       : '01012345678',
     startAt: '2026-03-10T14:30:00',
-    staffName         : '홍의사',
+    staffName         : '홍담당',
     statusCode  : '00',
     ...over,
   }
@@ -326,7 +326,7 @@ describe('UiSearchInput — recent 모드: 결과 표시', () => {
     expect(text('.recentRow__phone')).toBe('010-1234-5678')
     // 화면정의서 §5-1 표기 — yy.mm.dd hh:mm (정의서 예시 데이터 기준)
     expect(text('.recentRow__datetime')).toBe('26.03.10 14:30')
-    expect(text('.recentRow__doctor')).toBe('홍의사')
+    expect(text('.recentRow__doctor')).toBe('홍담당')
     expect(text('.recentRow__status')).toBe('완료')
   })
 
@@ -350,7 +350,7 @@ describe('UiSearchInput — recent 모드: 결과 표시', () => {
     await typeAndSettle(w, '김')
 
     const labels = dropdownRows().map(r => r.querySelector('.recentRow__status')?.textContent?.trim())
-    expect(labels).toEqual(['예약', '완료', '미이행', '취소', '접수대기'])
+    expect(labels).toEqual(['예약', '완료', '미이행', '취소', '대기'])
   })
 
   it('모르는 상태코드는 코드 그대로 내보인다 (빈칸으로 삼키지 않는다)', async () => {
@@ -380,7 +380,7 @@ describe('UiSearchInput — recent 모드: 결과 표시', () => {
     expect(badges.map(b => b?.textContent?.trim())).toEqual(['예약', '예약', '예약', '취소', '예약'])
   })
 
-  it('진료장부에서는 상태마다 제 색을 쓴다', async () => {
+  it('방문장부에서는 상태마다 제 색을 쓴다', async () => {
     store.setDataType('TREATMENT', false)
     mocks.getRecent.mockResolvedValue({
       data: { payload: ['01', '05'].map(code => recentItem({ statusCode: code })) },

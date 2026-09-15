@@ -94,10 +94,10 @@ describe('buildHolidayClosure — 자체 휴무 설정 → 휴무 필드', () =>
 
 /**
  * STEP8 — 공휴일 운영시간 적용 대상 산출.
- * 규칙 한 줄: holidayOpenDates = 공휴일 ∧ ¬휴무(최종). 어느 경로로 진료가 됐든 공휴일 시간을 쓴다.
+ * 규칙 한 줄: holidayOpenDates = 공휴일 ∧ ¬휴무(최종). 어느 경로로 운영이 됐든 공휴일 시간을 쓴다.
  */
-describe('buildHolidayClosure — holidayOpenDates (공휴일인데 진료하는 날)', () => {
-  it('holidayClosedYn=false(공휴일 진료) → 공휴일 전부가 대상', () => {
+describe('buildHolidayClosure — holidayOpenDates (공휴일인데 운영하는 날)', () => {
+  it('holidayClosedYn=false(공휴일 운영) → 공휴일 전부가 대상', () => {
     const r = buildHolidayClosure(
       { holidayClosedYn: false }, ['2026-01-01', '2026-03-01'], '2026-01-01', '2026-12-31',
     )
@@ -117,11 +117,11 @@ describe('buildHolidayClosure — holidayOpenDates (공휴일인데 진료하는
       { holidayClosedYn: true, workDates: ['2026-01-01'] },
       ['2026-01-01', '2026-03-01'], '2026-01-01', '2026-12-31',
     )
-    expect(r.holidayOpenDates.has('2026-01-01')).toBe(true)   // 구제됨 → 진료
+    expect(r.holidayOpenDates.has('2026-01-01')).toBe(true)   // 구제됨 → 운영
     expect(r.holidayOpenDates.has('2026-03-01')).toBe(false)  // 여전히 휴무
   })
 
-  it('공휴일 진료여도 그 날을 offDates 로 따로 쉬면 제외', () => {
+  it('공휴일 운영여도 그 날을 offDates 로 따로 쉬면 제외', () => {
     const r = buildHolidayClosure(
       { holidayClosedYn: false, offDates: ['2026-01-01'] },
       ['2026-01-01'], '2026-01-01', '2026-12-31',
@@ -129,7 +129,7 @@ describe('buildHolidayClosure — holidayOpenDates (공휴일인데 진료하는
     expect(r.holidayOpenDates.has('2026-01-01')).toBe(false)
   })
 
-  it('매주 휴무 요일과 겹쳐도 공휴일 진료 판정이 남는다 (요일휴무는 rules 가 무시)', () => {
+  it('매주 휴무 요일과 겹쳐도 공휴일 운영 판정이 남는다 (요일휴무는 rules 가 무시)', () => {
     const wd = dayjs('2026-01-01').day()
     const r = buildHolidayClosure(
       { holidayClosedYn: false, recurringOffRules: [{ dayCd: wd, repeatTy: 'WEEKLY', monthlyNth: null }] },

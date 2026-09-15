@@ -80,7 +80,7 @@ describe('normalizeTimeInput — 살릴 수 있는 입력', () => {
     expect(normalizeTimeInput(raw)).toBe(expected)
   })
 
-  it('빈 입력은 오류가 아니라 빈 값이다 — 진료행이면 그 요일 휴무가라는 뜻', () => {
+  it('빈 입력은 오류가 아니라 빈 값이다 — 방문행이면 그 요일 휴무라는 뜻', () => {
     expect(normalizeTimeInput('')).toBe('')
     expect(normalizeTimeInput('   ')).toBe('')
     expect(normalizeTimeInput(null)).toBe('')
@@ -116,7 +116,7 @@ describe('isValidHHMM / isInvalidTimeText', () => {
     expect(isValidHHMM('24:00')).toBe(false)
   })
 
-  it('빈 값은 오류로 보지 않는다 — 정하지 않았다는 정상적인 의사 표현', () => {
+  it('빈 값은 오류로 보지 않는다 — 정하지 않았다는 정상적인 담당자 표현', () => {
     expect(isInvalidTimeText('')).toBe(false)
     expect(isInvalidTimeText('  ')).toBe(false)
     expect(isInvalidTimeText(null)).toBe(false)

@@ -86,7 +86,7 @@ async function onApply() {
 
         <div class="unassigned-modal__body schedule-popup__body">
           <p class="unassignedModal__desc">
-            담당자가 미지정된 예약/진료건에 대해 일괄 적용할 대상을 선택해주세요.
+            담당자가 미지정된 예약/방문 건에 대해 일괄 적용할 대상을 선택해주세요.
           </p>
 
           <div class="unassignedModal__radioList">

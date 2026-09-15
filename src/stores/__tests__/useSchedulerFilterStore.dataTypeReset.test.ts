@@ -1,8 +1,8 @@
 /**
- * 장부 전환(예약 ↔ 진료) 은 전환 전 화면의 검색 조건을 남기지 않는다.
+ * 장부 전환(예약 ↔ 방문) 은 전환 전 화면의 검색 조건을 남기지 않는다.
  *
  * 상태 필터는 이미 비운다 — 상태 키 집합이 화면마다 달라 이전 선택이 남으면 어떤 버튼도 켜져 보이지
- * 않는데 목록만 걸러진다. 고객명 검색도 같은 이유다: 예약장부에서 찾던 고객가 진료장부 목록을 계속
+ * 않는데 목록만 걸러진다. 고객명 검색도 같은 이유다: 예약장부에서 찾던 고객가 방문장부 목록을 계속
  * 거르면, 입력칸은 비어 보이는데 목록은 그 고객뿐인 상태가 된다.
  *
  * 기대값 출처: 정책 결정(2026-09-07, "상태 필터가 초기화되듯 고객명 검색도 초기화").
@@ -49,8 +49,8 @@ describe('useSchedulerFilterStore.setDataType — 전환 시 검색 조건 초�
   })
 })
 
-// 장부 전환의 날짜 분기 — 진료장부는 미래를 표기할 수 없고, 예약장부는 진료에서 보던 과거를 남기지 않는다.
-// 기대값 출처: setDataType 주석(진료 전환 시 미래→오늘 클램프, 과거~오늘 유지 / 예약 전환 시 항상 오늘).
+// 장부 전환의 날짜 분기 — 방문장부는 미래를 표기할 수 없고, 예약장부는 운영에서 보던 과거를 남기지 않는다.
+// 기대값 출처: setDataType 주석(방문 전환 시 미래→오늘 클램프, 과거~오늘 유지 / 예약 전환 시 항상 오늘).
 describe('useSchedulerFilterStore.setDataType — 전환 시 날짜', () => {
   const TODAY = '2030-03-06' // 수요일 — WEEK 정규화(주 시작)와 DAY 가 다른 값이 되도록 주 중간
   const ymd = (d: Date) => dayjs(d).format('YYYY-MM-DD')
@@ -65,7 +65,7 @@ describe('useSchedulerFilterStore.setDataType — 전환 시 날짜', () => {
     vi.useRealTimers()
   })
 
-  it('예약장부에서 미래를 보다 진료장부로 가면 오늘로 당긴다', () => {
+  it('예약장부에서 미래를 보다 방문장부로 가면 오늘로 당긴다', () => {
     const store = useSchedulerFilterStore()
     store.setViewMode('DAY', false)
     store.setDataType('APPOINTMENT', false)
@@ -76,7 +76,7 @@ describe('useSchedulerFilterStore.setDataType — 전환 시 날짜', () => {
     expect(ymd(store.periodDate)).toBe(TODAY)
   })
 
-  it('예약장부에서 과거를 보다 진료장부로 가면 그 날짜를 유지한다', () => {
+  it('예약장부에서 과거를 보다 방문장부로 가면 그 날짜를 유지한다', () => {
     const store = useSchedulerFilterStore()
     store.setViewMode('DAY', false)
     store.setDataType('APPOINTMENT', false)
@@ -88,7 +88,7 @@ describe('useSchedulerFilterStore.setDataType — 전환 시 날짜', () => {
     expect(ymd(store.periodDate)).toBe(ymd(past))
   })
 
-  it('진료장부에서 과거를 보다 예약장부로 가면 항상 오늘이다', () => {
+  it('방문장부에서 과거를 보다 예약장부로 가면 항상 오늘이다', () => {
     const store = useSchedulerFilterStore()
     store.setViewMode('DAY', false)
     store.setDataType('TREATMENT', false)
