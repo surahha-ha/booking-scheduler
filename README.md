@@ -21,10 +21,10 @@ Vue 3 (`<script setup>`) · Vite 5 · Pinia · Vue Router · Vue I18n · Bootstr
 
 ```bash
 pnpm install
-npm run dev          # http://localhost:5173
+npm run dev          # http://localhost:5180
 ```
 
-데이터는 브라우저 localStorage 에 저장된다. 별도 백엔드나 DB 없이 바로 돌아간다.
+데이터는 브라우저 localStorage 에 저장된다(`src/mocks/` 의 axios adapter 가 API 를 브라우저 안에서 처리). 별도 백엔드나 DB 없이 바로 돌아간다.
 
 ```bash
 npm run test         # 단위 테스트 (watch)
@@ -32,6 +32,12 @@ npm run test:e2e     # e2e
 npm run lint
 npm run build
 ```
+
+## 문서
+
+- [CLAUDE.md](CLAUDE.md) — 작업 진입점(원칙·라우팅·컨벤션)
+- [docs/reference/](docs/reference/README.md) — 스케줄러 인수인계(엔진·페이지·CSS·검증)
+- [src/scheduler-engine/REDESIGN.md](src/scheduler-engine/REDESIGN.md) — 엔진 설계서
 
 ## 로드맵
 
